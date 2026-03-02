@@ -1,23 +1,28 @@
 package com.aleksandarparipovic.marel_app.operation;
 
-import com.aleksandarparipovic.marel_app.operation.dto.OperationCreateRequest;
-import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
-import com.aleksandarparipovic.marel_app.operation.dto.OperationUpdateRequest;
-import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductInfoRow;
+import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
+import com.aleksandarparipovic.marel_app.operation.dto.*;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
 import com.aleksandarparipovic.marel_app.operation.specification.OperationSpecifications;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
+import com.aleksandarparipovic.marel_app.user.User;
+import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Repository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +31,8 @@ public class OperationService {
     private final OperationRepository operationRepository;
     private final ProductRepository productRepository;
     private final OperationMapper operationMapper;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public Page<OperationWithProductInfoRow> searchAll(SearchRequest request){
         Specification<Operation> spec = OperationSpecifications.fromSearchRequest(request);
@@ -34,10 +41,12 @@ public class OperationService {
     }
 
     @Transactional(readOnly = true)
-    public OperationDto getOperation(Long id){
-        Operation operation = operationRepository.findById(id)
+    public OperationWithProductNameDto getOperation(Long id){
+        /*Operation operation = operationRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Operation not found"));
-        return operationMapper.toDto(operation);
+        return operationMapper.toDto(operation);*/
+        return operationRepository.findByIdWithProduct(id)
+                .orElseThrow(()->new IllegalArgumentException("Operation not found"));
     }
 
     @Transactional
@@ -54,6 +63,22 @@ public class OperationService {
 
         return operationRepository.findOperationWithProductById(id)
                 .orElseThrow(()-> new EntityNotFoundException("Operation with product info not found"));
+    }
+
+    @Transactional
+    public void archiveOperation(Long id, String password, Authentication authentication) {
+
+        User user = userRepository.findByUsername(authentication.getName())
+                .orElseThrow();
+
+        if (!passwordEncoder.matches(password, user.getPasswordHash())) {
+            throw new WrongPasswordException("Wrong password");
+        }
+
+        Operation operation = operationRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Operation not found"));
+
+        operation.setActive(false);
     }
 
     @Transactional
