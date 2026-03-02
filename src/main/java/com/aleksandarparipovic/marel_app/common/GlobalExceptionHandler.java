@@ -59,4 +59,15 @@ public class GlobalExceptionHandler {
                         "error", "Something went wrong. Please try again."
                 ));
     }
+
+    @ExceptionHandler(WrongPasswordException.class)
+    public ResponseEntity<?> handleWrongPassword(WrongPasswordException ex) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "timestamp", LocalDateTime.now(),
+                        "error", ex.getMessage(),
+                        "code", "WRONG_PASSWORD"
+                ));
+    }
 }
