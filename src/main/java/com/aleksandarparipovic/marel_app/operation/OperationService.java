@@ -22,7 +22,10 @@ import org.springframework.stereotype.Repository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +36,19 @@ public class OperationService {
     private final OperationMapper operationMapper;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+
+
+    public List<OperationBasicInfoDto> getAllOperationsForProduct(Long id, LocalDate date){
+        return operationRepository.findActiveOrArchivedAfterDate(id, date.atStartOfDay().atOffset(ZoneOffset.UTC))
+                .stream()
+                .map(operationMapper::toBasicDto)
+                .toList();
+        /*
+        return operationRepository.findByProductIdAndArchivedAtIsNull(id)
+                .stream()
+                .map(operationMapper::toBasicDto)
+                .toList();*/
+    }
 
     public Page<OperationWithProductInfoRow> searchAll(SearchRequest request){
         Specification<Operation> spec = OperationSpecifications.fromSearchRequest(request);

@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.work_shift.repository;
 
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
+import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftDetailInfo;
 import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftDto;
 import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftInfo;
 import org.springframework.data.domain.Page;
@@ -13,9 +14,12 @@ import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, JpaSpecificationExecutor<WorkShift> {
+
+
 /*
     @Query(value = """
         SELECT
@@ -133,4 +137,30 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             @Param("search") String search,
             Pageable pageable
     );
+
+    @Query(value = """
+    SELECT
+        ws.id AS id,
+        ws.work_date as workDate,
+        u.id as supervisorId,
+        u.full_name as supervisorFullName,
+        ws.start_at AS startAt,
+        ws.end_at AS endAt,
+        ws.total_minutes as totalMinutes,
+        ws.notes as notes,
+        e.id as employeeId,
+        e.full_name AS employeeName
+    FROM work_shifts ws
+    JOIN employees e ON ws.employee_id = e.id
+    JOIN users u ON ws.supervisor_id = u.id
+    WHERE ws.employee_id = :employeeId
+    AND ws.start_at >= :monthStart
+    AND ws.start_at < :monthEnd
+    AND ws.is_active = true
+    ORDER BY ws.start_at DESC
+    """, nativeQuery = true)
+    List<WorkShiftDetailInfo> getShiftsForMonth(
+            @Param("employeeId") Long employeeId,
+            @Param("monthStart") OffsetDateTime monthStart,
+            @Param("monthEnd") OffsetDateTime monthEnd);
 }

@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.operation;
 
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDto;
+import com.aleksandarparipovic.marel_app.operation.dto.OperationBasicInfoDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import org.springframework.stereotype.Component;
 
@@ -18,5 +19,9 @@ public class OperationMapper {
         dto.setUnitsPerProduct(o.getUnitsPerProduct());
         dto.setNormDate(o.getNormDate());
         return dto;
+    }
+
+    public OperationBasicInfoDto toBasicDto(Operation o){
+        return new OperationBasicInfoDto(o.getId(), o.getOpName(), o.getMinNorm());
     }
 }

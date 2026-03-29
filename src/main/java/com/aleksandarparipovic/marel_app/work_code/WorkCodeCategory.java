@@ -30,7 +30,7 @@ public class WorkCodeCategory {
     private String type;
 
     @Column(name = "norm_multiplier", nullable = false)
-    private BigDecimal normMultiplier = BigDecimal.valueOf(1.0);
+    private Double normMultiplier = 1.0;
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;

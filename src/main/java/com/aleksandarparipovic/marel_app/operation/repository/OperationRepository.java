@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -59,5 +60,22 @@ join o.product p
 where o.id = :id
 """)
     Optional<OperationWithProductNameDto> findByIdWithProduct(@Param("id") Long id);
+
+
+    List<Operation> findByProductIdAndArchivedAtIsNull(Long productId);
+
+    @Query("""
+    SELECT o
+    FROM Operation o
+    WHERE o.product.id = :productId
+      AND (
+        o.archivedAt IS NULL
+        OR o.archivedAt > :dateTime
+      )
+""")
+    List<Operation> findActiveOrArchivedAfterDate(
+            @Param("productId") Long productId,
+            @Param("dateTime") OffsetDateTime dateTime
+    );
 
 }

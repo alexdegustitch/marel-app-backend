@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.employee;
 
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeBasicInfoDto;
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeCreateRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDto;
@@ -30,6 +31,13 @@ public class EmployeeController {
             @RequestParam(required = false) LocalDate employedOn
     ) {
         return ResponseEntity.ok(employeeService.search(active, departmentId, employedOn));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<EmployeeBasicInfoDto> getEmployeeById(
+            @PathVariable Long id
+    ){
+        return ResponseEntity.ok(employeeService.getEmployeeById(id));
     }
 
     @PostMapping

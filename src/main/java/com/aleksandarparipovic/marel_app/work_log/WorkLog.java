@@ -59,8 +59,8 @@ public class WorkLog {
     @Column(name = "scrap", nullable = false)
     private Integer scrap = 0;
 
-    @Column(name = "comment")
-    private String comment;
+    @Column(name = "note")
+    private String note;
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;

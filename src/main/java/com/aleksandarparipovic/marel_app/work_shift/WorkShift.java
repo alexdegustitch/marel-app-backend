@@ -22,17 +22,17 @@ public class WorkShift {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // Employee who worked the shift
+    // Employee
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "employee_id", nullable = false)
     private Employee employee;
 
-    // Shift definition (morning / night)
+    // Shift definition
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "shift_id", nullable = false)
     private Shift shift;
 
-    // Supervisor (user)
+    // Supervisor
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "supervisor_id")
     private User supervisor;
@@ -43,30 +43,34 @@ public class WorkShift {
     @Column(name = "end_at", nullable = false)
     private OffsetDateTime endAt;
 
-    // Generated column
-    @Column(name = "work_date", insertable = false, updatable = false)
+    // ❗ trenutno NIJE generated u DB → običan column
+    @Column(name = "work_date", nullable = false)
     private LocalDate workDate;
 
-    // Generated column
+    // GENERATED → read-only
+    @Column(name = "day_of_week", insertable = false, updatable = false)
+    private Short dayOfWeek;
+
     @Column(name = "total_minutes", insertable = false, updatable = false)
     private Integer totalMinutes;
 
-    @Column(name = "is_saturday", nullable = false)
-    private Boolean isSaturday = false;
-
-    // JSONB column
-    @Column(name = "notes")
+    @Column(name = "notes", length = 255)
     private String notes;
 
-    // Managed by DB
-    @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
+    @Column(name = "created_at", insertable = false, updatable = false)
     private OffsetDateTime createdAt;
 
-    // Managed by trigger
     @Column(name = "updated_at", insertable = false)
     private OffsetDateTime updatedAt;
 
-    // Updated when shift or its work logs change
-    @Column(name = "last_activity_at", nullable = false, insertable = false)
+    @Column(name = "last_activity_at", insertable = false)
     private OffsetDateTime lastActivityAt;
+
+    @Column(name = "is_active")
+    private Boolean isActive = true;
+
+    // 🔥 optimistic locking
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 }

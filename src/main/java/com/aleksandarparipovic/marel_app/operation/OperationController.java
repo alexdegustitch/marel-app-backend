@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.time.LocalDate;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/operations")
@@ -23,6 +25,12 @@ public class OperationController {
     @PostMapping("/search-all")
     public Page<OperationWithProductInfoRow> searchAll(@RequestBody SearchRequest searchRequest){
         return operationService.searchAll(searchRequest);
+    }
+
+    @GetMapping("/active-operations-for-product/id={id}&date={date}")
+    public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(@PathVariable Long id, @PathVariable LocalDate date){
+        List<OperationBasicInfoDto> operationBasicInfoDtos = operationService.getAllOperationsForProduct(id, date);
+        return ResponseEntity.ok(operationBasicInfoDtos);
     }
 
     @GetMapping("/{id}")

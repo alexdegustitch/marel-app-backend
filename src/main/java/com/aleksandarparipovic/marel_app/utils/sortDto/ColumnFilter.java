@@ -1,4 +1,4 @@
-package com.aleksandarparipovic.marel_app.utils.dto;
+package com.aleksandarparipovic.marel_app.utils.sortDto;
 
 import lombok.Data;
 

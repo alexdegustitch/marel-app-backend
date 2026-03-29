@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.bonus.BonusCategory;
 import com.aleksandarparipovic.marel_app.bonus.BonusCategoryRepository;
 import com.aleksandarparipovic.marel_app.department.Department;
 import com.aleksandarparipovic.marel_app.department.DepartmentRepository;
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeBasicInfoDto;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeCreateRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDto;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeEditRequest;
@@ -35,6 +36,14 @@ public class EmployeeService {
     private final BonusCategoryRepository bonusCategoryRepository;
     private final EmployeeBonusRepository employeeBonusRepository;
     private final EmployeeMapper mapper;
+
+
+    public EmployeeBasicInfoDto getEmployeeById(Long employeeId){
+        Employee employee = repository.findById(employeeId)
+                .orElseThrow(()-> new EntityNotFoundException("Employee not found"));
+
+        return mapper.toBasicInfoDto(employee);
+    }
 
     @Transactional
     public Employee create(Employee e) {

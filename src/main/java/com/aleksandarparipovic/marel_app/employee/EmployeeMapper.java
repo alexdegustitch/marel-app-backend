@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.employee;
 
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeBasicInfoDto;
 import org.springframework.stereotype.Component;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDto;
 
@@ -35,5 +36,13 @@ public class EmployeeMapper {
         dto.setCurrentlyEmployed(e.isCurrentlyEmployed());
 
         return dto;
+    }
+
+    public EmployeeBasicInfoDto toBasicInfoDto(Employee e){
+        EmployeeBasicInfoDto employeeBasicInfoDto = new EmployeeBasicInfoDto();
+        employeeBasicInfoDto.setId(e.getId());
+        employeeBasicInfoDto.setFullName(e.getFullName());
+        employeeBasicInfoDto.setEmployeeNo(e.getEmployeeNo());
+        return employeeBasicInfoDto;
     }
 }
