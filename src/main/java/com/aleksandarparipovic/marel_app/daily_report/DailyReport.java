@@ -75,6 +75,10 @@ public class DailyReport {
     @Column(name = "calc_version", nullable = false)
     private Integer calcVersion;
 
+    @Version
+    @Column(name = "version", nullable = false)
+    private Integer version;
+
     @Column(name = "last_recalculated_at")
     private OffsetDateTime lastRecalculatedAt;
 

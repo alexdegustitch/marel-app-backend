@@ -18,9 +18,41 @@ public class PayrollRunItemController {
         return ResponseEntity.ok(payrollRunItemService.findAll());
     }
 
+    /**
+     * Raw lookup — does NOT trigger version-based recalculation.
+     * Use {@code GET /{id}/payroll} for version-aware access.
+     */
     @GetMapping("/{id}")
     public ResponseEntity<PayrollRunItem> findById(@PathVariable Long id) {
         return ResponseEntity.ok(payrollRunItemService.findById(id));
+    }
+
+    /**
+     * Payroll-aware access for a single item.
+     * <p>
+     * Automatically recalculates the item if {@code monthly_reports.version}
+     * has advanced past {@code based_on_version}, <b>unless</b> the item is LOCKED.
+     *
+     * <pre>
+     * GET /api/payroll-run-items/{id}/payroll
+     * </pre>
+     */
+    @GetMapping("/{id}/payroll")
+    public ResponseEntity<PayrollRunItem> getForPayrollAccess(@PathVariable Long id) {
+        return ResponseEntity.ok(payrollRunItemService.getForPayrollAccess(id));
+    }
+
+    /**
+     * Returns all items for a payroll run, recalculating any that are stale.
+     * LOCKED items are returned as-is.
+     *
+     * <pre>
+     * GET /api/payroll-run-items/by-run/{runId}
+     * </pre>
+     */
+    @GetMapping("/by-run/{runId}")
+    public ResponseEntity<List<PayrollRunItem>> getForPayrollRun(@PathVariable Long runId) {
+        return ResponseEntity.ok(payrollRunItemService.getForPayrollRun(runId));
     }
 
     @PostMapping
