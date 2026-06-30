@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.work_shift.repository;
 
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
+import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftActivityDto;
 import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftDetailInfo;
 import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftDto;
 import com.aleksandarparipovic.marel_app.work_shift.dto.WorkShiftInfo;
@@ -12,6 +13,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -50,11 +52,11 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             SELECT
                 ws.employee_id,
                 date_trunc('month', ws.start_at) AS month,
-                MAX(ws.last_activity_at) AS last_activity
+                MAX(ws.last_activity_at)          AS last_activity
             FROM work_shifts ws
             WHERE ws.supervisor_id = :userId
-              AND ws.start_at >= make_date(:year,1,1)
-              AND ws.start_at < make_date(:year+1,1,1)
+              AND ws.start_at >= make_date(CAST(:year AS int), 1, 1)
+              AND ws.start_at <  make_date(CAST(:year AS int) + 1, 1, 1)
             GROUP BY ws.employee_id, date_trunc('month', ws.start_at)
         ),
         ranked AS (
@@ -69,18 +71,22 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             FROM employee_activity
         )
         SELECT
-            e.full_name AS employeeName,
-            r.employee_id AS employeeId,
-            EXTRACT(MONTH FROM r.month)::int AS month,
-            :year AS year,
-            r.last_activity AS updateTime
+            er.id                                   AS employeeRecordId,
+            e.full_name                             AS employeeName,
+            r.employee_id                           AS employeeId,
+            EXTRACT(MONTH FROM r.month)::int        AS month,
+            CAST(:year AS int)                      AS year,
+            r.last_activity                         AS updateTime
         FROM ranked r
-        JOIN employees e
-            ON e.id = r.employee_id
+        JOIN employees e ON e.id = r.employee_id
+        LEFT JOIN employee_records er
+            ON er.employee_id = r.employee_id
+           AND date_trunc('month', er.start_date) = r.month
         WHERE r.rn <= 3
         ORDER BY r.month DESC, r.last_activity DESC, e.full_name ASC
         """, nativeQuery = true)
-    List<WorkShiftDto> findLastThreePerMonthForSupervisor(Long userId, int year);
+    List<WorkShiftActivityDto> findLastThreePerMonthForSupervisor(@Param("userId") Long userId,
+                                                                  @Param("year") int year);
 
     @Query(
             value = """
@@ -147,7 +153,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
         ws.start_at AS startAt,
         ws.end_at AS endAt,
         ws.total_minutes as totalMinutes,
-        ws.notes as notes,
+        ws.note as note,
         e.id as employeeId,
         e.full_name AS employeeName
     FROM work_shifts ws
@@ -163,4 +169,42 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             @Param("employeeId") Long employeeId,
             @Param("monthStart") OffsetDateTime monthStart,
             @Param("monthEnd") OffsetDateTime monthEnd);
+
+    @Query(value = """
+    SELECT ws.id
+    FROM work_shifts ws
+    WHERE ws.employee_record_id = :employeeRecordId
+      AND ws.is_active = true
+    ORDER BY ws.start_at DESC
+    """, nativeQuery = true)
+    List<Long> getShiftsForEmployeeRecord(@Param("employeeRecordId") Long employeeRecordId);
+
+    @Query(value = """
+    SELECT ws.id
+    FROM work_shifts ws
+    WHERE ws.employee_record_id = :employeeRecordId
+      AND ws.is_active = true
+      AND ws.work_date BETWEEN :fromDate AND :toDate
+    ORDER BY ws.start_at DESC
+    """, nativeQuery = true)
+    List<Long> getShiftsForEmployeeRecordInDateRange(
+            @Param("employeeRecordId") Long employeeRecordId,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate
+    );
+
+    @Query(value = """
+    SELECT ws.id
+    FROM work_shifts ws
+    WHERE ws.employee_record_id = :employeeRecordId
+      AND ws.is_active = true
+      AND ws.work_date = :workDate
+    ORDER BY ws.start_at DESC
+    """, nativeQuery = true)
+    List<Long> getShiftsForEmployeeRecordOnDate(
+            @Param("employeeRecordId") Long employeeRecordId,
+            @Param("workDate") LocalDate workDate
+    );
+
+    List<WorkShift> findByEmployee_IdAndWorkDateIn(Long employeeId, List<LocalDate> workDates);
 }

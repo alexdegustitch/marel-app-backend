@@ -2,7 +2,6 @@ package com.aleksandarparipovic.marel_app.work_log;
 
 import com.aleksandarparipovic.marel_app.work_log.dto.CreateUpdateWorkLogsRequest;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDto;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

@@ -1,5 +1,8 @@
 package com.aleksandarparipovic.marel_app.payroll_adjustment_category;
 
+import com.aleksandarparipovic.marel_app.payroll_adjustment_category.dto.PayrollAdjustmentCategoryCreateRequest;
+import com.aleksandarparipovic.marel_app.payroll_adjustment_category.dto.PayrollAdjustmentCategoryResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,23 +17,23 @@ public class PayrollAdjustmentCategoryController {
     private final PayrollAdjustmentCategoryService payrollAdjustmentCategoryService;
 
     @GetMapping
-    public ResponseEntity<List<PayrollAdjustmentCategory>> findAll() {
+    public ResponseEntity<List<PayrollAdjustmentCategoryResponse>> findAll() {
         return ResponseEntity.ok(payrollAdjustmentCategoryService.findAll());
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<PayrollAdjustmentCategory> findById(@PathVariable Long id) {
+    public ResponseEntity<PayrollAdjustmentCategoryResponse> findById(@PathVariable Long id) {
         return ResponseEntity.ok(payrollAdjustmentCategoryService.findById(id));
     }
 
     @PostMapping
-    public ResponseEntity<PayrollAdjustmentCategory> create(@RequestBody PayrollAdjustmentCategory entity) {
-        return ResponseEntity.ok(payrollAdjustmentCategoryService.create(entity));
+    public ResponseEntity<PayrollAdjustmentCategoryResponse> create(@Valid @RequestBody PayrollAdjustmentCategoryCreateRequest request) {
+        return ResponseEntity.ok(payrollAdjustmentCategoryService.create(request));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<PayrollAdjustmentCategory> update(@PathVariable Long id, @RequestBody PayrollAdjustmentCategory entity) {
-        return ResponseEntity.ok(payrollAdjustmentCategoryService.update(id, entity));
+    public ResponseEntity<PayrollAdjustmentCategoryResponse> update(@PathVariable Long id, @Valid @RequestBody PayrollAdjustmentCategoryCreateRequest request) {
+        return ResponseEntity.ok(payrollAdjustmentCategoryService.update(id, request));
     }
 
     @DeleteMapping("/{id}")

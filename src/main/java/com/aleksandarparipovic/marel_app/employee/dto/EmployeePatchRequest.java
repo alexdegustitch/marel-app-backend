@@ -16,10 +16,14 @@ public class EmployeePatchRequest {
     private Long categoryId;
     private Boolean foreigner;
     private BigDecimal transportAllowanceRsd;
+    private String transportAllowanceMode;
     private LocalDate employmentStartDate;
     private LocalDate employmentEndDate;
     private Boolean active;
     private Integer normGraceDays;
     private String notes;
+    private String mobilePhone;
+    private BigDecimal hourlyRate;
+    private Long defaultWorkCategoryId;
+    private Boolean worksInCommercial;
 }
-

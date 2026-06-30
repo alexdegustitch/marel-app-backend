@@ -31,4 +31,9 @@ public class BonusCategoryController {
         List<BonusCategoryOptionDto> result = bonusCategoryService.getAllActiveBonusCategories();
         return ResponseEntity.ok(result);
     }
+
+    @GetMapping("/active-valid")
+    public ResponseEntity<List<BonusCategoryOptionDto>> getActiveAndValidBonusCategories() {
+        return ResponseEntity.ok(bonusCategoryService.getActiveAndValidBonusCategories());
+    }
 }

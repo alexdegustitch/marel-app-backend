@@ -13,6 +13,7 @@ public class OperationDto {
     private String operationName;
     private Integer minNorm;
     private Integer maxNorm;
+    private Boolean normRequired;
     private Integer unitsPerProduct;
     private LocalDate normDate;
 

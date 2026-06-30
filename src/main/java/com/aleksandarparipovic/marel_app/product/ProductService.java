@@ -1,10 +1,10 @@
 package com.aleksandarparipovic.marel_app.product;
 
-import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.operation.OperationMapper;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
 import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
+import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductOptionDto;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationCountRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
@@ -13,11 +13,13 @@ import com.aleksandarparipovic.marel_app.product.specification.ProductSpecificat
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,31 @@ public class ProductService {
     private final OperationRepository operationRepository;
     private final OperationMapper operationMapper;
     private final ProductMapper productMapper;
+
+    @Transactional
+    @CacheEvict(value = "product-options", allEntries = true)
+    public ProductBaseRow createProduct(ProductCreateRequest request) {
+        String productName = request.getProductName().trim();
+
+        if (productRepository.existsByProductNameIgnoreCaseAndArchivedAtIsNull(productName)) {
+            throw new IllegalArgumentException("Product with this name already exists");
+        }
+
+        String productCode = request.getProductCode() == null ? null : request.getProductCode().trim();
+        if (productCode != null && !productCode.isBlank()
+                && productRepository.existsByProductCodeIgnoreCaseAndArchivedAtIsNull(productCode)) {
+            throw new IllegalArgumentException("Product with this code already exists");
+        }
+
+        Product product = Product.builder()
+                .productName(productName)
+                .productCode(productCode == null || productCode.isBlank() ? null : productCode)
+                .description(request.getDescription())
+                .active(true)
+                .build();
+
+        return productMapper.toBaseRow(productRepository.save(product));
+    }
 
     public List<ProductOptionDto> getAllProducts(){
         return productRepository.findByArchivedAtIsNullOrderByProductNameAsc()
@@ -82,4 +109,3 @@ public class ProductService {
         );
     }
 }
-

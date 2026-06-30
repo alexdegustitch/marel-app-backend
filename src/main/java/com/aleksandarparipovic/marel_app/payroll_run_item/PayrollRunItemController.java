@@ -1,5 +1,12 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item;
 
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemCreateRequest;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemDetailResponse;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemResponse;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,9 +20,23 @@ public class PayrollRunItemController {
 
     private final PayrollRunItemService payrollRunItemService;
 
+    @GetMapping("/last-activity")
+    public ResponseEntity<List<PayrollRunItemActivityDto>> getLastActivity(
+            @RequestParam int year,
+            @RequestParam int month) {
+        return ResponseEntity.ok(payrollRunItemService.getLastActivityByMonth(year, month));
+    }
+
+    @GetMapping("/recent")
+    public ResponseEntity<List<RecentPayrollSummaryDto>> getRecentByEmployee(
+            @RequestParam Long employeeId,
+            @RequestParam(defaultValue = "3") int size) {
+        return ResponseEntity.ok(payrollRunItemService.getRecentByEmployee(employeeId, size));
+    }
+
     @GetMapping
-    public ResponseEntity<List<PayrollRunItem>> findAll() {
-        return ResponseEntity.ok(payrollRunItemService.findAll());
+    public ResponseEntity<List<PayrollRunItemResponse>> findAll() {
+        return ResponseEntity.ok(payrollRunItemService.findAll().stream().map(PayrollRunItemResponse::new).toList());
     }
 
     /**
@@ -23,8 +44,8 @@ public class PayrollRunItemController {
      * Use {@code GET /{id}/payroll} for version-aware access.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<PayrollRunItem> findById(@PathVariable Long id) {
-        return ResponseEntity.ok(payrollRunItemService.findById(id));
+    public ResponseEntity<PayrollRunItemResponse> findById(@PathVariable Long id) {
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.findById(id)));
     }
 
     /**
@@ -38,8 +59,13 @@ public class PayrollRunItemController {
      * </pre>
      */
     @GetMapping("/{id}/payroll")
-    public ResponseEntity<PayrollRunItem> getForPayrollAccess(@PathVariable Long id) {
-        return ResponseEntity.ok(payrollRunItemService.getForPayrollAccess(id));
+    public ResponseEntity<PayrollRunItemResponse> getForPayrollAccess(@PathVariable Long id) {
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.getForPayrollAccess(id)));
+    }
+
+    @GetMapping("/by-monthly-report/{monthlyReportId}/details")
+    public ResponseEntity<PayrollRunItemDetailResponse> getDetails(@PathVariable Long monthlyReportId) {
+        return ResponseEntity.ok(payrollRunItemService.getDetails(monthlyReportId));
     }
 
     /**
@@ -51,18 +77,25 @@ public class PayrollRunItemController {
      * </pre>
      */
     @GetMapping("/by-run/{runId}")
-    public ResponseEntity<List<PayrollRunItem>> getForPayrollRun(@PathVariable Long runId) {
-        return ResponseEntity.ok(payrollRunItemService.getForPayrollRun(runId));
+    public ResponseEntity<List<PayrollRunItemResponse>> getForPayrollRun(@PathVariable Long runId) {
+        return ResponseEntity.ok(payrollRunItemService.getForPayrollRun(runId).stream().map(PayrollRunItemResponse::new).toList());
     }
 
     @PostMapping
-    public ResponseEntity<PayrollRunItem> create(@RequestBody PayrollRunItem entity) {
-        return ResponseEntity.ok(payrollRunItemService.create(entity));
+    public ResponseEntity<PayrollRunItemResponse> create(@Valid @RequestBody PayrollRunItemCreateRequest request) {
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.create(request)));
+    }
+
+    @PatchMapping("/{id}")
+    public ResponseEntity<PayrollRunItemDetailResponse> patch(
+            @PathVariable Long id,
+            @RequestBody PayrollRunItemPatchRequest request) {
+        return ResponseEntity.ok(payrollRunItemService.patch(id, request));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<PayrollRunItem> update(@PathVariable Long id, @RequestBody PayrollRunItem entity) {
-        return ResponseEntity.ok(payrollRunItemService.update(id, entity));
+    public ResponseEntity<PayrollRunItemResponse> update(@PathVariable Long id, @RequestBody PayrollRunItem entity) {
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.update(id, entity)));
     }
 
     @DeleteMapping("/{id}")

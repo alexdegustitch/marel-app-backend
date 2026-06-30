@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -18,6 +20,8 @@ public interface EmployeeRepository
         EmployeeRepositoryCustom {
 
     boolean existsByEmployeeNo(String employeeNo);
+
+    List<Employee> findAllByActiveTrueAndArchivedAtIsNull();
 
     Page<EmployeeWithBonusView> findAllProjectedBy(
             Specification<Employee> spec,
@@ -34,12 +38,18 @@ public interface EmployeeRepository
       e.probationEndDate as probationEndDate,
       e.notes as notes,
       e.transportAllowanceRsd as transportAllowanceRsd,
+      e.transportAllowanceMode as transportAllowanceMode,
       bc.categoryNo as categoryNo,
       bc.id as categoryId,
       bc.categoryName as categoryName,
       bc.bonusAmount as bonusAmount,
       eb.startDate as bonusStart,
-      e.foreigner as foreigner
+      e.foreigner as foreigner,
+      e.mobilePhone as mobilePhone,
+      e.hourlyRate as hourlyRate,
+      wcc.id as defaultWorkCategoryId,
+      wcc.categoryName as defaultWorkCategoryName,
+      e.worksInCommercial as worksInCommercial
     
     from Employee e
     join e.department d
@@ -50,6 +60,8 @@ public interface EmployeeRepository
     left join eb.bonusCategory bc
       on bc.archivedAt is null
      and current_date between bc.validFrom and coalesce(bc.validUntil, '9999-12-31')
+    
+    left join e.defaultWorkCategory wcc
     
     where e.archivedAt is null
     order by e.id asc
@@ -67,12 +79,18 @@ public interface EmployeeRepository
       e.probationEndDate as probationEndDate,
       e.notes as notes,
       e.transportAllowanceRsd as transportAllowanceRsd,
+      e.transportAllowanceMode as transportAllowanceMode,
       bc.categoryNo as categoryNo,
       bc.id as categoryId,
       bc.categoryName as categoryName,
       bc.bonusAmount as bonusAmount,
       eb.startDate as bonusStart,
-      e.foreigner as foreigner
+      e.foreigner as foreigner,
+      e.mobilePhone as mobilePhone,
+      e.hourlyRate as hourlyRate,
+      wcc.id as defaultWorkCategoryId,
+      wcc.categoryName as defaultWorkCategoryName,
+      e.worksInCommercial as worksInCommercial
     from Employee e
     join e.department d
     left join EmployeeBonus eb
@@ -80,9 +98,16 @@ public interface EmployeeRepository
     left join eb.bonusCategory bc
       on bc.archivedAt is null
      and current_date between bc.validFrom and coalesce(bc.validUntil, '9999-12-31')
+    left join e.defaultWorkCategory wcc
     where e.archivedAt is null
       and e.id = :id
     """)
     Optional<EmployeeWithBonusView> findEmployeeWithBonusById(@Param("id") Long id);
+
+    @Query("SELECT e FROM Employee e WHERE e.active = true AND e.archivedAt IS NULL AND e.employmentEndDate IS NOT NULL AND e.employmentEndDate <= :today")
+    List<Employee> findActiveEmployeesWithExpiredEndDate(@Param("today") LocalDate today);
+
+    @Query("SELECT e FROM Employee e LEFT JOIN FETCH e.department LEFT JOIN FETCH e.employeeBonuses b LEFT JOIN FETCH b.bonusCategory LEFT JOIN FETCH e.defaultWorkCategory WHERE e.id = :id")
+    Optional<Employee> findByIdWithDetails(@Param("id") Long id);
 
 }

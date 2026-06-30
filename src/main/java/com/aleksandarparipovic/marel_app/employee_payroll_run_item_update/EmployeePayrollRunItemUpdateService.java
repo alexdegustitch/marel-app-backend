@@ -63,7 +63,7 @@ public class EmployeePayrollRunItemUpdateService {
     }
 
     private EmployeePayrollRunItemUpdateDto toDto(EmployeePayrollRunItemUpdate e) {
-        String userName = e.getUser().getFirstName() + " " + e.getUser().getLastName();
+        String userName = e.getUser().getFullName();
         return new EmployeePayrollRunItemUpdateDto(
                 e.getId(),
                 e.getPayrollRunItem().getId(),
@@ -73,4 +73,5 @@ public class EmployeePayrollRunItemUpdateService {
         );
     }
 }
+
 

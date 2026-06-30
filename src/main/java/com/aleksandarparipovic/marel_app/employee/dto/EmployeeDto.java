@@ -23,8 +23,15 @@ public class EmployeeDto {
     private Integer normGraceDays;
     private LocalDate probationEndDate;
     private BigDecimal transportAllowanceRsd;
+    private String transportAllowanceMode;
 
     private String notes;
+
+    private String mobilePhone;
+    private BigDecimal hourlyRate;
+    private Long defaultWorkCategoryId;
+    private String defaultWorkCategoryName;
+    private boolean worksInCommercial;
 
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

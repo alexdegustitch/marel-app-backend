@@ -6,6 +6,8 @@ import com.aleksandarparipovic.marel_app.operation.repository.OperationRepositor
 import com.aleksandarparipovic.marel_app.operation.specification.OperationSpecifications;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
+import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.User;
@@ -15,15 +17,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Repository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 
@@ -33,9 +32,18 @@ public class OperationService {
 
     private final OperationRepository operationRepository;
     private final ProductRepository productRepository;
+    private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final OperationMapper operationMapper;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+
+    private WorkCodeCategory resolveWorkCodeCategory(Long id) {
+        if (id == null) {
+            return null;
+        }
+        return workCodeCategoryRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Work code category not found"));
+    }
 
 
     public List<OperationBasicInfoDto> getAllOperationsForProduct(Long id, LocalDate date){
@@ -43,11 +51,13 @@ public class OperationService {
                 .stream()
                 .map(operationMapper::toBasicDto)
                 .toList();
-        /*
-        return operationRepository.findByProductIdAndArchivedAtIsNull(id)
+    }
+
+    public List<OperationDto> getAllOperationsForProductDto(Long id, LocalDate date) {
+        return operationRepository.findActiveOrArchivedAfterDate(id, date.atStartOfDay().atOffset(ZoneOffset.UTC))
                 .stream()
-                .map(operationMapper::toBasicDto)
-                .toList();*/
+                .map(operationMapper::toDto)
+                .toList();
     }
 
     public Page<OperationWithProductInfoRow> searchAll(SearchRequest request){
@@ -72,13 +82,28 @@ public class OperationService {
                 .orElseThrow(()-> new IllegalArgumentException("Operation not found"));
 
         operation.setOpName(request.getOperationName());
+        boolean normRequired = request.getNormRequired() == null || request.getNormRequired();
+        operation.setNormRequired(normRequired);
         operation.setMinNorm(request.getMinNorm());
         operation.setMaxNorm(request.getMaxNorm());
+        validateNormRules(operation);
         operation.setUnitsPerProduct(request.getUnitsPerProduct());
         operation.setNormDate(request.getNormDate());
-
-        return operationRepository.findOperationWithProductById(id)
-                .orElseThrow(()-> new EntityNotFoundException("Operation with product info not found"));
+        operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
+        long count = operationRepository.countByProduct_IdAndArchivedAtIsNull(operation.getProduct().getId());
+        return new OperationWithProductInfoRow(
+                operation.getId(),
+                operation.getProduct().getId(),
+                operation.getOpName(),
+                operation.getProduct().getProductName(),
+                operation.getMinNorm(),
+                operation.getMaxNorm(),
+                //operation.isNormRequired(),
+                operation.getUnitsPerProduct(),
+                operation.getNormDate(),
+                operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
+                count
+        );
     }
 
     @Transactional
@@ -105,12 +130,37 @@ public class OperationService {
 
         operation.setProduct(product);
         operation.setOpName(request.getOperationName());
+        boolean normRequired = request.getNormRequired() == null || request.getNormRequired();
+        operation.setNormRequired(normRequired);
         operation.setMinNorm(request.getMinNorm());
         operation.setMaxNorm(request.getMaxNorm());
+        validateNormRules(operation);
         operation.setUnitsPerProduct(request.getUnitsPerProduct());
         operation.setNormDate(request.getNormDate());
+        operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
         operation = operationRepository.save(operation);
-        return operationRepository.findOperationWithProductById(operation.getId())
-                .orElseThrow(()-> new EntityNotFoundException("Operation with product info not found"));
+        long count = operationRepository.countByProduct_IdAndArchivedAtIsNull(operation.getProduct().getId());
+        return new OperationWithProductInfoRow(
+                operation.getId(),
+                operation.getProduct().getId(),
+                operation.getOpName(),
+                operation.getProduct().getProductName(),
+                operation.getMinNorm(),
+                operation.getMaxNorm(),
+                //operation.isNormRequired(),
+                operation.getUnitsPerProduct(),
+                operation.getNormDate(),
+                operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
+                count
+        );
+    }
+
+    private void validateNormRules(Operation operation) {
+        if (!operation.isNormRequired()) {
+            return;
+        }
+        if (!operation.isNormValueValid()) {
+            throw new IllegalArgumentException("When normRequired is true, minNorm/maxNorm must be > 0 and minNorm <= maxNorm");
+        }
     }
 }

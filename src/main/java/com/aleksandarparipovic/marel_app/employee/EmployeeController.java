@@ -1,6 +1,9 @@
 package com.aleksandarparipovic.marel_app.employee;
 
+import com.aleksandarparipovic.marel_app.employee.dto.ArchiveEmployeeRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeBasicInfoDto;
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDetailDto;
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeePatchRequest;
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeCreateRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDto;
@@ -62,6 +65,26 @@ public class EmployeeController {
     @PostMapping("/search-all")
     public Page<EmployeeWithBonusView> searchAll(@RequestBody SearchRequest request) {
         return employeeService.searchAll(request, EmployeeWithBonusView.class);
+    }
+
+    @GetMapping("/{id}/details")
+    public ResponseEntity<EmployeeDetailDto> getEmployeeDetail(@PathVariable Long id) {
+        return ResponseEntity.ok(employeeService.getEmployeeDetail(id));
+    }
+
+    @PatchMapping("/{id}")
+    public ResponseEntity<EmployeeWithBonusView> patchEmployee(
+            @PathVariable Long id,
+            @RequestBody EmployeePatchRequest request) {
+        return ResponseEntity.ok(employeeService.patchEmployee(id, request));
+    }
+
+    @PostMapping("/{id}/archive")
+    public ResponseEntity<Void> archiveEmployee(
+            @PathVariable Long id,
+            @RequestBody @Valid ArchiveEmployeeRequest request) {
+        employeeService.archiveEmployee(id, request);
+        return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/{id}")

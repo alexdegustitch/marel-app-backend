@@ -6,7 +6,6 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -44,12 +43,21 @@ public class DailyRecalcQueue {
     @Column(name = "retry_count")
     private Integer retryCount;
 
-    @Column(name = "error_message")
-    private String errorMessage;
+    @Column(name = "last_error")
+    private String lastError;
 
-    @Column(name = "locked_at")
-    private LocalDateTime lockedAt;
+    @Column(name = "claimed_at")
+    private OffsetDateTime claimedAt;
 
-    @Column(name = "locked_by")
-    private String lockedBy;
+    @Column(name = "claimed_by")
+    private String claimedBy;
+
+    @Column(name = "stuck_count")
+    private Integer stuckCount;
+
+    @Column(name = "last_stuck_at")
+    private OffsetDateTime lastStuckAt;
+
+    @Column(name = "version")
+    private Integer version;
 }

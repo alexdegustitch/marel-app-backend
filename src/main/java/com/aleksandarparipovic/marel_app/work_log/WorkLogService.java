@@ -1,13 +1,16 @@
 package com.aleksandarparipovic.marel_app.work_log;
 
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
+import com.aleksandarparipovic.marel_app.report_worker.DailyRecalcRequestedEvent;
 import com.aleksandarparipovic.marel_app.work_log.dto.CreateUpdateWorkLogsRequest;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDto;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogFormDto;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
+import com.aleksandarparipovic.marel_app.work_shift.WorkShiftService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +29,8 @@ public class WorkLogService {
     private final WorkLogRepository repository;
     private final WorkLogMapper workLogMapper;
     private final RecalcQueueService recalcQueueService;
+    private final ApplicationEventPublisher eventPublisher;
+    private final WorkShiftService workShiftService;
 
     public List<WorkLogDto> fetchAllActiveLogsForShift(Long shiftId) {
         return repository.getAllActiveLogsForShift(shiftId);
@@ -89,18 +94,23 @@ public class WorkLogService {
             result.addAll(toDelete);
         }
 
-        // ── Post-mutation: enqueue daily recalculation ───────────────────────
-        // The worker chain (daily → monthly) will increment monthly_reports.version,
-        // which PayrollRunItem.basedOnVersion is compared against on next payroll access.
+        // ── Event-driven trigger: Enqueue daily recalculation jobs ───────────────────────
+        // Within same transaction, mark daily jobs as PENDING.
+        // After transaction commits, trigger workers to process immediately.
         Set<Long> processedShiftIds = new HashSet<>();
         for (WorkLog wl : result) {
             WorkShift shift = wl.getWorkShift();
             if (shift == null) continue;
             if (processedShiftIds.add(shift.getId())) {
+                workShiftService.recalculateShiftBoundaries(shift);
                 recalcQueueService.enqueueDailyJob(shift, "WORK_LOG_MUTATION");
             }
         }
 
-        return result.stream().map(workLogMapper::toDto).toList();
+        List<WorkLogDto> dtoResults = result.stream().map(workLogMapper::toDto).toList();
+
+        eventPublisher.publishEvent(new DailyRecalcRequestedEvent(DailyRecalcRequestedEvent.Type.DAILY));
+
+        return dtoResults;
     }
 }

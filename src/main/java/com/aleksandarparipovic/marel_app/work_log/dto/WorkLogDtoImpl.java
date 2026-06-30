@@ -12,10 +12,14 @@ public class WorkLogDtoImpl implements WorkLogDto {
     private final Long shiftId;
     private final Long operationId;
     private final String operationName;
+    private final Integer minNorm;
     private final Long productionOrderId;
     private final String productionOrderName;
+    private final String productionOrderCode;
     private final Long productId;
     private final String productName;
+    private final java.math.BigDecimal performanceRate;
+    private final java.math.BigDecimal approvedPerformanceRate;
     private final Instant startAt;
     private final Instant endAt;
     private final Integer durationMin;
@@ -24,5 +28,9 @@ public class WorkLogDtoImpl implements WorkLogDto {
     private final String note;
     private final java.math.BigDecimal hourlyOutput;
     private final Long workCodeCategoryId;
+    private final String workCodeCategoryNo;
+    private final Long effectiveWorkCodeCategoryId;
+    private final String effectiveWorkCodeCategoryNo;
     private final Boolean isActive;
+    private final java.math.BigDecimal normMultiplierSnapshot;
 }

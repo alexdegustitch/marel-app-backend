@@ -22,5 +22,9 @@ public class OperationCreateRequest {
 
     private Integer maxNorm;
 
+    private Boolean normRequired;
+
     private Integer unitsPerProduct;
+
+    private Long workCodeCategoryId;
 }

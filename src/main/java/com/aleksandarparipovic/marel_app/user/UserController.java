@@ -2,14 +2,16 @@ package com.aleksandarparipovic.marel_app.user;
 
 import com.aleksandarparipovic.marel_app.user.dto.UserCreateRequest;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
+import com.aleksandarparipovic.marel_app.user.dto.UserOptionDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserUpdateRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/users")
@@ -38,6 +40,12 @@ public class UserController {
         return ResponseEntity.ok(result);
     }
 
+    @GetMapping("/active-users")
+    public ResponseEntity<List<UserOptionDto>> getActiveUserOptions(
+            @RequestParam(required = false) String userType
+    ) {
+        return ResponseEntity.ok(userService.getActiveUserOptions(userType));
+    }
 
     @PostMapping
     public ResponseEntity<UserDto> create(

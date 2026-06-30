@@ -26,8 +26,15 @@ public class EmployeeMapper {
         dto.setNormGraceDays(e.getNormGraceDays());
         dto.setProbationEndDate(e.getProbationEndDate());
         dto.setTransportAllowanceRsd(e.getTransportAllowanceRsd());
+        dto.setTransportAllowanceMode(e.getTransportAllowanceMode());
 
         dto.setNotes(e.getNotes());
+
+        dto.setMobilePhone(e.getMobilePhone());
+        dto.setHourlyRate(e.getHourlyRate());
+        dto.setDefaultWorkCategoryId(e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getId() : null);
+        dto.setDefaultWorkCategoryName(e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getCategoryName() : null);
+        dto.setWorksInCommercial(e.isWorksInCommercial());
 
         dto.setCreatedAt(e.getCreatedAt());
         dto.setUpdatedAt(e.getUpdatedAt());
@@ -43,6 +50,7 @@ public class EmployeeMapper {
         employeeBasicInfoDto.setId(e.getId());
         employeeBasicInfoDto.setFullName(e.getFullName());
         employeeBasicInfoDto.setEmployeeNo(e.getEmployeeNo());
+        employeeBasicInfoDto.setNotes(e.getNotes());
         return employeeBasicInfoDto;
     }
 }

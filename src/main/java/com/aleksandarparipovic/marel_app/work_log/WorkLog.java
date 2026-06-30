@@ -29,8 +29,8 @@ public class WorkLog {
     private WorkShift workShift;
 
     // Operation performed
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "operation_id")
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "operation_id", nullable = false)
     private Operation operation;
 
     // Production order
@@ -38,10 +38,17 @@ public class WorkLog {
     @JoinColumn(name = "production_order_id")
     private ProductionOrder productionOrder;
 
-    // Work code category
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "work_code_id")
+    // Work code category as entered by the user (original; never overwritten by recalc).
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "work_code_category_id", nullable = false)
     private WorkCodeCategory workCode;
+
+    // Bonus-effective category set by recalc when a night/weekend remap applies.
+    // NULL = no active remap (use workCode). Recomputed every recalc, so it reverts
+    // automatically when the bonus condition no longer holds.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "effective_work_code_category_id")
+    private WorkCodeCategory effectiveWorkCode;
 
     @Column(name = "start_at", nullable = false)
     private OffsetDateTime startAt;
@@ -53,11 +60,11 @@ public class WorkLog {
     @Column(name = "duration_min", insertable = false, updatable = false)
     private Integer durationMin;
 
-    @Column(name = "quantity", nullable = false)
-    private Integer quantity = 0;
+    @Column(name = "quantity")
+    private Integer quantity;
 
-    @Column(name = "scrap", nullable = false)
-    private Integer scrap = 0;
+    @Column(name = "scrap")
+    private Integer scrap;
 
     @Column(name = "note")
     private String note;
@@ -68,6 +75,18 @@ public class WorkLog {
     // Generated column
     @Column(name = "hourly_output", insertable = false, updatable = false)
     private BigDecimal hourlyOutput;
+
+    @Column(name = "norm_multiplier_snapshot", precision = 38, scale = 2)
+    private BigDecimal normMultiplierSnapshot;
+
+    @Column(name = "performance_rate", precision = 38, scale = 2)
+    private BigDecimal performanceRate;
+
+    @Column(name = "approved_performance_rate", precision = 38, scale = 2)
+    private BigDecimal approvedPerformanceRate;
+
+    @Column(name = "paid_minutes", precision = 38, scale = 2)
+    private BigDecimal paidMinutes;
 
     // DB-managed timestamps
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)

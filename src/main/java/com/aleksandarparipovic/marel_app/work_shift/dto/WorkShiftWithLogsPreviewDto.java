@@ -16,7 +16,7 @@ public record WorkShiftWithLogsPreviewDto(
         Instant startAt,
         Instant endAt,
         Integer totalMinutes,
-        String notes,
+        String note,
         Long employeeId,
         String employeeName,
         List<WorkLogPreviewDto> logs

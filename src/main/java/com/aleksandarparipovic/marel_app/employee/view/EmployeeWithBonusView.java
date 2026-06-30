@@ -19,11 +19,16 @@ public class EmployeeWithBonusView {
     private final LocalDate probationEndDate;
     private final String notes;
     private final BigDecimal transportAllowanceRsd;
+    private final String transportAllowanceMode;
     private final String categoryNo;
     private final Long categoryId;
     private final String categoryName;
     private final BigDecimal bonusAmount;
     private final LocalDate bonusStart;
     private final Boolean foreigner;
+    private final String mobilePhone;
+    private final BigDecimal hourlyRate;
+    private final Long defaultWorkCategoryId;
+    private final String defaultWorkCategoryName;
+    private final Boolean worksInCommercial;
 }
-

@@ -12,8 +12,10 @@ public class OperationWithProductNameDto {
     private String operationName;
     private Integer minNorm;
     private Integer maxNorm;
+    private Boolean normRequired;
     private LocalDate normDate;
     private Integer unitsPerProduct;
     private Long productId;
     private String productName;
+    private Long workCodeCategoryId;
 }

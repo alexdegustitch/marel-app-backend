@@ -16,12 +16,14 @@ public class OperationMapper {
         dto.setOperationName(o.getOpName());
         dto.setMinNorm(o.getMinNorm());
         dto.setMaxNorm(o.getMaxNorm());
+        dto.setNormRequired(o.isNormRequired());
         dto.setUnitsPerProduct(o.getUnitsPerProduct());
         dto.setNormDate(o.getNormDate());
         return dto;
     }
 
     public OperationBasicInfoDto toBasicDto(Operation o){
-        return new OperationBasicInfoDto(o.getId(), o.getOpName(), o.getMinNorm());
+        Long workCodeCategoryId = o.getWorkCodeCategory() != null ? o.getWorkCodeCategory().getId() : null;
+        return new OperationBasicInfoDto(o.getId(), o.getOpName(), o.getMinNorm(), workCodeCategoryId);
     }
 }

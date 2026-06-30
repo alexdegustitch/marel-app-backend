@@ -14,32 +14,20 @@ public interface ProductManufacturingTimeRepository
         extends JpaRepository<ProductManufacturingTime, Long>,
                 JpaSpecificationExecutor<ProductManufacturingTime> {
 
-    List<ProductManufacturingTime> findByOperation_IdAndActiveTrue(Long operationId);
+    List<ProductManufacturingTime> findByProduct_IdAndActiveTrue(Long productId);
 
-    List<ProductManufacturingTime> findByUser_IdAndActiveTrue(Long userId);
-
-    @Query("""
-        SELECT p FROM ProductManufacturingTime p
-        WHERE p.operation.id = :operationId
-          AND p.manufacturingDate = :date
-          AND p.active = true
-    """)
-    List<ProductManufacturingTime> findByOperationIdAndDate(
-            @Param("operationId") Long operationId,
-            @Param("date") LocalDate date
-    );
+    List<ProductManufacturingTime> findByUser_IdAndActiveTrueOrderByDateOfIssueDesc(Long userId);
 
     @Query("""
         SELECT p FROM ProductManufacturingTime p
-        WHERE p.operation.id = :operationId
-          AND p.manufacturingDate BETWEEN :from AND :to
+        WHERE p.product.id = :productId
+          AND p.dateOfIssue BETWEEN :from AND :to
           AND p.active = true
-        ORDER BY p.manufacturingDate DESC
+        ORDER BY p.dateOfIssue DESC
     """)
-    List<ProductManufacturingTime> findByOperationIdAndDateRange(
-            @Param("operationId") Long operationId,
+    List<ProductManufacturingTime> findByProductIdAndDateRange(
+            @Param("productId") Long productId,
             @Param("from") LocalDate from,
             @Param("to") LocalDate to
     );
 }
-

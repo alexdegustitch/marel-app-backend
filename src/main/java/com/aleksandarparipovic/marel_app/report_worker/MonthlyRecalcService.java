@@ -4,7 +4,8 @@ import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
 import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategory;
 import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategoryRepository;
-import com.aleksandarparipovic.marel_app.employee.Employee;
+import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
+import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecordService;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReport;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReportRepository;
 import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCategory;
@@ -13,13 +14,17 @@ import com.aleksandarparipovic.marel_app.notification.ReportNotificationService;
 import com.aleksandarparipovic.marel_app.recalc_queue.MonthlyRecalcQueue;
 import com.aleksandarparipovic.marel_app.recalc_queue.MonthlyRecalcQueueRepository;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
+import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -31,215 +36,273 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MonthlyRecalcService {
 
-    private static final int MAX_RETRY = 5;
-
     private final MonthlyRecalcQueueRepository queueRepo;
     private final MonthlyReportRepository reportRepo;
     private final MonthlyReportCategoryRepository categoryRepo;
     private final DailyReportRepository dailyReportRepo;
     private final DailyReportCategoryRepository dailyCategoryRepo;
     private final ReportNotificationService notificationService;
+    private final WorkCodeCategoryRepository workCodeCategoryRepository;
+    private final RecalcWorkerProperties properties;
+    private final MeterRegistry meterRegistry;
+    private final EmployeeRecordService employeeRecordService;
+    private final TransactionTemplate transactionTemplate;
 
-    @Transactional
     public void processJob(Long jobId) {
-        // ── 1. Lock job with pessimistic write lock (prevents concurrent workers) ──────
-        MonthlyRecalcQueue job = queueRepo.findByIdForUpdate(jobId)
+        long startedAt = System.nanoTime();
+        MonthlyRecalcQueue snapshot = queueRepo.findById(jobId)
                 .orElseThrow(() -> new IllegalStateException("Monthly recalc job not found: " + jobId));
 
-        // ── Double-execution protection ───────────────────────────────────────────────
-        if ("PROCESSED".equals(job.getStatus())) {
-            log.debug("Monthly recalc job {} already PROCESSED, skipping", jobId);
-            return;
-        }
-        if ("FAILED".equals(job.getStatus())) {
-            log.debug("Monthly recalc job {} already FAILED, skipping", jobId);
+        if (!"IN_PROGRESS".equals(snapshot.getStatus())) {
             return;
         }
 
-        // ── 2. Mark as PROCESSING (atomic update) ─────────────────────────────────────
-        job.setStatus("PROCESSING");
-        queueRepo.save(job);
+        int claimedVersion = snapshot.getVersion() == null ? 0 : snapshot.getVersion();
+        Long employeeId = snapshot.getEmployee().getId();
+        int year = snapshot.getReportYear();
+        int month = snapshot.getReportMonth();
 
-        Employee employee = job.getEmployee();
-        int year  = job.getReportYear();
-        int month = job.getReportMonth();
-
-        // ── 3. Load all daily reports for employee/month ──────────────────────────────
         LocalDate start = LocalDate.of(year, month, 1);
-        LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
-        List<DailyReport> dailyReports =
-                dailyReportRepo.findByEmployee_IdAndWorkDateBetween(employee.getId(), start, end);
+        LocalDate end = start.withDayOfMonth(start.lengthOfMonth());
 
-        // ── 4. Aggregate from daily reports (single pass) ─────────────────────────────
-        AggregateData agg = aggregateDailyReportsInSinglePass(dailyReports);
+        // Heavy reads stay outside the short write transaction.
+        List<DailyReport> dailyReports = dailyReportRepo.findByEmployee_IdAndWorkDateBetween(employeeId, start, end);
+        List<Long> dailyReportIds = dailyReports.stream().map(DailyReport::getId).toList();
+        List<DailyReportCategory> dailyCategories = dailyReportIds.isEmpty()
+                ? List.of()
+                : dailyCategoryRepo.findAllByDailyReportIds(dailyReportIds);
 
-        // ── 5. Upsert MonthlyReport ──────────────────────────────────────────────────
-        MonthlyReport report = reportRepo.findByEmployee_IdAndReportYearAndReportMonth(
-                        employee.getId(), year, month)
+        Boolean processed = transactionTemplate.execute(status -> processJobWritePhase(
+                jobId,
+                claimedVersion,
+                employeeId,
+                year,
+                month,
+                start,
+                end,
+                dailyReports,
+                dailyCategories,
+                startedAt
+        ));
+
+        if (!Boolean.TRUE.equals(processed)) {
+            return;
+        }
+    }
+
+    private boolean processJobWritePhase(Long jobId,
+                                         int claimedVersion,
+                                         Long employeeId,
+                                         int year,
+                                         int month,
+                                         LocalDate start,
+                                         LocalDate end,
+                                         List<DailyReport> dailyReports,
+                                         List<DailyReportCategory> dailyCategories,
+                                         long startedAt) {
+        EmployeeRecord employeeRecord = employeeRecordService.getOrCreateMonthlyRecord(employeeId, start);
+
+        MonthlyReport report = reportRepo.findByEmployeeRecord_Id(employeeRecord.getId())
                 .orElseGet(() -> MonthlyReport.builder()
-                        .employee(employee)
-                        .reportYear(year)
-                        .reportMonth(month)
+                        .employeeRecord(employeeRecord)
+                        .startDate(start)
+                        .endDate(end)
                         .version(0)
+                        .calcVersion(0)
+                        .totalWorkMinutes(0)
+                        .totalApprovedMinutes(0)
+                        .totalShiftMinutes(0)
+                        .totalQuantity(0)
+                        .totalScrap(0)
+                        .totalAbsencePaidMinutes(0)
+                        .totalAbsenceUnpaidMinutes(0)
+                        .totalAbsenceMinutes(0)
+                        .totalSickLeavePaidMinutes(0)
+                        .totalSickLeaveUnpaidMinutes(0)
+                        .totalSickLeaveMinutes(0)
+                        .totalWeightedNormMinutes(BigDecimal.ZERO)
                         .build());
 
-        report.setTotalShiftMinutes(agg.totalShiftMinutes);
-        report.setTotalWorkMinutes(agg.totalWorkMinutes);
-        report.setTotalAbsenceMinutes(agg.totalAbsenceMinutes);
-        report.setTotalPaidAbsenceMinutes(agg.totalPaidAbsenceMinutes);
-        report.setTotalUnpaidAbsenceMinutes(agg.totalUnpaidAbsenceMinutes);
-        report.setTotalCompensatedMinutes(agg.totalCompensatedMinutes);
-        report.setTotalApprovedMinutes(agg.totalApprovedMinutes);
-        report.setTotalQuantity(agg.totalQuantity);
-        report.setTotalScrap(agg.totalScrap);
-        report.setTotalEffectiveMinutes(agg.totalEffective);
-        report.setMealAllowanceNum(agg.mealAllowanceNum);
-        report.setCalcVersion((report.getCalcVersion() != null ? report.getCalcVersion() : 0) + 1);
-        report.setLastRecalculatedAt(OffsetDateTime.now());
-        if (report.getStatus() == null) report.setStatus("OPEN");
-
-        MonthlyReport savedReport = reportRepo.save(report);
-        // NOTE: @Version on MonthlyReport is auto-incremented by Hibernate on save()
-        //       This version is used by payroll items as an indicator of staleness.
-
-        // ── 6. Bulk DELETE then rebuild MonthlyReportCategories ──────────────────────
-        categoryRepo.deleteAllByMonthlyReportId(savedReport.getId());
-
-        List<Long> dailyReportIds = dailyReports.stream().map(DailyReport::getId).toList();
-        if (!dailyReportIds.isEmpty()) {
-            List<DailyReportCategory> dailyCats =
-                    dailyCategoryRepo.findAllByDailyReportIds(dailyReportIds);
-
-            Map<Long, List<DailyReportCategory>> byCat = dailyCats.stream()
-                    .collect(Collectors.groupingBy(dc -> dc.getWorkCodeCategory().getId()));
-
-            List<MonthlyReportCategory> monthlyCats = byCat.entrySet().stream().map(e -> {
-                List<DailyReportCategory> dcs = e.getValue();
-                WorkCodeCategory wcc  = dcs.getFirst().getWorkCodeCategory();
-
-                int catMinutes = 0, catApproved = 0, catQty = 0, catScrap = 0;
-                BigDecimal wn = BigDecimal.ZERO;
-
-                for (DailyReportCategory dc : dcs) {
-                    catMinutes += dc.getTotalMinutes() != null ? dc.getTotalMinutes() : 0;
-                    catApproved += dc.getTotalApprovedMinutes() != null ? dc.getTotalApprovedMinutes() : 0;
-                    catQty += dc.getTotalQuantity() != null ? dc.getTotalQuantity() : 0;
-                    catScrap += dc.getTotalScrap() != null ? dc.getTotalScrap() : 0;
-                    wn = wn.add(dc.getTotalWeightedNormMinutes() != null ? dc.getTotalWeightedNormMinutes() : BigDecimal.ZERO);
-                }
-
-                BigDecimal effHrs = BigDecimal.valueOf(catApproved)
-                        .divide(BigDecimal.valueOf(60), 4, RoundingMode.HALF_UP);
-
-                return MonthlyReportCategory.builder()
-                        .monthlyReport(savedReport)
-                        .workCodeCategory(wcc)
-                        .totalMinutes(catMinutes)
-                        .totalPaidMinutes(catApproved)
-                        .totalQuantity(catQty)
-                        .totalScrap(catScrap)
-                        .weightedNormMinutes(wn)
-                        .effectiveHours(effHrs)
-                        .sourceType(wcc.getType() != null ? wcc.getType() : "WORK")
-                        .build();
-            }).toList();
-
-            categoryRepo.saveAll(monthlyCats);
+        if (report.getId() == null) {
+            // Persist once to guarantee stable FK target for full category rebuilds.
+            report = reportRepo.saveAndFlush(report);
         }
 
-        // ── 7. Mark job PROCESSED ───────────────────────────────────────────────────
-        job.setStatus("PROCESSED");
-        job.setProcessedAt(OffsetDateTime.now());
-        queueRepo.save(job);
+        MonthlyRecalcQueue locked = queueRepo.findByIdForUpdate(jobId)
+                .orElseThrow(() -> new IllegalStateException("Monthly recalc job not found after claim: " + jobId));
+
+        int latestVersion = locked.getVersion() == null ? 0 : locked.getVersion();
+        if (!"IN_PROGRESS".equals(locked.getStatus()) || latestVersion != claimedVersion) {
+            locked.setStatus("PENDING");
+            locked.setClaimedAt(null);
+            locked.setClaimedBy(null);
+            locked.setRequestedAt(OffsetDateTime.now());
+            queueRepo.save(locked);
+            log.debug("Monthly job {} rescheduled due to newer version {} > {}", jobId, latestVersion, claimedVersion);
+            meterRegistry.counter("recalc.jobs.rescheduled", "type", "monthly").increment();
+            return false;
+        }
+
+        if (report.getId() != null) {
+            categoryRepo.deleteAllByMonthlyReportId(report.getId());
+        }
+
+        List<MonthlyReportCategory> monthlyCategories = buildMonthlyCategories(dailyCategories, report);
+        if (!monthlyCategories.isEmpty()) {
+            categoryRepo.saveAll(monthlyCategories);
+        }
+
+        fillMonthlyTotals(report, dailyReports, monthlyCategories, start);
+        MonthlyReport savedReport = reportRepo.saveAndFlush(report);
+        categoryRepo.flush();
+
+        locked.setStatus("DONE");
+        locked.setProcessedAt(OffsetDateTime.now());
+        locked.setClaimedAt(null);
+        locked.setClaimedBy(null);
+        queueRepo.save(locked);
+
+        if (locked.getRequestedAt() != null) {
+            meterRegistry.timer("recalc.queue.latency", "type", "monthly")
+                    .record(Duration.between(locked.getRequestedAt(), locked.getProcessedAt()));
+        }
 
         log.info("Monthly report recalculated for employee={} {}/{} version={}",
-                employee.getId(), year, month, report.getVersion());
+                employeeId, year, month, savedReport.getVersion());
 
-        // ── 8. Emit WebSocket notification ───────────────────────────────────────────
-        notificationService.sendMonthlyReportUpdate(employee.getId(), year, month);
+        notificationService.sendMonthlyReportUpdate(employeeRecord.getId());
+        meterRegistry.counter("recalc.jobs.processed", "type", "monthly").increment();
+        meterRegistry.timer("recalc.job.duration", "type", "monthly")
+                .record(Duration.ofNanos(System.nanoTime() - startedAt));
+
+        return true;
     }
 
     @Transactional
     public void markFailed(Long jobId, String errorMessage) {
         queueRepo.findById(jobId).ifPresent(job -> {
             int retries = job.getRetryCount() != null ? job.getRetryCount() : 0;
-            job.setRetryCount(retries + 1);
-            job.setErrorMessage(errorMessage);
-            job.setStatus((retries + 1) >= MAX_RETRY ? "FAILED" : "PENDING");
-            if (!"FAILED".equals(job.getStatus())) {
-                job.setLockedAt(null);
-                job.setLockedBy(null);
+            int next = retries + 1;
+            job.setRetryCount(next);
+            job.setLastError(errorMessage);
+            job.setClaimedAt(null);
+            job.setClaimedBy(null);
+
+            if (next >= properties.getMaxRetry()) {
+                job.setStatus("FAILED");
+                job.setProcessedAt(OffsetDateTime.now());
+                meterRegistry.counter("recalc.jobs.failed", "type", "monthly").increment();
+            } else {
+                long backoffMs = computeBackoffMs(next);
+                job.setStatus("PENDING");
+                job.setRequestedAt(OffsetDateTime.now().plusNanos(backoffMs * 1_000_000));
+                meterRegistry.counter("recalc.jobs.retry", "type", "monthly").increment();
             }
             queueRepo.save(job);
         });
     }
 
-    // ─── Helpers ────────────────────────────────────────────────────────────────────
-
-    /** Single-pass aggregation to avoid multiple stream iterations. */
-    private AggregateData aggregateDailyReportsInSinglePass(List<DailyReport> reports) {
-        int totalShiftMinutes = 0;
-        int totalWorkMinutes = 0;
-        int totalAbsenceMinutes = 0;
-        int totalPaidAbsenceMinutes = 0;
-        int totalUnpaidAbsenceMinutes = 0;
-        int totalCompensatedMinutes = 0;
-        int totalApprovedMinutes = 0;
-        int totalQuantity = 0;
-        int totalScrap = 0;
-        int mealAllowanceNum = 0;
-        BigDecimal totalEffective = BigDecimal.ZERO;
-
-        for (DailyReport dr : reports) {
-            totalShiftMinutes += dr.getTotalShiftMinutes() != null ? dr.getTotalShiftMinutes() : 0;
-            totalWorkMinutes += dr.getTotalWorkMinutes() != null ? dr.getTotalWorkMinutes() : 0;
-            totalAbsenceMinutes += dr.getTotalAbsenceMinutes() != null ? dr.getTotalAbsenceMinutes() : 0;
-            totalPaidAbsenceMinutes += dr.getTotalPaidAbsenceMinutes() != null ? dr.getTotalPaidAbsenceMinutes() : 0;
-            totalUnpaidAbsenceMinutes += dr.getTotalUnpaidAbsenceMinutes() != null ? dr.getTotalUnpaidAbsenceMinutes() : 0;
-            totalCompensatedMinutes += dr.getTotalCompensatedMinutes() != null ? dr.getTotalCompensatedMinutes() : 0;
-            totalApprovedMinutes += dr.getTotalApprovedMinutes() != null ? dr.getTotalApprovedMinutes() : 0;
-            totalQuantity += dr.getTotalQuantity() != null ? dr.getTotalQuantity() : 0;
-            totalScrap += dr.getTotalScrap() != null ? dr.getTotalScrap() : 0;
-            mealAllowanceNum += dr.getMealAllowanceNum() != null ? dr.getMealAllowanceNum() : 0;
-            totalEffective = totalEffective.add(dr.getTotalWeightedNormMinutes() != null ? dr.getTotalWeightedNormMinutes() : BigDecimal.ZERO);
-        }
-
-        return new AggregateData(
-            totalShiftMinutes, totalWorkMinutes, totalAbsenceMinutes,
-            totalPaidAbsenceMinutes, totalUnpaidAbsenceMinutes, totalCompensatedMinutes,
-            totalApprovedMinutes, totalQuantity, totalScrap, mealAllowanceNum, totalEffective
-        );
+    private long computeBackoffMs(int retryCount) {
+        long baseMs = Math.max(1L, properties.getBaseBackoffMs());
+        return Math.min(300_000L, baseMs * (1L << Math.min(retryCount, 10)));
     }
 
-    private static class AggregateData {
-        int totalShiftMinutes;
-        int totalWorkMinutes;
-        int totalAbsenceMinutes;
-        int totalPaidAbsenceMinutes;
-        int totalUnpaidAbsenceMinutes;
-        int totalCompensatedMinutes;
-        int totalApprovedMinutes;
-        int totalQuantity;
-        int totalScrap;
-        int mealAllowanceNum;
-        BigDecimal totalEffective;
-
-        AggregateData(int totalShiftMinutes, int totalWorkMinutes, int totalAbsenceMinutes,
-                int totalPaidAbsenceMinutes, int totalUnpaidAbsenceMinutes, int totalCompensatedMinutes,
-                int totalApprovedMinutes, int totalQuantity, int totalScrap, int mealAllowanceNum,
-                BigDecimal totalEffective) {
-            this.totalShiftMinutes = totalShiftMinutes;
-            this.totalWorkMinutes = totalWorkMinutes;
-            this.totalAbsenceMinutes = totalAbsenceMinutes;
-            this.totalPaidAbsenceMinutes = totalPaidAbsenceMinutes;
-            this.totalUnpaidAbsenceMinutes = totalUnpaidAbsenceMinutes;
-            this.totalCompensatedMinutes = totalCompensatedMinutes;
-            this.totalApprovedMinutes = totalApprovedMinutes;
-            this.totalQuantity = totalQuantity;
-            this.totalScrap = totalScrap;
-            this.mealAllowanceNum = mealAllowanceNum;
-            this.totalEffective = totalEffective;
+    private List<MonthlyReportCategory> buildMonthlyCategories(List<DailyReportCategory> dailyCategories, MonthlyReport report) {
+        if (dailyCategories.isEmpty()) {
+            return List.of();
         }
+
+        Map<Long, List<DailyReportCategory>> byCategory = dailyCategories.stream()
+                .collect(Collectors.groupingBy(dc -> dc.getWorkCodeCategory().getId()));
+
+        return byCategory.values().stream().map(rows -> {
+            WorkCodeCategory category = rows.getFirst().getWorkCodeCategory();
+            int totalMinutes = rows.stream().mapToInt(c -> safeInt(c.getTotalMinutes())).sum();
+            int totalPaidMinutes = rows.stream().mapToInt(c -> safeInt(c.getTotalPaidMinutes())).sum();
+            int totalQuantity = rows.stream().mapToInt(c -> safeInt(c.getTotalQuantity())).sum();
+            int totalScrap = rows.stream().mapToInt(c -> safeInt(c.getTotalScrap())).sum();
+            BigDecimal totalWeightedNormMinutes = rows.stream()
+                    .map(DailyReportCategory::getTotalWeightedNormMinutes)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .setScale(4, RoundingMode.HALF_UP);
+
+            return MonthlyReportCategory.builder()
+                    .monthlyReport(report)
+                    .workCodeCategory(category)
+                    .totalMinutes(totalMinutes)
+                    .totalPaidMinutes(totalPaidMinutes)
+                    .totalQuantity(totalQuantity)
+                    .totalScrap(totalScrap)
+                    .totalWeightedNormMinutes(totalWeightedNormMinutes)
+                    .totalApprovedMinutes(null)
+                    .sourceType(category.getType() != null ? category.getType() : "WORK")
+                    .build();
+        }).toList();
+    }
+
+    private void fillMonthlyTotals(MonthlyReport report,
+                                   List<DailyReport> dailyReports,
+                                   List<MonthlyReportCategory> monthlyCategories,
+                                   LocalDate periodStart) {
+        int totalShiftMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalShiftMinutes())).sum();
+        int totalWorkMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalWorkMinutes())).sum();
+        int totalAbsencePaidMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalAbsencePaidMinutes())).sum();
+        int totalAbsenceUnpaidMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalAbsenceUnpaidMinutes())).sum();
+        int totalAbsenceMinutes = totalAbsencePaidMinutes + totalAbsenceUnpaidMinutes;
+        int totalSickLeavePaidMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalSickLeavePaidMinutes())).sum();
+        int totalSickLeaveUnpaidMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalSickLeaveUnpaidMinutes())).sum();
+        int totalSickLeaveMinutes = totalSickLeavePaidMinutes + totalSickLeaveUnpaidMinutes;
+        int totalQuantity = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalQuantity())).sum();
+        int totalScrap = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalScrap())).sum();
+        int mealAllowanceNum = dailyReports.stream().mapToInt(dr -> safeInt(dr.getMealsCount())).sum();
+
+        BigDecimal totalWeightedNormMinutes = monthlyCategories.stream()
+                .map(MonthlyReportCategory::getTotalWeightedNormMinutes)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(4, RoundingMode.HALF_UP);
+
+        BigDecimal totalApprovedMinutes = monthlyCategories.stream()
+                .map(mc -> mc.getTotalWeightedNormMinutes().multiply(resolveMultiplier(mc.getWorkCodeCategory(), periodStart)))
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(4, RoundingMode.HALF_UP);
+
+        BigDecimal performanceCoefficient = totalShiftMinutes > 0
+                ? totalWeightedNormMinutes.divide(BigDecimal.valueOf(totalShiftMinutes), 6, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
+
+        report.setTotalShiftMinutes(totalShiftMinutes);
+        report.setTotalWorkMinutes(totalWorkMinutes);
+        report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes);
+        report.setTotalAbsenceUnpaidMinutes(totalAbsenceUnpaidMinutes);
+        report.setTotalAbsenceMinutes(totalAbsenceMinutes);
+        report.setTotalSickLeavePaidMinutes(totalSickLeavePaidMinutes);
+        report.setTotalSickLeaveUnpaidMinutes(totalSickLeaveUnpaidMinutes);
+        report.setTotalSickLeaveMinutes(totalSickLeaveMinutes);
+        report.setTotalApprovedMinutes(totalApprovedMinutes.setScale(0, RoundingMode.HALF_UP).intValue());
+        report.setTotalQuantity(totalQuantity);
+        report.setTotalScrap(totalScrap);
+        report.setTotalWeightedNormMinutes(totalWeightedNormMinutes);
+        report.setMealAllowanceNum(mealAllowanceNum);
+        report.setPerformanceCoefficient(performanceCoefficient);
+        report.setApprovedPerformanceCoefficient(performanceCoefficient);
+        report.setPerformanceRate(performanceCoefficient.multiply(BigDecimal.valueOf(100)).setScale(4, RoundingMode.HALF_UP));
+        report.setApprovedPerformanceRate(performanceCoefficient.multiply(BigDecimal.valueOf(100)).setScale(4, RoundingMode.HALF_UP));
+        report.setCalcVersion((report.getCalcVersion() != null ? report.getCalcVersion() : 0) + 1);
+        report.setLastRecalculatedAt(OffsetDateTime.now());
+        if (report.getStatus() == null) {
+            report.setStatus("OPEN");
+        }
+    }
+
+    private BigDecimal resolveMultiplier(WorkCodeCategory category, LocalDate atDate) {
+        if (category == null || category.getCategoryNo() == null) {
+            return BigDecimal.ONE;
+        }
+        return workCodeCategoryRepository.findEffectiveNormMultiplier(category.getCategoryNo(), atDate)
+                .orElse(BigDecimal.valueOf(category.getNormMultiplier() == null ? 1d : category.getNormMultiplier()));
+    }
+
+    private int safeInt(Integer value) {
+        return value == null ? 0 : value;
     }
 }
-

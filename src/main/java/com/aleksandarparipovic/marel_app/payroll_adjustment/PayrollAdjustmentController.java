@@ -1,5 +1,9 @@
 package com.aleksandarparipovic.marel_app.payroll_adjustment;
 
+import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentCreateRequest;
+import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentResponse;
+import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentUpdateRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,23 +18,23 @@ public class PayrollAdjustmentController {
     private final PayrollAdjustmentService payrollAdjustmentService;
 
     @GetMapping
-    public ResponseEntity<List<PayrollAdjustment>> findAll() {
+    public ResponseEntity<List<PayrollAdjustmentResponse>> findAll() {
         return ResponseEntity.ok(payrollAdjustmentService.findAll());
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<PayrollAdjustment> findById(@PathVariable Long id) {
+    public ResponseEntity<PayrollAdjustmentResponse> findById(@PathVariable Long id) {
         return ResponseEntity.ok(payrollAdjustmentService.findById(id));
     }
 
     @PostMapping
-    public ResponseEntity<PayrollAdjustment> create(@RequestBody PayrollAdjustment entity) {
-        return ResponseEntity.ok(payrollAdjustmentService.create(entity));
+    public ResponseEntity<PayrollAdjustmentResponse> create(@Valid @RequestBody PayrollAdjustmentCreateRequest request) {
+        return ResponseEntity.ok(payrollAdjustmentService.create(request));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<PayrollAdjustment> update(@PathVariable Long id, @RequestBody PayrollAdjustment entity) {
-        return ResponseEntity.ok(payrollAdjustmentService.update(id, entity));
+    public ResponseEntity<PayrollAdjustmentResponse> update(@PathVariable Long id, @RequestBody PayrollAdjustmentUpdateRequest request) {
+        return ResponseEntity.ok(payrollAdjustmentService.update(id, request));
     }
 
     @DeleteMapping("/{id}")

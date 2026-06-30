@@ -1,7 +1,6 @@
 package com.aleksandarparipovic.marel_app.operation.repository;
 
 import com.aleksandarparipovic.marel_app.operation.Operation;
-import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductInfoRow;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductNameDto;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -19,30 +18,7 @@ public interface OperationRepository extends JpaRepository<Operation, Long>, Jpa
 
     List<Operation> findByProductIdInAndArchivedAtIsNull(List<Long> productIds);
 
-    @Query("""
-    select new com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductInfoRow(
-      o.id,
-      p.id,
-      o.opName,
-      p.productName,
-      o.minNorm,
-      o.maxNorm,
-      o.unitsPerProduct,
-      o.normDate,
-      (
-        select count(o2.id)
-        from Operation o2
-        where o2.product = p
-          and o2.archivedAt is null
-      )
-    )
-    from Operation o
-    join o.product p
-    where o.archivedAt is null
-      and p.archivedAt is null
-      and o.id = :id
-    """)
-    Optional<OperationWithProductInfoRow> findOperationWithProductById(@Param("id") Long id);
+    long countByProduct_IdAndArchivedAtIsNull(Long productId);
 
     @Query("""
 select new com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductNameDto(
@@ -50,13 +26,16 @@ select new com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductN
     o.opName,
     o.minNorm,
     o.maxNorm,
+    o.normRequired,
     o.normDate,
     o.unitsPerProduct,
     p.id,
-    p.productName
+    p.productName,
+    wcc.id
 )
 from Operation o
 join o.product p
+left join o.workCodeCategory wcc
 where o.id = :id
 """)
     Optional<OperationWithProductNameDto> findByIdWithProduct(@Param("id") Long id);

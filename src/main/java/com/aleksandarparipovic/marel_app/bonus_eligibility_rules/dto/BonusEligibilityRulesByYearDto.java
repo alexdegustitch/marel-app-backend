@@ -4,6 +4,5 @@ import java.util.List;
 
 public record BonusEligibilityRulesByYearDto(
         Integer year,
-        List<BonusEligibilityRuleResponse> rules
+        List<BonusEligibilityRulesByMonthDto> months
 ) {}
-

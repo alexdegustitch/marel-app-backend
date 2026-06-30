@@ -16,6 +16,9 @@ public interface MonthlyRecalcQueueRepository extends JpaRepository<MonthlyRecal
     boolean existsByEmployee_IdAndReportYearAndReportMonthAndStatusIn(
             Long employeeId, Integer year, Integer month, Collection<String> statuses);
 
+    Optional<MonthlyRecalcQueue> findFirstByEmployee_IdAndReportYearAndReportMonthAndStatusIn(
+            Long employeeId, Integer year, Integer month, Collection<String> statuses);
+
     /** Pessimistic WRITE lock — prevents concurrent workers from loading same job. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT mjq FROM MonthlyRecalcQueue mjq WHERE mjq.id = :id")

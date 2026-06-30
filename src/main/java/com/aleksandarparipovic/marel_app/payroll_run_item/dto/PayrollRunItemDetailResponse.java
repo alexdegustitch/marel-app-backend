@@ -10,7 +10,7 @@ import java.util.List;
 public class PayrollRunItemDetailResponse {
     private final PayrollRunItemResponse summary;
     private final List<PayrollRunItemCategoryDetailDto> categories;
-    private final List<PayrollAdjustmentDetailDto> adjustments;
+    private final List<PayrollAdjustmentSectionDto> adjustments;
     private final PayrollRunItemPermissionsDto permissions;
 }
 

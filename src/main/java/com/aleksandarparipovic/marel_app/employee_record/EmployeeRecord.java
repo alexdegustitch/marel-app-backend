@@ -7,6 +7,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -39,7 +40,7 @@ public class EmployeeRecord {
     private LocalDate endDate;
 
     @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @Column(name = "created_at", updatable = false, insertable = false)
     private OffsetDateTime createdAt;
 
     @UpdateTimestamp
@@ -51,5 +52,17 @@ public class EmployeeRecord {
 
     @Column(name = "is_active", nullable = false)
     private Boolean active = true;
+
+    @PrePersist
+    @PreUpdate
+    void normalizeMonthWindow() {
+        if (startDate == null) {
+            return;
+        }
+        YearMonth yearMonth = YearMonth.from(startDate);
+        this.startDate = yearMonth.atDay(1);
+        this.endDate = yearMonth.atEndOfMonth();
+    }
 }
+
 

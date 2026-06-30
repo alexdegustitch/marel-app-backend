@@ -23,6 +23,9 @@ public class RecalcWorkerProperties {
     private int stuckRecoveryBatch = 20;
     private long stuckTimeoutSeconds = 300;
 
+    private long minIdleSleepMs = 100;
+    private long maxIdleSleepMs = 2000;
+
     private long dailyIdleMinMs = 200;
     private long dailyIdleMaxMs = 2000;
     private long monthlyIdleMinMs = 300;
@@ -33,5 +36,16 @@ public class RecalcWorkerProperties {
     private long websocketDebounceMs = 300;
 
     private long metricsLogIntervalMs = 60000;
-}
 
+    private long pendingWarnThresholdDaily = 500;
+    private long pendingWarnThresholdMonthly = 200;
+    private long pendingLatencyWarnSecondsDaily = 300;
+    private long pendingLatencyWarnSecondsMonthly = 300;
+    private long warnCooldownMs = 60000;
+
+    private boolean cleanupEnabled = true;
+    private long cleanupIntervalMs = 60000;
+    private long cleanupInitialDelayMs = 30000;
+    private int cleanupBatchSize = 200;
+    private long doneRetentionDays = 7;
+}

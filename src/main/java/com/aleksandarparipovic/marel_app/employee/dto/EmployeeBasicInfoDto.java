@@ -7,4 +7,5 @@ public class EmployeeBasicInfoDto {
     private Long id;
     private String fullName;
     private String employeeNo;
+    private String notes;
 }

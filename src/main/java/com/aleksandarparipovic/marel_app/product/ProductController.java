@@ -1,10 +1,11 @@
 package com.aleksandarparipovic.marel_app.product;
 
 import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
+import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductOptionDto;
-import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationCountRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
@@ -19,6 +20,11 @@ import java.util.List;
 public class ProductController {
 
     private final ProductService productService;
+
+    @PostMapping
+    public ResponseEntity<ProductBaseRow> createProduct(@Valid @RequestBody ProductCreateRequest request) {
+        return ResponseEntity.ok(productService.createProduct(request));
+    }
 
     @PostMapping("/search-all")
     public Page<ProductWithOperationListRow> searchAll(@RequestBody SearchRequest request){

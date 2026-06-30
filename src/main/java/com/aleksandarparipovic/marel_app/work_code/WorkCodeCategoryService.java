@@ -16,7 +16,7 @@ public class WorkCodeCategoryService {
     private final WorkCodeCategoryMapper mapper;
 
     public List<WorkCodeCategoryDto> getAllWorkCodeCategories(){
-        return workCodeCategoryRepository.findByArchivedAtIsNullOrderByCategoryNo()
+        return workCodeCategoryRepository.findByArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
                 .stream()
                 .map(mapper::mapToDto)
                 .toList();

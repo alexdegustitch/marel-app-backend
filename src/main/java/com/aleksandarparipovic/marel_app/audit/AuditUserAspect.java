@@ -19,11 +19,9 @@ public class AuditUserAspect {
 
     @Before("within(@org.springframework.stereotype.Service *)")
     public void setAuditUser() {
-        System.out.println("Izvrsilo se");
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {
             return;
         }
-        System.out.println("Transakcija aktivna");
         Long userId = getCurrentUserId();
         if (userId == null) return;
 
@@ -41,7 +39,6 @@ public class AuditUserAspect {
                 SecurityContextHolder.getContext().getAuthentication();
 
         if (authentication == null || !authentication.isAuthenticated()) {
-            System.out.println("SOMETHING IS NULL");
             return null;
         }
 
@@ -52,7 +49,6 @@ public class AuditUserAspect {
         }
 
         if (principal instanceof String principalName && "anonymousUser".equals(principalName)) {
-            System.out.println("SOMETHING IS NULL");
             return null;
         }
 

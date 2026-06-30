@@ -19,5 +19,9 @@ public class OperationUpdateRequest {
 
     private Integer maxNorm;
 
+    private Boolean normRequired;
+
     private Integer unitsPerProduct;
+
+    private Long workCodeCategoryId;
 }

@@ -28,13 +28,49 @@ public class AppSetting {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "max_efficiency_percent", nullable = false)
-    private BigDecimal maxEfficiencyPercent;
+    @Column(name = "setting_key", nullable = false)
+    private String settingKey;
+
+    @Column(name = "value_type")
+    private String valueType;
+
+    @Column(name = "affects_payroll")
+    private Boolean affectsPayroll;
+
+    @Column(name = "description")
+    private String description;
+
+    @Column(name = "is_active", nullable = false)
+    private Boolean isActive;
 
     @Column(name = "valid_from", nullable = false)
     private OffsetDateTime validFrom;
 
     @Column(name = "valid_until")
     private OffsetDateTime validUntil;
+
+    @Column(name = "created_at", updatable = false)
+    private OffsetDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
+
+    @Column(name = "archived_at")
+    private OffsetDateTime archivedAt;
+
+    @Column(name = "setting_value_text")
+    private String settingValueText;
+
+    @Column(name = "setting_value_numeric")
+    private BigDecimal settingValueNumeric;
+
+    @Column(name = "setting_value_boolean")
+    private Boolean settingValueBoolean;
+
+    @Column(name = "display_text")
+    private String displayText;
+
+    @Column(name = "unit")
+    private String unit;
 }
 

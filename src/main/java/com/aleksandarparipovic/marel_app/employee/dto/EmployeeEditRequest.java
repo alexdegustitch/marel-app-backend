@@ -28,8 +28,19 @@ public class EmployeeEditRequest {
     @Min(0)
     private BigDecimal transportAllowanceRsd;
 
+    private String transportAllowanceMode;
+
     @NotNull
     private LocalDate employmentStartDate;
 
     private String notes;
+
+    private String mobilePhone;
+
+    @Min(0)
+    private BigDecimal hourlyRate;
+
+    private Long defaultWorkCategoryId;
+
+    private Boolean worksInCommercial;
 }

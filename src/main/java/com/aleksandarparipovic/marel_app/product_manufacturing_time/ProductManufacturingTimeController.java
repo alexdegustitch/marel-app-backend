@@ -39,17 +39,22 @@ public class ProductManufacturingTimeController {
         return ResponseEntity.ok(service.getById(id));
     }
 
-    @GetMapping("/by-operation/{operationId}")
-    public ResponseEntity<List<ProductManufacturingTimeDto>> getByOperationId(@PathVariable Long operationId) {
-        return ResponseEntity.ok(service.getByOperationId(operationId));
+    @GetMapping("/my")
+    public ResponseEntity<List<ProductManufacturingTimeDto>> getForCurrentUser(Authentication authentication) {
+        return ResponseEntity.ok(service.getForCurrentUser(authentication));
     }
 
-    @GetMapping("/by-operation/{operationId}/range")
-    public ResponseEntity<List<ProductManufacturingTimeDto>> getByOperationIdAndDateRange(
-            @PathVariable Long operationId,
+    @GetMapping("/by-product/{productId}")
+    public ResponseEntity<List<ProductManufacturingTimeDto>> getByProductId(@PathVariable Long productId) {
+        return ResponseEntity.ok(service.getByProductId(productId));
+    }
+
+    @GetMapping("/by-product/{productId}/range")
+    public ResponseEntity<List<ProductManufacturingTimeDto>> getByProductIdAndDateRange(
+            @PathVariable Long productId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return ResponseEntity.ok(service.getByOperationIdAndDateRange(operationId, from, to));
+        return ResponseEntity.ok(service.getByProductIdAndDateRange(productId, from, to));
     }
 
     @DeleteMapping("/{id}")
@@ -58,4 +63,3 @@ public class ProductManufacturingTimeController {
         return ResponseEntity.noContent().build();
     }
 }
-

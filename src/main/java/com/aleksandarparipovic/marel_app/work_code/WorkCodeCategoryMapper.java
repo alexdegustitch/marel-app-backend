@@ -7,7 +7,18 @@ import org.springframework.stereotype.Component;
 public class WorkCodeCategoryMapper {
 
     WorkCodeCategoryDto mapToDto(WorkCodeCategory category){
-        return new WorkCodeCategoryDto(category.getId(), category.getCategoryNo(), category.getCategoryName(), category.getNormMultiplier());
+        return new WorkCodeCategoryDto(
+                category.getId(),
+                category.getCategoryNo(),
+                category.getCategoryName(),
+                category.getNormMultiplier(),
+                category.getNote(),
+                category.getHourlyRate(),
+                category.getFixedHourlyRate(),
+                category.getAffectsMealAllowance(),
+                category.getDisplayOrder(),
+                category.getBaseCategory()
+        );
     }
 
 }

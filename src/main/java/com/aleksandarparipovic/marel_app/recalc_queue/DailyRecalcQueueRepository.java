@@ -15,6 +15,8 @@ public interface DailyRecalcQueueRepository extends JpaRepository<DailyRecalcQue
 
     boolean existsByWorkShift_IdAndStatusIn(Long workShiftId, Collection<String> statuses);
 
+    Optional<DailyRecalcQueue> findFirstByWorkShift_IdAndStatusIn(Long workShiftId, Collection<String> statuses);
+
     /** Pessimistic WRITE lock — prevents concurrent workers from loading same job. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT djq FROM DailyRecalcQueue djq WHERE djq.id = :id")

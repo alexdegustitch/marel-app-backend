@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.operation;
 
 import com.aleksandarparipovic.marel_app.product.Product;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -33,6 +34,11 @@ public class Operation {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
+    // Optional default work code category for this operation (FK ON DELETE SET NULL).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "work_code_category_id")
+    private WorkCodeCategory workCodeCategory;
+
     @Column(name = "op_name", nullable = false)
     private String opName;
 
@@ -44,6 +50,9 @@ public class Operation {
 
     @Column(name = "max_norm")
     private Integer maxNorm;
+
+    @Column(name = "norm_required", nullable = false)
+    private boolean normRequired = true;
 
     @Column(name = "units_per_product")
     private Integer unitsPerProduct;
@@ -80,6 +89,10 @@ public class Operation {
 
     public boolean isValidNormRange() {
         return minNorm != null && maxNorm != null && minNorm <= maxNorm;
+    }
+
+    public boolean isNormValueValid() {
+        return minNorm != null && maxNorm != null && minNorm > 0 && maxNorm > 0 && minNorm <= maxNorm;
     }
 
     public void archive() {

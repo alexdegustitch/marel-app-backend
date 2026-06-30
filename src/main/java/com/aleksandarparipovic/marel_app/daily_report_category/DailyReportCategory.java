@@ -9,7 +9,13 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "daily_report_categories")
+@Table(
+        name = "daily_report_categories",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_daily_report_category_report_category",
+                columnNames = {"daily_report_id", "work_code_category_id"}
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -32,11 +38,8 @@ public class DailyReportCategory {
     @Column(name = "total_minutes", nullable = false)
     private Integer totalMinutes;
 
-    @Column(name = "total_compensated_minutes")
-    private Integer totalCompensatedMinutes;
-
-    @Column(name = "total_approved_minutes")
-    private Integer totalApprovedMinutes;
+    @Column(name = "total_paid_minutes", nullable = false)
+    private Integer totalPaidMinutes;
 
     @Column(name = "total_quantity", nullable = false)
     private Integer totalQuantity;
@@ -47,14 +50,11 @@ public class DailyReportCategory {
     @Column(name = "total_weighted_norm_minutes", nullable = false)
     private BigDecimal totalWeightedNormMinutes;
 
-    @Column(name = "performance_rate", nullable = false)
-    private BigDecimal performanceRate;
+    @Column(name = "performance_coefficient", nullable = false)
+    private BigDecimal performanceCoefficient;
 
-    @Column(name = "approved_performance_rate", nullable = false)
-    private BigDecimal approvedPerformanceRate;
-
-    @Column(name = "category_coefficient_snapshot", nullable = false)
-    private BigDecimal categoryCoefficientSnapshot;
+    @Column(name = "approved_performance_coefficient", nullable = false)
+    private BigDecimal approvedPerformanceCoefficient;
 
     @Column(name = "source_type", nullable = false)
     private String sourceType;

@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.employee;
 import com.aleksandarparipovic.marel_app.department.Department;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeEditRequest;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.*;
@@ -43,7 +44,7 @@ public class Employee {
     @Column(name = "employment_end_date")
     private LocalDate employmentEndDate;
 
-    @Column(name = "notes")
+    @Column(name = "notes", columnDefinition = "text")
     private String notes;
 
     @Column(name = "is_foreigner", nullable = false)
@@ -60,6 +61,22 @@ public class Employee {
 
     @Column(name = "transport_allowance_rsd", precision = 10, scale = 2)
     private BigDecimal transportAllowanceRsd;
+
+    @Column(name = "transport_allowance_mode", nullable = false, length = 20)
+    private String transportAllowanceMode = "AUTO";
+
+    @Column(name = "mobile_phone", length = 50)
+    private String mobilePhone;
+
+    @Column(name = "hourly_rate", precision = 10, scale = 2)
+    private BigDecimal hourlyRate;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_work_category_id")
+    private WorkCodeCategory defaultWorkCategory;
+
+    @Column(name = "works_in_commercial", nullable = false)
+    private boolean worksInCommercial = false;
 
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;
@@ -108,12 +125,29 @@ public class Employee {
             this.transportAllowanceRsd = request.getTransportAllowanceRsd();
         }
 
+        if (request.getTransportAllowanceMode() != null &&
+                !Objects.equals(this.transportAllowanceMode, request.getTransportAllowanceMode())) {
+            this.transportAllowanceMode = request.getTransportAllowanceMode();
+        }
+
         if (!Objects.equals(this.notes, request.getNotes())) {
             this.notes = request.getNotes();
         }
 
         if (!Objects.equals(this.employmentStartDate, request.getEmploymentStartDate())) {
             this.employmentStartDate = request.getEmploymentStartDate();
+        }
+
+        if (!Objects.equals(this.mobilePhone, request.getMobilePhone())) {
+            this.mobilePhone = request.getMobilePhone();
+        }
+
+        if (!Objects.equals(this.hourlyRate, request.getHourlyRate())) {
+            this.hourlyRate = request.getHourlyRate();
+        }
+
+        if (!Objects.equals(this.worksInCommercial, request.getWorksInCommercial())) {
+            this.worksInCommercial = request.getWorksInCommercial() != null ? request.getWorksInCommercial() : this.worksInCommercial;
         }
     }
 

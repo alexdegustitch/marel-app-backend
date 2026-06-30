@@ -35,6 +35,7 @@ public final class ProductFieldMapper implements EntityFieldMapper<Product> {
                     Map.entry("operationDescription", (root, cb, jm) -> activeOperationJoin(jm, cb).get("description")),
                     Map.entry("minNorm", (root, cb, jm) -> activeOperationJoin(jm, cb).get("minNorm")),
                     Map.entry("maxNorm", (root, cb, jm) -> activeOperationJoin(jm, cb).get("maxNorm")),
+                    Map.entry("normRequired", (root, cb, jm) -> activeOperationJoin(jm, cb).get("normRequired")),
                     Map.entry("unitsPerProduct", (root, cb, jm) -> activeOperationJoin(jm, cb).get("unitsPerProduct")),
                     Map.entry("normDate", (root, cb, jm) -> activeOperationJoin(jm, cb).get("normDate")),
                     Map.entry("temporary", (root, cb, jm) -> activeOperationJoin(jm, cb).get("temporary"))

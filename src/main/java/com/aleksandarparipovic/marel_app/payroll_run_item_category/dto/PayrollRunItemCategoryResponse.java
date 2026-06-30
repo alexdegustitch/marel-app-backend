@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.payroll_run_item_category.dto;
 
 import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategory;
 import lombok.Getter;
+
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
@@ -10,7 +11,6 @@ public class PayrollRunItemCategoryResponse {
     private final Long id;
     private final Long payrollRunItemId;
     private final Long workCodeCategoryId;
-    private final String workCodeCategoryName;
     private final String sourceType;
     private final Integer totalMinutes;
     private final Integer totalPaidMinutes;
@@ -35,7 +35,6 @@ public class PayrollRunItemCategoryResponse {
         this.id = cat.getId();
         this.payrollRunItemId = cat.getPayrollRunItem() != null ? cat.getPayrollRunItem().getId() : null;
         this.workCodeCategoryId = cat.getWorkCodeCategory() != null ? cat.getWorkCodeCategory().getId() : null;
-        this.workCodeCategoryName = cat.getWorkCodeCategory() != null ? cat.getWorkCodeCategory().getCategoryName() : null;
         this.sourceType = cat.getSourceType();
         this.totalMinutes = cat.getTotalMinutes();
         this.totalPaidMinutes = cat.getTotalPaidMinutes();
@@ -57,4 +56,3 @@ public class PayrollRunItemCategoryResponse {
         this.archivedAt = cat.getArchivedAt();
     }
 }
-

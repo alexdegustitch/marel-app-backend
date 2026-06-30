@@ -1,8 +1,10 @@
 package com.aleksandarparipovic.marel_app.work_shift;
 
 import com.aleksandarparipovic.marel_app.employee.Employee;
+import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
 import com.aleksandarparipovic.marel_app.shift.Shift;
 import com.aleksandarparipovic.marel_app.user.User;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -10,7 +12,13 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "work_shifts")
+@Table(
+        name = "work_shifts",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_work_shifts_employee_shift_work_date",
+                columnNames = {"employee_id", "shift_id", "work_date"}
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -27,6 +35,11 @@ public class WorkShift {
     @JoinColumn(name = "employee_id", nullable = false)
     private Employee employee;
 
+    // Employee record snapshot used for historical tracking and auditing.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "employee_record_id")
+    private EmployeeRecord employeeRecord;
+
     // Shift definition
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "shift_id", nullable = false)
@@ -36,6 +49,18 @@ public class WorkShift {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "supervisor_id")
     private User supervisor;
+
+    // Work code category for this shift as entered (original; never overwritten by recalc).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "work_code_category_id")
+    private WorkCodeCategory workCodeCategory;
+
+    // Bonus-effective category set by recalc when a night/weekend remap applies.
+    // NULL = no active remap (use workCodeCategory). Recomputed every recalc, so it
+    // reverts automatically when the bonus condition no longer holds.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "effective_work_code_category_id")
+    private WorkCodeCategory effectiveWorkCodeCategory;
 
     @Column(name = "start_at", nullable = false)
     private OffsetDateTime startAt;
@@ -54,8 +79,8 @@ public class WorkShift {
     @Column(name = "total_minutes", insertable = false, updatable = false)
     private Integer totalMinutes;
 
-    @Column(name = "notes", length = 255)
-    private String notes;
+    @Column(name = "note", length = 255)
+    private String note;
 
     @Column(name = "created_at", insertable = false, updatable = false)
     private OffsetDateTime createdAt;

@@ -43,6 +43,15 @@ public class BonusCategoryService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<BonusCategoryOptionDto> getActiveAndValidBonusCategories() {
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Belgrade"));
+        return repository.findActiveAndValid(today)
+                .stream()
+                .map(mapper::toOptionDto)
+                .toList();
+    }
+
     @Transactional
     public BonusCategory create(BonusCategory cat) {
         cat.setId(null);

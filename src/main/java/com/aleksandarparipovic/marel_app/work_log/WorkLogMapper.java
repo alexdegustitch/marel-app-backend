@@ -11,13 +11,10 @@ import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDtoImpl;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogFormDto;
 import com.aleksandarparipovic.marel_app.work_log.validation.WorkLogValidator;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 @RequiredArgsConstructor
@@ -44,10 +41,14 @@ public class WorkLogMapper {
                 workLog.getWorkShift() == null ? null : workLog.getWorkShift().getId(),
                 operation == null ? null : operation.getId(),
                 operation == null ? null : operation.getOpName(),
+                operation == null ? null : operation.getMinNorm(),
                 productionOrder == null ? null : productionOrder.getId(),
                 productionOrder == null ? null : productionOrder.getName(),
+                productionOrder == null ? null : productionOrder.getCode(),
                 productId,
                 productName,
+                workLog.getPerformanceRate(),
+                workLog.getApprovedPerformanceRate(),
                 toInstant(workLog.getStartAt()),
                 toInstant(workLog.getEndAt()),
                 workLog.getDurationMin(),
@@ -56,7 +57,11 @@ public class WorkLogMapper {
                 workLog.getNote(),
                 workLog.getHourlyOutput(),
                 workLog.getWorkCode() == null ? null : workLog.getWorkCode().getId(),
-                workLog.getIsActive()
+                workLog.getWorkCode() == null ? null : workLog.getWorkCode().getCategoryNo(),
+                workLog.getEffectiveWorkCode() == null ? null : workLog.getEffectiveWorkCode().getId(),
+                workLog.getEffectiveWorkCode() == null ? null : workLog.getEffectiveWorkCode().getCategoryNo(),
+                workLog.getIsActive(),
+                workLog.getNormMultiplierSnapshot()
         );
     }
 
@@ -65,7 +70,7 @@ public class WorkLogMapper {
     }
 
     public WorkLog toEntity(WorkLogFormDto dto) {
-        Operation operation = referenceProvider.getOptionalReference(Operation.class, dto.getOperationId());
+        Operation operation = referenceProvider.getRequiredReference(Operation.class, dto.getOperationId(), "operationId");
         // validateOperationProductConsistency(dto.getProductId(), operation);
 
         WorkShift workShift = referenceProvider.getRequiredReference(WorkShift.class, dto.getWorkShiftId(), "workShiftId");
@@ -80,13 +85,15 @@ public class WorkLogMapper {
                 .workShift(workShift)
                 .productionOrder(referenceProvider.getOptionalReference(ProductionOrder.class, dto.getProductionOrderId()))
                 .operation(operation)
-                .workCode(referenceProvider.getOptionalReference(WorkCodeCategory.class, dto.getWorkCodeCategoryId()))
+                .workCode(referenceProvider.getRequiredReference(WorkCodeCategory.class, dto.getWorkCodeCategoryId(), "workCodeCategoryId"))
                 .startAt(time.start())
                 .endAt(time.end())
-                .scrap(defaultInt(dto.getScrap()))
-                .quantity(defaultInt(dto.getQuantity()))
+                .scrap(dto.getScrap())
+                .quantity(dto.getQuantity())
                 .note(dto.getNote())
                 .isActive(dto.getIsActive())
+                .performanceRate(dto.getPerformanceRate())
+                .approvedPerformanceRate(dto.getApprovedPerformanceRate())
                 .build();
     }
 
@@ -96,11 +103,11 @@ public class WorkLogMapper {
         }
         entity.setProductionOrder(referenceProvider.getOptionalReference(ProductionOrder.class, dto.getProductionOrderId()));
 
-        Operation operation = referenceProvider.getOptionalReference(Operation.class, dto.getOperationId());
+        Operation operation = referenceProvider.getRequiredReference(Operation.class, dto.getOperationId(), "operationId");
         //validateOperationProductConsistency(dto.getProductId(), operation);
         entity.setOperation(operation);
 
-        entity.setWorkCode(referenceProvider.getOptionalReference(WorkCodeCategory.class, dto.getWorkCodeCategoryId()));
+        entity.setWorkCode(referenceProvider.getRequiredReference(WorkCodeCategory.class, dto.getWorkCodeCategoryId(), "workCodeCategoryId"));
 
         //WorkShift workShift = referenceProvider.getRequiredReference(WorkShift.class, dto.getWorkShiftId(), "workShiftId");
 
@@ -111,16 +118,15 @@ public class WorkLogMapper {
         entity.setStartAt(time.start());
         entity.setEndAt(time.end());
 
-        entity.setScrap(defaultInt(dto.getScrap()));
-        entity.setQuantity(defaultInt(dto.getQuantity()));
+        entity.setScrap(dto.getScrap());
+        entity.setQuantity(dto.getQuantity());
         entity.setNote(dto.getNote());
+        entity.setPerformanceRate(dto.getPerformanceRate());
+        entity.setApprovedPerformanceRate(dto.getApprovedPerformanceRate());
+        entity.setNormMultiplierSnapshot(dto.getNormMultiplierSnapshot());
         if (dto.getIsActive() != null) {
             entity.setIsActive(dto.getIsActive());
         }
-    }
-
-    private Integer defaultInt(Integer value) {
-        return value == null ? 0 : value;
     }
 
 

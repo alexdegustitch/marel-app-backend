@@ -10,7 +10,13 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "daily_reports")
+@Table(
+        name = "daily_reports",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_daily_reports_employee_shift",
+                columnNames = {"employee_id", "work_shift_id"}
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -39,20 +45,26 @@ public class DailyReport {
     @Column(name = "total_work_minutes")
     private Integer totalWorkMinutes;
 
-    @Column(name = "total_absence_minutes")
-    private Integer totalAbsenceMinutes;
+    @Column(name = "total_absence_paid_minutes")
+    private Integer totalAbsencePaidMinutes;
 
-    @Column(name = "total_paid_absence_minutes")
-    private Integer totalPaidAbsenceMinutes;
+    @Column(name = "total_absence_unpaid_minutes")
+    private Integer totalAbsenceUnpaidMinutes;
 
-    @Column(name = "total_unpaid_absence_minutes")
-    private Integer totalUnpaidAbsenceMinutes;
+    @Column(name = "total_sick_leave_paid_minutes")
+    private Integer totalSickLeavePaidMinutes;
+
+    @Column(name = "total_sick_leave_unpaid_minutes")
+    private Integer totalSickLeaveUnpaidMinutes;
 
     @Column(name = "total_compensated_minutes")
     private Integer totalCompensatedMinutes;
 
     @Column(name = "total_approved_minutes")
     private Integer totalApprovedMinutes;
+
+    @Column(name = "bonus_eligible_minutes", nullable = false)
+    private Integer bonusEligibleMinutes;
 
     @Column(name = "total_quantity")
     private Integer totalQuantity;
@@ -72,6 +84,9 @@ public class DailyReport {
     @Column(name = "performance_coefficient")
     private BigDecimal performanceCoefficient;
 
+    @Column(name = "approved_performance_coefficient")
+    private BigDecimal approvedPerformanceCoefficient;
+
     @Column(name = "calc_version", nullable = false)
     private Integer calcVersion;
 
@@ -82,7 +97,7 @@ public class DailyReport {
     @Column(name = "last_recalculated_at")
     private OffsetDateTime lastRecalculatedAt;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
 
     @Column(name = "updated_at")
@@ -91,7 +106,13 @@ public class DailyReport {
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 
-    @Column(name = "meal_allowance_num")
-    private Integer mealAllowanceNum;
+    @Builder.Default
+    @Column(name = "is_meal_allowed", nullable = false)
+    private Boolean isMealAllowed = false;
+
+    @Builder.Default
+    @Column(name = "meals_count", nullable = false)
+    private Integer mealsCount = 0;
+
 }
 

@@ -10,6 +10,8 @@ import java.math.BigDecimal;
 public class MonthlyReportByEmployeeRecordResponse {
     private Long id;
     private Integer totalShiftMinutes;
+    private Integer totalAbsenceMinutes;
+    private Integer totalSickLeaveMinutes;
     private BigDecimal totalWeightedNormMinutes;
     private BigDecimal approvedPerformanceRate;
     private Integer mealAllowanceNum;

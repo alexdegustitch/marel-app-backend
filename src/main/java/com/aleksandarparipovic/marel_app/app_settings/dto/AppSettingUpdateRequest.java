@@ -26,10 +26,13 @@ public class AppSettingUpdateRequest {
     private Boolean affectsPayroll;
 
     private String description;
+    private String displayText;
+    private String unit;
 
     @NotNull
     private OffsetDateTime validFrom;
 
     private OffsetDateTime validUntil;
-}
 
+
+}

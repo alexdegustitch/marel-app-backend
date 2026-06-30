@@ -1,7 +1,7 @@
 package com.aleksandarparipovic.marel_app.payroll_run.dto;
 
 import java.math.BigDecimal;
-import java.time.OffsetDateTime;
+import java.time.Instant;
 
 public interface PayrollRunInfoDto {
     Long getId();
@@ -13,6 +13,7 @@ public interface PayrollRunInfoDto {
     BigDecimal getTotalNetEarnings();
     BigDecimal getNetPayableAmount();
     Long getMonthlyReportId();
-    OffsetDateTime getUpdatedAt();
+    Instant getUpdatedAt();
 }
+
 

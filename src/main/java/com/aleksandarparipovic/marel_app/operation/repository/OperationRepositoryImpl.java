@@ -65,6 +65,7 @@ public class OperationRepositoryImpl implements OperationRepositoryCustom {
                     root.get("maxNorm"),
                     root.get("unitsPerProduct"),
                     root.get("normDate"),
+                    joinManager.join("workCodeCategory", JoinType.LEFT).get("id"),
                     productCountExpression
             ));
         } else {

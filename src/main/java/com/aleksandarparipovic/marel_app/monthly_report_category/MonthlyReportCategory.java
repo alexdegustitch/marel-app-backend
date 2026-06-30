@@ -9,7 +9,13 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "monthly_report_categories")
+@Table(
+        name = "monthly_report_categories",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_monthly_report_category_report_category",
+                columnNames = {"monthly_report_id", "work_code_category_id"}
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -41,14 +47,11 @@ public class MonthlyReportCategory {
     @Column(name = "total_scrap", nullable = false)
     private Integer totalScrap;
 
-    @Column(name = "performance_coefficient")
-    private BigDecimal performanceCoefficient;
+    @Column(name = "total_weighted_norm_minutes", nullable = false)
+    private BigDecimal totalWeightedNormMinutes;
 
-    @Column(name = "weighted_norm_minutes", nullable = false)
-    private BigDecimal weightedNormMinutes;
-
-    @Column(name = "effective_hours", nullable = false)
-    private BigDecimal effectiveHours;
+    @Column(name = "total_approved_minutes")
+    private BigDecimal totalApprovedMinutes;
 
     @Column(name = "source_type", nullable = false)
     private String sourceType;

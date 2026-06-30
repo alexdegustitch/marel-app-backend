@@ -36,10 +36,13 @@ public class SecurityConfig {
                 .cors(cors -> {})   // 👈 enable CORS support
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/departments/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()          // WebSocket endpoint
+                        .requestMatchers("/api/admin/**").hasRole("admin")
                         .requestMatchers("/api/users/me").authenticated()
+                        .requestMatchers("/api/users/active-users").permitAll()
                         .requestMatchers("/api/users/**").hasRole("admin")
                         .requestMatchers("/api/roles/**").hasRole("admin")
                         .anyRequest().authenticated()

@@ -7,6 +7,8 @@ public record AppSettingHistoryDto(
         String valueType,
         Boolean affectsPayroll,
         String description,
+        String displayText,
+        String unit,
         List<AppSettingResponse> history
 ) {}
 

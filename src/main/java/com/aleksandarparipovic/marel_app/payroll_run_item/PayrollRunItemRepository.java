@@ -1,11 +1,18 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item;
 
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunInfoDto;
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSummaryDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,4 +26,161 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
     List<PayrollRunItem> findByPayrollRun_IdAndEmployee_Id(Long payrollRunId, Long employeeId);
 
     List<PayrollRunItem> findByPayrollRun_Id(Long payrollRunId);
+
+    Optional<PayrollRunItem> findByMonthlyReport_Id(Long monthlyReportId);
+
+    /** Used to fetch previous month's netPayableAmount for the same employee. */
+    @Query("SELECT pri FROM PayrollRunItem pri WHERE pri.employee.id = :employeeId AND pri.period = :period ORDER BY pri.id DESC")
+    List<PayrollRunItem> findByEmployee_IdAndPeriod(@Param("employeeId") Long employeeId, @Param("period") LocalDate period);
+
+    /** Used to propagate changes to the next month's item. */
+    @Query("SELECT pri FROM PayrollRunItem pri WHERE pri.employee.id = :employeeId AND pri.period = :period AND pri.status != 'LOCKED' ORDER BY pri.id DESC")
+    List<PayrollRunItem> findUnlockedByEmployee_IdAndPeriod(@Param("employeeId") Long employeeId, @Param("period") LocalDate period);
+
+    @Query("SELECT pri FROM PayrollRunItem pri LEFT JOIN FETCH pri.monthlyReport WHERE pri.employee.id = :employeeId ORDER BY pri.period DESC")
+    List<PayrollRunItem> findRecentByEmployeeId(@Param("employeeId") Long employeeId, Pageable pageable);
+
+    /** Returns summary (id, employeeId, employeeName, month, year) for all items in a given year. */
+    @Query(value = """
+        SELECT
+            pri.id            AS id,
+            e.id              AS employeeId,
+            e.full_name       AS employeeName,
+            pr.report_month   AS month,
+            pr.report_year    AS year
+        FROM payroll_run_items pri
+        JOIN employees e  ON e.id  = pri.employee_id
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        WHERE pr.report_year = :year
+          AND pri.archived_at IS NULL
+        ORDER BY pr.report_month DESC, e.full_name ASC
+        """, nativeQuery = true)
+    List<PayrollRunSummaryDto> findSummariesByYear(@Param("year") int year);
+
+    /** Returns last-activity summaries for the current user from employee_payroll_run_item_updates. */
+    @Query(value = """
+        SELECT
+            pri.id            AS id,
+            e.id              AS employeeId,
+            e.full_name       AS employeeName,
+            pr.report_month   AS month,
+            pr.report_year    AS year
+        FROM employee_payroll_run_item_updates epriu
+        JOIN payroll_run_items pri ON pri.id = epriu.payroll_run_item_id
+        JOIN employees e           ON e.id   = pri.employee_id
+        JOIN payroll_runs pr       ON pr.id  = pri.payroll_run_id
+        WHERE epriu.user_id = :userId
+          AND pr.report_year  = :year
+          AND pr.report_month = :month
+          AND pri.archived_at IS NULL
+        ORDER BY epriu.last_activity_at DESC
+        LIMIT 3
+        """, nativeQuery = true)
+    List<PayrollRunSummaryDto> findLastActivityByUserAndMonth(@Param("userId") Long userId,
+                                                              @Param("year") int year,
+                                                              @Param("month") int month);
+
+    /** Paged query for payroll run items by year + month with optional global search and status filter. */
+    @Query(value = """
+        SELECT
+            pri.id              AS id,
+            e.id                AS employeeId,
+            e.full_name         AS employeeName,
+            e.employee_no       AS employeeNo,
+            d.name              AS employeeDepartment,
+            pri.status          AS status,
+            pri.total_net_earnings  AS totalNetEarnings,
+            pri.net_payable_amount  AS netPayableAmount,
+            pri.monthly_report_id   AS monthlyReportId,
+            MAX(epriu.last_activity_at) AS updatedAt
+        FROM payroll_run_items pri
+        JOIN employees e    ON e.id  = pri.employee_id
+        JOIN departments d  ON d.id  = e.department_id
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        LEFT JOIN employee_payroll_run_item_updates epriu ON epriu.payroll_run_item_id = pri.id
+        WHERE pr.report_year  = :year
+          AND pr.report_month = :month
+          AND pri.archived_at IS NULL
+          AND (:search IS NULL OR e.full_name ILIKE '%' || :search || '%' OR e.employee_no ILIKE '%' || :search || '%')
+          AND (:status IS NULL OR pri.status = :status)
+        GROUP BY pri.id, e.id, e.full_name, e.employee_no, d.name,
+                 pri.status, pri.total_net_earnings, pri.net_payable_amount, pri.monthly_report_id
+        """,
+        countQuery = """
+        SELECT COUNT(pri.id)
+        FROM payroll_run_items pri
+        JOIN employees e    ON e.id  = pri.employee_id
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        WHERE pr.report_year  = :year
+          AND pr.report_month = :month
+          AND pri.archived_at IS NULL
+          AND (:search IS NULL OR e.full_name ILIKE '%' || :search || '%' OR e.employee_no ILIKE '%' || :search || '%')
+          AND (:status IS NULL OR pri.status = :status)
+        """,
+        nativeQuery = true)
+    Page<PayrollRunInfoDto> findPagedByYearAndMonth(@Param("year") int year,
+                                                    @Param("month") int month,
+                                                    @Param("search") String search,
+                                                    @Param("status") String status,
+                                                    Pageable pageable);
+
+    /** Returns last 3 payroll run items touched by the current user in the given month. */
+    @Query(value = """
+        SELECT
+            pri.monthly_report_id   AS monthlyReportId,
+            e.id                    AS employeeId,
+            e.full_name             AS employeeName,
+            pr.report_month         AS month,
+            pr.report_year          AS year,
+            epriu.last_activity_at  AS updateTime
+        FROM employee_payroll_run_item_updates epriu
+        JOIN payroll_run_items pri ON pri.id  = epriu.payroll_run_item_id
+        JOIN employees e           ON e.id    = pri.employee_id
+        JOIN payroll_runs pr       ON pr.id   = pri.payroll_run_id
+        WHERE epriu.user_id    = :userId
+          AND pr.report_year   = :year
+          AND pr.report_month  = :month
+          AND pri.archived_at IS NULL
+        ORDER BY epriu.last_activity_at DESC
+        LIMIT 3
+        """, nativeQuery = true)
+    List<PayrollRunItemActivityDto> findItemLastActivityByUserAndMonth(@Param("userId") Long userId,
+                                                                       @Param("year") int year,
+                                                                       @Param("month") int month);
+
+    @Modifying
+    @Query("""
+        UPDATE PayrollRunItem pri
+        SET pri.needsRecalculation = true
+        WHERE pri.payrollRun.id IN (
+            SELECT pr.id FROM PayrollRun pr
+            WHERE pr.reportYear = :year AND pr.reportMonth = :month
+        )
+        AND pri.archivedAt IS NULL
+        """)
+    int markNeedsRecalculationByYearAndMonth(@Param("year") int year, @Param("month") int month);
+
+    @Modifying
+    @Query("""
+        UPDATE PayrollRunItem pri
+        SET pri.needsRecalculation = true
+        WHERE pri.employee.id = :employeeId
+          AND pri.status != 'LOCKED'
+          AND pri.archivedAt IS NULL
+        """)
+    int markNeedsRecalculationByEmployeeId(@Param("employeeId") Long employeeId);
+
+    @Modifying
+    @Query("""
+        UPDATE PayrollRunItem pri
+        SET pri.hourlyRate = :newRate,
+            pri.hourlyRateSystem = :newRate,
+            pri.needsRecalculation = true
+        WHERE pri.employee.id = :employeeId
+          AND pri.status != 'LOCKED'
+          AND pri.archivedAt IS NULL
+          AND (pri.hourlyRateOverridden IS NULL OR pri.hourlyRateOverridden = false)
+        """)
+    int updateHourlyRateByEmployeeId(@Param("employeeId") Long employeeId,
+                                     @Param("newRate") java.math.BigDecimal newRate);
 }

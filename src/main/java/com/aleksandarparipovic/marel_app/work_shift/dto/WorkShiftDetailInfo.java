@@ -20,7 +20,7 @@ public interface WorkShiftDetailInfo  {
 
     Integer getTotalMinutes();
 
-    String getNotes();
+    String getNote();
 
     Long getEmployeeId();
 

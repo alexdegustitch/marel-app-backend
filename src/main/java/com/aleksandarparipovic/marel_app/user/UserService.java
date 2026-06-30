@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.user;
 import com.aleksandarparipovic.marel_app.role.Role;
 import com.aleksandarparipovic.marel_app.role.RoleRepository;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
+import com.aleksandarparipovic.marel_app.user.dto.UserOptionDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserUpdateRequest;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -106,6 +107,22 @@ public class UserService {
 
         return userRepository.findAll(spec, pageable)
                 .map(UserMapper::toDto);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserOptionDto> getActiveUserOptions(String userType) {
+        List<User> users;
+
+        if (userType == null || userType.isBlank()) {
+            users = userRepository.findByActiveTrueAndArchivedAtIsNullOrderByFullNameAsc();
+        } else {
+            users = userRepository.findByActiveTrueAndArchivedAtIsNullAndRole_RoleNameIgnoreCaseOrderByFullNameAsc(userType);
+        }
+
+        return users
+                .stream()
+                .map(user -> new UserOptionDto(user.getId(), user.getUsername(), user.getFullName()))
+                .toList();
     }
 
     @Transactional

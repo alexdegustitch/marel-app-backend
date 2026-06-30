@@ -6,6 +6,7 @@ import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee.specification.EmployeeJoinContext;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
@@ -45,6 +46,7 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
         Join<Employee, Department> departmentJoin = joins.department(root);
         Join<Employee, EmployeeBonus> activeBonusJoin = joins.activeBonus(root, cb);
         Join<EmployeeBonus, BonusCategory> bonusCategoryJoin = joins.bonusCategory(root, cb);
+        Join<Employee, WorkCodeCategory> workCategoryJoin = root.join("defaultWorkCategory", JoinType.LEFT);
 
         // Select distinct employees with their bonus info (construct DTO)
         query.distinct(true);
@@ -54,14 +56,23 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                 root.get("employeeNo"),
                 root.get("fullName"),
                 departmentJoin.get("name"),
+                departmentJoin.get("id"),
                 root.get("employmentStartDate"),
                 root.get("probationEndDate"),
                 root.get("notes"),
                 root.get("transportAllowanceRsd"),
+                root.get("transportAllowanceMode"),
                 bonusCategoryJoin.get("categoryNo"),
+                bonusCategoryJoin.get("id"),
                 bonusCategoryJoin.get("categoryName"),
                 bonusCategoryJoin.get("bonusAmount"),
-                activeBonusJoin.get("startDate")
+                activeBonusJoin.get("startDate"),
+                root.get("foreigner"),
+                root.get("mobilePhone"),
+                root.get("hourlyRate"),
+                workCategoryJoin.get("id"),
+                workCategoryJoin.get("categoryName"),
+                root.get("worksInCommercial")
         ));
 
         // Apply sorting if specified in the pageable
@@ -74,27 +85,14 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                 Path<?> sortPath;
                 // Map sortable fields to the correct path (joining if necessary)
                 switch (field) {
-                    case "departmentName":
-                        sortPath = departmentJoin.get("name");
-                        break;
-                    case "departmentId":
-                        sortPath = departmentJoin.get("id");
-                        break;
-                    case "categoryNo":
-                        sortPath = bonusCategoryJoin.get("categoryNo");
-                        break;
-                    case "categoryName":
-                        sortPath = bonusCategoryJoin.get("categoryName");
-                        break;
-                    case "bonusAmount":
-                        sortPath = bonusCategoryJoin.get("bonusAmount");
-                        break;
-                    case "bonusStart":
-                        sortPath = activeBonusJoin.get("startDate");
-                        break;
-                    default:
-                        // Default: sort by a field in the Employee root
-                        sortPath = root.get(field);
+                    case "departmentName" -> sortPath = departmentJoin.get("name");
+                    case "departmentId" -> sortPath = departmentJoin.get("id");
+                    case "categoryNo" -> sortPath = bonusCategoryJoin.get("categoryNo");
+                    case "categoryName" -> sortPath = bonusCategoryJoin.get("categoryName");
+                    case "bonusAmount" -> sortPath = bonusCategoryJoin.get("bonusAmount");
+                    case "bonusStart" -> sortPath = activeBonusJoin.get("startDate");
+                    case "defaultWorkCategoryName" -> sortPath = workCategoryJoin.get("categoryName");
+                    default -> sortPath = root.get(field);
                 }
                 orders.add(ascending ? cb.asc(sortPath) : cb.desc(sortPath));
             }
@@ -132,6 +130,7 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
         Join<Employee, Department> departmentJoin = joins.department(root);
         Join<Employee, EmployeeBonus> activeBonusJoin = joins.activeBonus(root, cb);
         Join<EmployeeBonus, BonusCategory> bonusCategoryJoin = joins.bonusCategory(root, cb);
+        Join<Employee, WorkCodeCategory> workCategoryJoin = root.join("defaultWorkCategory", JoinType.LEFT);
 
         // Apply filters
         if (spec != null) {
@@ -152,12 +151,18 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                     root.get("probationEndDate"),
                     root.get("notes"),
                     root.get("transportAllowanceRsd"),
+                    root.get("transportAllowanceMode"),
                     bonusCategoryJoin.get("categoryNo"),
                     bonusCategoryJoin.get("id"),
                     bonusCategoryJoin.get("categoryName"),
                     bonusCategoryJoin.get("bonusAmount"),
                     activeBonusJoin.get("startDate"),
-                    root.get("foreigner")
+                    root.get("foreigner"),
+                    root.get("mobilePhone"),
+                    root.get("hourlyRate"),
+                    workCategoryJoin.get("id"),
+                    workCategoryJoin.get("categoryName"),
+                    root.get("worksInCommercial")
             ));
         } else {
             throw new UnsupportedOperationException("Unsupported projection type: " + projectionType.getName());
@@ -184,6 +189,7 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                         Path<Number> path = root.get("transportAllowanceRsd");
                         sortExpr = order.isAscending() ? cb.coalesce(path, Integer.MAX_VALUE) : cb.coalesce(path, Integer.MIN_VALUE);
                     }
+                    case "defaultWorkCategoryName" -> sortExpr = workCategoryJoin.get("categoryName");
                     default -> sortExpr = root.get(order.getProperty());
                 }
 

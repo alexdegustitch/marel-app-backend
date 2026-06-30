@@ -1,33 +1,22 @@
 package com.aleksandarparipovic.marel_app.product_manufacturing_time.dto;
 
+import jakarta.validation.Valid;
 import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
+import java.util.List;
 
 @Getter
 @Setter
 public class ProductManufacturingTimeUpdateRequest {
 
-    private LocalDate manufacturingDate;
-
-    private Integer unitsPerProductSnapshot;
-    private Boolean unitsPerProductOverridden;
-    private Integer unitsPerProductValue;
-
-    private BigDecimal normSnapshot;
-    private Boolean normOverridden;
-    private BigDecimal normValue;
-
-    private LocalDate normDateSnapshot;
-    private Boolean normDateOverridden;
-    private LocalDate normDateValue;
-
-    private Boolean excluded;
-
+    private String title;
     private BigDecimal manufacturingCoefficient;
     private BigDecimal productsPerHour;
     private Integer manufacturingTimeSeconds;
-}
 
+    // When provided, replaces all existing operations for this ProductManufacturingTime
+    @Valid
+    private List<ProductManufacturingTimeOperationRequest> operations;
+}

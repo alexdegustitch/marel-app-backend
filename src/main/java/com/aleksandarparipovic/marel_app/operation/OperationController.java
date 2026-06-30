@@ -33,6 +33,11 @@ public class OperationController {
         return ResponseEntity.ok(operationBasicInfoDtos);
     }
 
+    @GetMapping("/operations-for-product/id={id}&date={date}")
+    public ResponseEntity<List<OperationDto>> getAllOperationsForProductDto(@PathVariable Long id, @PathVariable LocalDate date){
+        return ResponseEntity.ok(operationService.getAllOperationsForProductDto(id, date));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<OperationWithProductNameDto> getOperation(@PathVariable Long id){
         OperationWithProductNameDto operation= operationService.getOperation(id);

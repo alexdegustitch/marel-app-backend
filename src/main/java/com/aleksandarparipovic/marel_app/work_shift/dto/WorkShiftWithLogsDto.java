@@ -14,7 +14,7 @@ public record WorkShiftWithLogsDto(
         Instant startAt,
         Instant endAt,
         Integer totalMinutes,
-        String notes,
+        String note,
         Long employeeId,
         String employeeName,
         List<WorkLogDto> logs

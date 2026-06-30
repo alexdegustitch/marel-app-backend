@@ -8,6 +8,8 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Repository
 public interface MonthlyReportCategoryRepository extends JpaRepository<MonthlyReportCategory, Long>, JpaSpecificationExecutor<MonthlyReportCategory> {
 
@@ -16,4 +18,7 @@ public interface MonthlyReportCategoryRepository extends JpaRepository<MonthlyRe
     @Query(value = "DELETE FROM monthly_report_categories WHERE monthly_report_id = :monthlyReportId",
            nativeQuery = true)
     void deleteAllByMonthlyReportId(@Param("monthlyReportId") Long monthlyReportId);
+
+    @Query("SELECT c FROM MonthlyReportCategory c JOIN FETCH c.workCodeCategory WHERE c.monthlyReport.id = :monthlyReportId")
+    List<MonthlyReportCategory> findByMonthlyReportIdWithCategory(@Param("monthlyReportId") Long monthlyReportId);
 }

@@ -15,9 +15,15 @@ public class ShiftService {
 
     @Transactional(readOnly = true)
     public List<ShiftOptionDto> getActiveShiftOptions() {
-        return shiftRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByNameAsc()
+        return shiftRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByStartTimeAsc()
                 .stream()
-                .map(shift -> new ShiftOptionDto(shift.getId(), shift.getShiftCode(), shift.getName()))
+                .map(shift -> new ShiftOptionDto(
+                        shift.getId(),
+                        shift.getShiftCode(),
+                        shift.getName(),
+                        shift.getStartTime(),
+                        shift.getEndTime()
+                ))
                 .toList();
     }
 }

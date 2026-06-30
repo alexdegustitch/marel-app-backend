@@ -10,7 +10,10 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "payroll_adjustments")
+@Table(
+    name = "payroll_adjustments",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"payroll_run_item_id", "payroll_adjustment_category_id"})
+)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -30,21 +33,50 @@ public class PayrollAdjustment {
     @JoinColumn(name = "payroll_adjustment_category_id", nullable = false)
     private PayrollAdjustmentCategory payrollAdjustmentCategory;
 
-    @Column(name = "adjustment_type", nullable = false)
-    private String adjustmentType;
+    /** System-calculated quantity (e.g. number of eligible shifts for meal allowance) */
+    @Column(name = "system_quantity")
+    private BigDecimal systemQuantity;
 
+    /** Currently active quantity — equals system_quantity unless overridden */
+    @Column(name = "quantity")
+    private BigDecimal quantity;
+
+    /** System-calculated unit amount (e.g. meal allowance rate per shift) */
+    @Column(name = "system_unit_amount")
+    private BigDecimal systemUnitAmount;
+
+    /** Currently active unit amount — equals system_unit_amount unless overridden */
+    @Column(name = "unit_amount")
+    private BigDecimal unitAmount;
+
+    /** System-calculated total amount */
+    @Column(name = "system_amount")
+    private BigDecimal systemAmount;
+
+    /** Currently active/final amount — equals system_amount unless overridden */
     @Column(name = "amount", nullable = false)
     private BigDecimal amount;
 
-    @Column(name = "reason")
-    private String reason;
+    /** True when user has manually overridden the system value */
+    @Column(name = "is_overridden", nullable = false)
+    private Boolean isOverridden = false;
+
+    @Column(name = "note")
+    private String note;
 
     @Column(name = "is_applied", nullable = false)
-    private Boolean isApplied;
+    private Boolean isApplied = true;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private User createdBy;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "edited_by")
+    private User editedBy;
+
+    @Column(name = "edited_at")
+    private OffsetDateTime editedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

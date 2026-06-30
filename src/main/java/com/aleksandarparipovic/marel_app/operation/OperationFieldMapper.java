@@ -29,6 +29,7 @@ public final class OperationFieldMapper implements EntityFieldMapper<Operation> 
                     Map.entry("operationName", (root, cb,jm)->root.get("opName")),
                     Map.entry("minNorm", (root, cb,jm)->root.get("minNorm")),
                     Map.entry("maxNorm", (root, cb,jm)->root.get("maxNorm")),
+                    Map.entry("normRequired", (root, cb,jm)->root.get("normRequired")),
                     Map.entry("unitsPerProduct", (root, cb,jm)->root.get("unitsPerProduct")),
                     Map.entry("normDate", (root, cb,jm)->root.get("normDate")),
                     Map.entry("productId", (root, cb,jm)->productJoin(jm, cb).get("id")),
