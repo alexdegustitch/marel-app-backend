@@ -81,7 +81,7 @@ public class DailyReport {
      * {@link #totalWeightedNormMinutes}, which stays weighted by approved performance.
      * NULL on reports last calculated before this field existed.
      */
-    @Column(name = "total_verified_minutes")
+    @Column(name = "total_verified_minutes", precision = 38, scale = 4)
     private BigDecimal totalVerifiedMinutes;
 
     /** Covered minutes classified PL (below the PLB concurrency threshold). */
