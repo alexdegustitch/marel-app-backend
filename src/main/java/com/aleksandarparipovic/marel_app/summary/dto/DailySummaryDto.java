@@ -20,6 +20,16 @@ public class DailySummaryDto {
     private BigDecimal approvedPerformanceRate;
     private BigDecimal performanceCoefficient;
     private BigDecimal totalWeightedNormMinutes;
+    /**
+     * Coefficient-weighted verified time: the sum over non-overlapping covered
+     * intervals of interval duration × the PL/PLB coefficient in force. A separate
+     * quantity from {@code totalWeightedNormMinutes}, which stays efficiency-weighted.
+     */
+    private BigDecimal verifiedMinutes;
+    /** Covered minutes classified PL (below the PLB concurrency threshold). */
+    private long plMinutes;
+    /** Covered minutes classified PLB (three or more parallel-capable logs active). */
+    private long plbMinutes;
     /** Ids of logs that overlap a log from a different work-code category — flagged, not auto-merged. */
     private List<Long> overlappingLogIds;
     /** Lightweight log timeline entries for chart rendering. */

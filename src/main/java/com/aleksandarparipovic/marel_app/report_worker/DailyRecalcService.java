@@ -22,6 +22,8 @@ import com.aleksandarparipovic.marel_app.work_code_category_mappings.WorkCodeCat
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.repository.WorkCodeCategoryMappingRepository;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
 import com.aleksandarparipovic.marel_app.work_log.WorkLogPerformanceCalculator;
+import com.aleksandarparipovic.marel_app.work_log.interval.ShiftIntervalResolver;
+import com.aleksandarparipovic.marel_app.work_log.interval.WorkIntervalCalculator;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
 import com.aleksandarparipovic.marel_app.work_shift.repository.WorkShiftRepository;
@@ -81,6 +83,8 @@ public class DailyRecalcService {
     private final ApplicationEventPublisher eventPublisher;
     private final WorkLogPerformanceCalculator performanceCalculator;
     private final AnalyticsFactSyncService analyticsFactSyncService;
+    private final WorkIntervalCalculator intervalCalculator;
+    private final ShiftIntervalResolver intervalResolver;
 
     public void processJob(Long jobId) {
         long startedAt = System.nanoTime();
@@ -203,9 +207,16 @@ public class DailyRecalcService {
             categoryRepo.saveAll(categories);
         }
 
+        // Covered time and verified time both come from the shared interval engine,
+        // computed over the shift's raw logs rather than the category rows — category
+        // rows have already lost the interval boundaries needed to union overlaps.
+        WorkIntervalCalculator.VerifiedTime verified = intervalCalculator.computeVerifiedTime(
+                intervalResolver.toIntervals(logs),
+                intervalResolver.resolvePlbCoefficient(workDate));
+
         Integer previousBonusEligibleMinutes = report.getBonusEligibleMinutes();
         String reportSignatureBefore = reportContentSignature(report);
-        fillDailyTotals(report, categories, workShift, employee, workDate);
+        fillDailyTotals(report, categories, workShift, employee, workDate, verified);
         reportRepo.saveAndFlush(report);
         categoryRepo.flush();
         boolean reportChanged = !reportSignatureBefore.equals(reportContentSignature(report));
@@ -311,6 +322,9 @@ public class DailyRecalcService {
                 + safeInt(r.getTotalQuantity()) + "|"
                 + safeInt(r.getTotalScrap()) + "|"
                 + sigDec(r.getTotalWeightedNormMinutes()) + "|"
+                + sigDec(r.getTotalVerifiedMinutes()) + "|"
+                + safeInt(r.getTotalPlMinutes()) + "|"
+                + safeInt(r.getTotalPlbMinutes()) + "|"
                 + sigDec(r.getPerformanceCoefficient()) + "|"
                 + sigDec(r.getApprovedPerformanceCoefficient()) + "|"
                 + safeInt(r.getMealsCount()) + "|"
@@ -660,8 +674,17 @@ public class DailyRecalcService {
                                   List<DailyReportCategory> categories,
                                   WorkShift workShift,
                                   Employee employee,
-                                  LocalDate workDate) {
-        int totalShiftMinutes = categories.stream().mapToInt(c -> safeInt(c.getTotalMinutes())).sum();
+                                  LocalDate workDate,
+                                  WorkIntervalCalculator.VerifiedTime verified) {
+        // Sum of the per-category minutes. This is NOT the shift duration — overlapping
+        // wall-clock time appears in it once per category — but it remains the weighting
+        // denominator for the performance coefficients, whose category weights must
+        // still add up to 1. Changing that denominator would silently move payroll
+        // figures, which is out of scope here.
+        int categoryMinutesTotal = categories.stream().mapToInt(c -> safeInt(c.getTotalMinutes())).sum();
+
+        // The authoritative shift duration: the global union of the shift's intervals.
+        int totalShiftMinutes = (int) verified.coveredMinutes();
         int totalWorkMinutes = categories.stream()
                 .filter(c -> isType(c.getSourceType(), "WORK"))
                 .mapToInt(c -> safeInt(c.getTotalMinutes()))
@@ -689,8 +712,8 @@ public class DailyRecalcService {
                 .map(DailyReportCategory::getTotalWeightedNormMinutes)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal performanceCoefficient = weightedCoefficient(categories, false, totalShiftMinutes);
-        BigDecimal approvedPerformanceCoefficient = weightedCoefficient(categories, true, totalShiftMinutes);
+        BigDecimal performanceCoefficient = weightedCoefficient(categories, false, categoryMinutesTotal);
+        BigDecimal approvedPerformanceCoefficient = weightedCoefficient(categories, true, categoryMinutesTotal);
 
         report.setEmployee(employee);
         report.setWorkDate(workDate);
@@ -704,6 +727,14 @@ public class DailyRecalcService {
         report.setTotalCompensatedMinutes(0); // TO-DO
         int approvedMinutes = totalWeightedNormMinutes.setScale(0, RoundingMode.HALF_UP).intValue();
         report.setTotalApprovedMinutes(approvedMinutes);
+
+        // Verified time is a separate quantity from the efficiency-weighted approved
+        // minutes above: it weights each covered interval by the PL/PLB coefficient
+        // from work_code_categories.norm_multiplier. The two are deliberately kept
+        // apart so no coefficient is ever applied twice to the same minute.
+        report.setTotalVerifiedMinutes(verified.verifiedMinutes());
+        report.setTotalPlMinutes((int) verified.plMinutes());
+        report.setTotalPlbMinutes((int) verified.plbMinutes());
 
         int bonusEligibleMinutes = 0;
         for (DailyReportCategory cat : categories) {

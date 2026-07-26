@@ -103,9 +103,17 @@ public abstract class AbstractIntegrationTest {
     private static List<Path> migrationScripts() throws Exception {
         try (Stream<Path> files = Files.list(Path.of("src/main/resources/sql"))) {
             return files
-                    .filter(path -> path.getFileName().toString().startsWith("2026-07-21-"))
+                    .filter(path -> path.getFileName().toString().compareTo(BASELINE_CUTOFF) >= 0)
                     .sorted(Comparator.comparing(path -> path.getFileName().toString()))
                     .toList();
         }
     }
+
+    /**
+     * Scripts at or after this name are the ones NOT already folded into the
+     * baseline. Filenames are date-prefixed, so ordering them as strings orders
+     * them chronologically — which means a migration added later is picked up
+     * automatically instead of being silently skipped.
+     */
+    private static final String BASELINE_CUTOFF = "2026-07-21-";
 }

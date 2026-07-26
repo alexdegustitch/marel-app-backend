@@ -7,6 +7,9 @@ import com.aleksandarparipovic.marel_app.summary.dto.DailySummaryProjection;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDto;
+import com.aleksandarparipovic.marel_app.work_log.interval.ShiftIntervalResolver;
+import com.aleksandarparipovic.marel_app.work_log.interval.WorkIntervalCalculator;
+import com.aleksandarparipovic.marel_app.work_log.interval.WorkIntervalInput;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,16 +17,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Duration;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +30,8 @@ public class DailySummaryService {
 
     private final WorkLogRepository workLogRepo;
     private final AppSettingService appSettingService;
+    private final WorkIntervalCalculator intervalCalculator;
+    private final ShiftIntervalResolver intervalResolver;
 
     /**
      * Fast daily summary read directly from work_logs (no derived tables needed).
@@ -43,10 +44,10 @@ public class DailySummaryService {
         List<WorkLogDto> logs = workLogRepo.getAllActiveLogsForShift(workShiftId);
         List<WorkLog> rawLogs = workLogRepo.findActiveLogsWithRefsForShift(workShiftId);
 
-        Metrics metrics = calculateMetrics(rawLogs);
         LocalDate workDate = rawLogs.isEmpty() || rawLogs.getFirst().getWorkShift() == null
                 ? null
                 : rawLogs.getFirst().getWorkShift().getWorkDate();
+        Metrics metrics = calculateMetrics(rawLogs, workDate);
 
         if (proj == null) {
             return DailySummaryDto.builder()
@@ -57,6 +58,9 @@ public class DailySummaryService {
                     .approvedPerformanceRate(metrics.approvedPerformanceRate)
                     .performanceCoefficient(metrics.performanceCoefficient)
                     .totalWeightedNormMinutes(metrics.totalWeightedNormMinutes)
+                    .verifiedMinutes(metrics.verifiedMinutes)
+                    .plMinutes(metrics.plMinutes)
+                    .plbMinutes(metrics.plbMinutes)
                     .overlappingLogIds(metrics.overlappingLogIds)
                     .logs(logs)
                     .build();
@@ -72,12 +76,15 @@ public class DailySummaryService {
                 .approvedPerformanceRate(metrics.approvedPerformanceRate)
                 .performanceCoefficient(metrics.performanceCoefficient)
                 .totalWeightedNormMinutes(metrics.totalWeightedNormMinutes)
+                .verifiedMinutes(metrics.verifiedMinutes)
+                .plMinutes(metrics.plMinutes)
+                .plbMinutes(metrics.plbMinutes)
                 .overlappingLogIds(metrics.overlappingLogIds)
                 .logs(logs)
                 .build();
     }
 
-    private Metrics calculateMetrics(List<WorkLog> logs) {
+    private Metrics calculateMetrics(List<WorkLog> logs, LocalDate workDate) {
         if (logs.isEmpty()) {
             return Metrics.empty();
         }
@@ -112,70 +119,33 @@ public class DailySummaryService {
             return Metrics.empty();
         }
 
-        // Displayed "duration": same-category overlapping logs are merged so the
-        // overlapping minutes aren't counted twice. Different-category overlaps are
-        // left as-is (summed independently) and surfaced via overlappingLogIds instead.
-        long dedupedTotalMinutes = sumMergedMinutesByCategory(logs);
+        // Displayed "duration" is the GLOBAL union of every valid interval, whatever
+        // its category: overlapping wall-clock time counts once and gaps not at all.
+        // Merging per category and summing the per-category totals — what this used to
+        // do — counted a cross-category overlap twice.
+        List<WorkIntervalInput> intervals = intervalResolver.toIntervals(logs);
+        BigDecimal plbCoefficient = intervalResolver.resolvePlbCoefficient(workDate);
+        WorkIntervalCalculator.VerifiedTime verified =
+                intervalCalculator.computeVerifiedTime(intervals, plbCoefficient);
+
+        // Flagging cross-category overlaps stays a separate concern from measuring
+        // covered time, and is unchanged.
         List<Long> overlappingLogIds = detectCrossCategoryOverlaps(logs);
 
         BigDecimal divisor = BigDecimal.valueOf(rawTotalMinutes);
         BigDecimal performanceRate = weightedRateSum.divide(divisor, 4, RoundingMode.HALF_UP);
         BigDecimal approvedRate = weightedApprovedRateSum.divide(divisor, 4, RoundingMode.HALF_UP);
         return new Metrics(
-                dedupedTotalMinutes,
+                verified.coveredMinutes(),
                 performanceRate,
                 approvedRate,
                 approvedRate.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP),
                 totalWeightedNorm.setScale(4, RoundingMode.HALF_UP),
+                verified.verifiedMinutes(),
+                verified.plMinutes(),
+                verified.plbMinutes(),
                 overlappingLogIds
         );
-    }
-
-    /** Sums log durations per work-code category, merging overlapping/touching intervals within each category. */
-    private long sumMergedMinutesByCategory(List<WorkLog> logs) {
-        Map<Long, List<WorkLog>> byCategory = logs.stream()
-                .filter(l -> l.getWorkCode() != null && l.getStartAt() != null && l.getEndAt() != null)
-                .collect(Collectors.groupingBy(l -> l.getWorkCode().getId()));
-
-        long total = 0;
-        for (List<WorkLog> categoryLogs : byCategory.values()) {
-            total += sumMergedMinutes(categoryLogs);
-        }
-        return total;
-    }
-
-    /** Merges overlapping/touching [startAt, endAt) ranges and sums the resulting covered minutes. */
-    private long sumMergedMinutes(List<WorkLog> logs) {
-        List<WorkLog> sorted = logs.stream()
-                .sorted(Comparator.comparing(WorkLog::getStartAt))
-                .toList();
-
-        long total = 0;
-        OffsetDateTime mergedStart = null;
-        OffsetDateTime mergedEnd = null;
-
-        for (WorkLog log : sorted) {
-            OffsetDateTime start = log.getStartAt();
-            OffsetDateTime end = log.getEndAt();
-            if (mergedEnd == null) {
-                mergedStart = start;
-                mergedEnd = end;
-                continue;
-            }
-            if (!start.isAfter(mergedEnd)) {
-                if (end.isAfter(mergedEnd)) {
-                    mergedEnd = end;
-                }
-            } else {
-                total += Duration.between(mergedStart, mergedEnd).toMinutes();
-                mergedStart = start;
-                mergedEnd = end;
-            }
-        }
-        if (mergedEnd != null) {
-            total += Duration.between(mergedStart, mergedEnd).toMinutes();
-        }
-        return total;
     }
 
     /** Flags log ids involved in an overlap with a log from a DIFFERENT work-code category (not auto-merged). */
@@ -241,10 +211,14 @@ public class DailySummaryService {
             BigDecimal approvedPerformanceRate,
             BigDecimal performanceCoefficient,
             BigDecimal totalWeightedNormMinutes,
+            BigDecimal verifiedMinutes,
+            long plMinutes,
+            long plbMinutes,
             List<Long> overlappingLogIds
     ) {
         static Metrics empty() {
-            return new Metrics(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
+            return new Metrics(0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                    BigDecimal.ZERO, 0, 0, List.of());
         }
     }
 }

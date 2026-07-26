@@ -75,6 +75,23 @@ public class DailyReport {
     @Column(name = "total_weighted_norm_minutes")
     private BigDecimal totalWeightedNormMinutes;
 
+    /**
+     * Coefficient-weighted verified time: Σ over non-overlapping covered intervals of
+     * interval duration × the PL/PLB coefficient in force. Distinct from
+     * {@link #totalWeightedNormMinutes}, which stays weighted by approved performance.
+     * NULL on reports last calculated before this field existed.
+     */
+    @Column(name = "total_verified_minutes")
+    private BigDecimal totalVerifiedMinutes;
+
+    /** Covered minutes classified PL (below the PLB concurrency threshold). */
+    @Column(name = "total_pl_minutes")
+    private Integer totalPlMinutes;
+
+    /** Covered minutes classified PLB (three or more parallel-capable logs active). */
+    @Column(name = "total_plb_minutes")
+    private Integer totalPlbMinutes;
+
     @Column(name = "performance_rate")
     private BigDecimal performanceRate;
 

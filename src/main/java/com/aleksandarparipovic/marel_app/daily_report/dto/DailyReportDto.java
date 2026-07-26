@@ -20,6 +20,10 @@ public class DailyReportDto {
     private BigDecimal performanceCoefficient;
     private BigDecimal approvedPerformanceCoefficient;
     private BigDecimal totalWeightedNormMinutes;
+    /** Coefficient-weighted verified time. NULL on reports not yet recalculated. */
+    private BigDecimal totalVerifiedMinutes;
+    private Integer totalPlMinutes;
+    private Integer totalPlbMinutes;
     private Integer bonusEligibleMinutes;
     private Boolean isMealAllowed;
     private Integer mealsCount;

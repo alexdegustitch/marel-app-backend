@@ -18,6 +18,9 @@ public class DailyReportMapper {
         reportDto.setPerformanceCoefficient(report.getPerformanceCoefficient());
         reportDto.setApprovedPerformanceCoefficient(report.getApprovedPerformanceCoefficient());
         reportDto.setTotalWeightedNormMinutes(report.getTotalWeightedNormMinutes());
+        reportDto.setTotalVerifiedMinutes(report.getTotalVerifiedMinutes());
+        reportDto.setTotalPlMinutes(report.getTotalPlMinutes());
+        reportDto.setTotalPlbMinutes(report.getTotalPlbMinutes());
         reportDto.setBonusEligibleMinutes(report.getBonusEligibleMinutes());
         reportDto.setIsMealAllowed(report.getIsMealAllowed());
         reportDto.setMealsCount(report.getMealsCount());
