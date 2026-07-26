@@ -35,7 +35,8 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         wl.effective_work_code_category_id as effectiveWorkCodeCategoryId,
         ewcc.category_no as effectiveWorkCodeCategoryNo,
         wl.is_active as isActive,
-        wl.norm_multiplier_snapshot as normMultiplierSnapshot
+        wl.norm_multiplier_snapshot as normMultiplierSnapshot,
+        wcc.allows_parallel_work as allowsParallelWork
     FROM work_logs wl
     LEFT JOIN operations o ON wl.operation_id = o.id
     LEFT JOIN production_orders po ON wl.production_order_id = po.id
@@ -64,7 +65,8 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         wl.effective_work_code_category_id as effectiveWorkCodeCategoryId,
         ewcc.category_no as effectiveWorkCodeCategoryNo,
         wl.is_active as isActive,
-        wl.norm_multiplier_snapshot as normMultiplierSnapshot
+        wl.norm_multiplier_snapshot as normMultiplierSnapshot,
+        wcc.allows_parallel_work as allowsParallelWork
     FROM work_logs wl
     LEFT JOIN operations o ON wl.operation_id = o.id
     LEFT JOIN production_orders po ON wl.production_order_id = po.id
@@ -91,7 +93,15 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
     @Query("SELECT wl FROM WorkLog wl LEFT JOIN FETCH wl.workCode LEFT JOIN FETCH wl.operation WHERE wl.workShift.id = :shiftId AND wl.isActive = true")
     List<WorkLog> findActiveLogsWithCodeForShift(@Param("shiftId") Long shiftId);
 
-    @Query("SELECT wl FROM WorkLog wl LEFT JOIN FETCH wl.workCode LEFT JOIN FETCH wl.operation LEFT JOIN FETCH wl.workShift WHERE wl.workShift.id = :shiftId AND wl.isActive = true")
+    // Also fetches operation.product and productionOrder so consumers that need those
+    // (e.g. AnalyticsFactSyncService) avoid an N+1 lazy-load per log.
+    @Query("SELECT wl FROM WorkLog wl" +
+            " LEFT JOIN FETCH wl.workCode" +
+            " LEFT JOIN FETCH wl.operation op" +
+            " LEFT JOIN FETCH op.product" +
+            " LEFT JOIN FETCH wl.workShift" +
+            " LEFT JOIN FETCH wl.productionOrder" +
+            " WHERE wl.workShift.id = :shiftId AND wl.isActive = true")
     List<WorkLog> findActiveLogsWithRefsForShift(@Param("shiftId") Long shiftId);
 
     // Resets the bonus-effective category for active logs of a shift, so recalc can

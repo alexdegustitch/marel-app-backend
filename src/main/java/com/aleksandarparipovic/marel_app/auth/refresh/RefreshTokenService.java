@@ -94,6 +94,27 @@ public class RefreshTokenService {
                 });
     }
 
+    /**
+     * The session identity behind a raw refresh token, without rotating or revoking
+     * it. Read-only lookup used by logout to close the matching user session.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<String> findFamilyId(String rawToken) {
+        return findByRawToken(rawToken).map(RefreshToken::getFamilyId);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<Long> findUserId(String rawToken) {
+        return findByRawToken(rawToken).map(token -> token.getUser().getId());
+    }
+
+    private java.util.Optional<RefreshToken> findByRawToken(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        return refreshTokenRepository.findByTokenHash(hashToken(rawToken));
+    }
+
     private RefreshToken findByRawTokenForUpdate(String rawToken) {
         if (rawToken == null || rawToken.isBlank()) {
             throw new IllegalArgumentException("Refresh token is required");

@@ -20,5 +20,7 @@ public class BonusEligibilityRulePatchItem {
     private BigDecimal bonusValue;
 
     private String note;
+
+    private Boolean isActive;
 }
 

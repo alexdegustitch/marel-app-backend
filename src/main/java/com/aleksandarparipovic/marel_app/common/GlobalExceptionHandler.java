@@ -50,6 +50,87 @@ public class GlobalExceptionHandler {
                 ));
     }
 
+    /**
+     * Correct password, unusable account. 403 rather than 401 so the client knows
+     * the credentials were fine, plus an explicit accountStatus so it can render
+     * the pending-approval screen instead of a login error.
+     */
+    @ExceptionHandler(com.aleksandarparipovic.marel_app.auth.AccountNotUsableException.class)
+    public ResponseEntity<?> handleAccountNotUsable(
+            com.aleksandarparipovic.marel_app.auth.AccountNotUsableException ex
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(Map.of(
+                        "timestamp", LocalDateTime.now(),
+                        "error", ex.getMessage(),
+                        "code", "ACCOUNT_NOT_USABLE",
+                        "accountStatus", ex.getAccountStatus().name()
+                ));
+    }
+
+    /**
+     * A malformed or unparseable request body — an invalid enum value, a JSON type
+     * that does not match the target field, or plain broken JSON. This is the
+     * client's mistake, so 400; without this handler it fell through to the generic
+     * 500 and reported "Something went wrong" for a simple typo.
+     */
+    @ExceptionHandler({
+            org.springframework.http.converter.HttpMessageNotReadableException.class,
+            org.springframework.http.converter.HttpMessageConversionException.class
+    })
+    public ResponseEntity<?> handleUnreadableBody(Exception ex) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of(
+                        "timestamp", LocalDateTime.now(),
+                        // The exception message can quote the offending payload, so it
+                        // is deliberately not echoed back.
+                        "error", "Neispravan format zahteva."
+                ));
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<?> handleConflict(ConflictException ex) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(Map.of(
+                        "timestamp", LocalDateTime.now(),
+                        "error", ex.getMessage()
+                ));
+    }
+
+    /**
+     * Two users changed the same row concurrently and this one lost. The message
+     * is generic on purpose — the loser only needs to know to reload and retry,
+     * and the winner's identity is not theirs to learn from an error body.
+     */
+    @ExceptionHandler(org.springframework.dao.OptimisticLockingFailureException.class)
+    public ResponseEntity<?> handleOptimisticLock(
+            org.springframework.dao.OptimisticLockingFailureException ex
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(Map.of(
+                        "timestamp", LocalDateTime.now(),
+                        "error", "Neko drugi je u međuvremenu izmenio ovaj zapis. Osvežite i pokušajte ponovo."
+                ));
+    }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<?> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException ex
+    ) {
+        // Rethrown rather than swallowed into the generic 500 handler below, which
+        // would otherwise turn every authorization failure into "Something went wrong".
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(Map.of(
+                        "timestamp", LocalDateTime.now(),
+                        "error", "Nemate ovlašćenje za ovu akciju."
+                ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleGeneric(Exception ex) {
         return ResponseEntity

@@ -24,8 +24,11 @@ public class AdminInitializer {
     @Value("${app.bootstrap.admin.email:admin@marel.local}")
     private String adminEmail;
 
-    @Value("${app.bootstrap.admin.full-name:System Administrator}")
-    private String adminFullName;
+    @Value("${app.bootstrap.admin.first-name:System}")
+    private String adminFirstName;
+
+    @Value("${app.bootstrap.admin.last-name:Administrator}")
+    private String adminLastName;
 
     @Value("${app.bootstrap.admin.password}")
     private String adminPassword;
@@ -51,10 +54,12 @@ public class AdminInitializer {
         // 3️⃣ Create admin user
         User admin = User.builder()
                 .username(adminUsername)
-                .fullName(adminFullName)
+                .firstName(adminFirstName)
+                .lastName(adminLastName)
                 .emailAddress(adminEmail)
                 .passwordHash(passwordEncoder.encode(adminPassword))
                 .role(adminRole)
+                .accountStatus(com.aleksandarparipovic.marel_app.user.UserAccountStatus.ACTIVE)
                 .active(true)
                 .build();
 

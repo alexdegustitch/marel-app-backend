@@ -29,6 +29,16 @@ public class JwtService {
     }
 
     public String generateAccessToken(User user) {
+        return generateAccessToken(user, null);
+    }
+
+    /**
+     * @param familyId the refresh-token family this token belongs to, i.e. the
+     *                 session identity. Carried as a claim so the heartbeat endpoint
+     *                 can resolve the caller's own session from the security context
+     *                 instead of trusting a session id in the request body.
+     */
+    public String generateAccessToken(User user, String familyId) {
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(accessTokenTtlSeconds);
 
@@ -36,11 +46,19 @@ public class JwtService {
                 .setSubject(user.getUsername())
                 .claim("uid", user.getId())
                 .claim("role", user.getRole().getRoleName())
+                .claim("sid", familyId)
                 .claim("typ", "access")
                 .setIssuedAt(Date.from(now))
                 .setExpiration(Date.from(expiresAt))
                 .signWith(signingKey, SignatureAlgorithm.HS256)
                 .compact();
+    }
+
+    /** The session (refresh-token family) this access token was issued for. */
+    public String extractSessionId(String token) {
+        return parseClaims(token)
+                .map(claims -> claims.get("sid", String.class))
+                .orElse(null);
     }
 
     public String extractUsername(String token) {

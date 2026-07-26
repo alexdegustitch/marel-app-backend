@@ -16,8 +16,13 @@ public class UserCreateRequest {
     @Size(min = 4, message = "Password must be at least 4 characters")
     private String password;
 
-    @NotBlank(message = "Full name is required")
-    private String fullName;
+    @NotBlank(message = "First name is required")
+    private String firstName;
+
+    @NotBlank(message = "Last name is required")
+    private String lastName;
+
+    private String mobilePhone;
 
     @Email(message = "Invalid email format")
     private String emailAddress;

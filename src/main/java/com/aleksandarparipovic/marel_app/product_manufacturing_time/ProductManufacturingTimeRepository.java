@@ -30,4 +30,6 @@ public interface ProductManufacturingTimeRepository
             @Param("from") LocalDate from,
             @Param("to") LocalDate to
     );
+
+    java.util.Optional<ProductManufacturingTime> findBySourceRequest_Id(Long sourceRequestId);
 }

@@ -16,6 +16,7 @@ public class BonusEligibilityRuleResponse {
     private final Integer saturdayCount;
     private final BigDecimal bonusValue;
     private final String note;
+    private final Boolean isActive;
     private final OffsetDateTime createdAt;
     private final OffsetDateTime updatedAt;
     private final OffsetDateTime archivedAt;
@@ -27,6 +28,7 @@ public class BonusEligibilityRuleResponse {
         this.saturdayCount = entity.getSaturdayCount();
         this.bonusValue = entity.getBonusValue();
         this.note = entity.getNote();
+        this.isActive = entity.getIsActive();
         this.createdAt = entity.getCreatedAt();
         this.updatedAt = entity.getUpdatedAt();
         this.archivedAt = entity.getArchivedAt();

@@ -37,4 +37,14 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
             @Param("revokedAt") OffsetDateTime revokedAt,
             @Param("reason") String reason
     );
+
+    /** Non-locking lookup, for reads that must not take a row lock (e.g. logout). */
+    @Query("""
+            select rt
+            from RefreshToken rt
+            join fetch rt.user u
+            join fetch u.role
+            where rt.tokenHash = :tokenHash
+            """)
+    Optional<RefreshToken> findByTokenHash(@Param("tokenHash") String tokenHash);
 }

@@ -30,14 +30,30 @@ public class ProductionOrder {
     @Column(name = "name", nullable = false)
     private String name;
 
+    @Column(name = "creation_date")
+    private LocalDate creationDate;
+
     @Column(name = "order_date")
     private LocalDate orderDate;
 
     @Column(name = "delivery_deadline")
-    private LocalDate deliveryDeadline;
+    private String deliveryDeadline;
 
     @Column(name = "testing_required", nullable = false)
     private Boolean testingRequired = false;
+
+    @Column(name = "is_high_priority")
+    private Boolean isHighPriority = false;
+
+    @Column(name = "is_announced")
+    private Boolean isAnnounced = false;
+
+    @Column(name = "has_successive_deliveries")
+    private Boolean hasSuccessiveDeliveries = false;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private ProductionOrderStatus status = ProductionOrderStatus.CREATED;
 
     @Column(name = "note")
     private String note;

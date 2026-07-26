@@ -25,11 +25,29 @@ public class User {
     @Column(nullable = false, unique = true)
     private String username;
 
-    @Column(name = "password_hash", nullable = false)
+    // Nullable: Google-provisioned accounts have no local password.
+    @Column(name = "password_hash")
     private String passwordHash;
 
-    @Column(name = "full_name", nullable = false)
+    @Column(name = "first_name", nullable = false)
+    private String firstName;
+
+    @Column(name = "last_name", nullable = false)
+    private String lastName;
+
+    // DB-generated (GENERATED ALWAYS AS first_name || ' ' || last_name) — read-only.
+    // @Generated makes Hibernate re-read the value after an insert or update;
+    // without it a freshly persisted User has fullName == null for the rest of the
+    // transaction, which silently leaked a null name into notification payloads.
+    @org.hibernate.annotations.Generated(event = {
+            org.hibernate.generator.EventType.INSERT,
+            org.hibernate.generator.EventType.UPDATE
+    })
+    @Column(name = "full_name", insertable = false, updatable = false)
     private String fullName;
+
+    @Column(name = "mobile_phone")
+    private String mobilePhone;
 
     @Column(name = "email_address", nullable = false, unique = true)
     private String emailAddress;
@@ -38,8 +56,25 @@ public class User {
     @JoinColumn(name = "role_id")
     private Role role;
 
+    /**
+     * Authoritative workflow state. Persisted as a string (never an ordinal), in
+     * line with the project's other enums (see {@code ProductionOrderStatus}).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "account_status", nullable = false, length = 20)
+    private UserAccountStatus accountStatus;
+
+    /**
+     * DERIVED from {@link #accountStatus} by trg_00_users_account_status_sync.
+     * Kept because existing specifications, DTOs and the frontend read it. Never
+     * set it as the way to express a workflow decision — set accountStatus.
+     */
     @Column(name = "is_active")
     private Boolean active;
+
+    /** First time the account reached ACTIVE. Set by the database, never cleared. */
+    @Column(name = "activated_at", insertable = false)
+    private OffsetDateTime activatedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

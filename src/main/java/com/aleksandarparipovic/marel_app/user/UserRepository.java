@@ -18,6 +18,9 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
 
     boolean existsByEmailAddress(String emailAddress);
 
+    @EntityGraph(attributePaths = "role")
+    Optional<User> findByEmailAddressIgnoreCase(String emailAddress);
+
     Page<User> findByUsernameContainingIgnoreCase(String username, Pageable pageable);
 
     Page<User> findByRole_RoleNameIgnoreCase(String roleName, Pageable pageable);
@@ -28,4 +31,19 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
 
     List<User> findByActiveTrueAndArchivedAtIsNullAndRole_RoleNameIgnoreCaseOrderByFullNameAsc(String roleName);
 
+
+    /**
+     * Users who currently hold one of the given roles and can actually receive
+     * notifications. Used to resolve notification recipients from a permission
+     * rather than from a hard-coded role name at the call site.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            select u from User u
+            join fetch u.role r
+            where lower(r.roleName) in :roleNames
+              and u.accountStatus = com.aleksandarparipovic.marel_app.user.UserAccountStatus.ACTIVE
+              and u.archivedAt is null
+            """)
+    java.util.List<User> findActiveByRoleNames(
+            @org.springframework.data.repository.query.Param("roleNames") java.util.List<String> roleNames);
 }

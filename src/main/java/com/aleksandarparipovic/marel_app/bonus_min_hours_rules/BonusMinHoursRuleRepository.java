@@ -14,6 +14,8 @@ public interface BonusMinHoursRuleRepository extends JpaRepository<BonusMinHours
 
     Optional<BonusMinHoursRule> findByIdAndArchivedAtIsNull(Long id);
 
+    Optional<BonusMinHoursRule> findByPeriodAndArchivedAtIsNull(LocalDate period);
+
     boolean existsByPeriodAndArchivedAtIsNull(LocalDate period);
 
     boolean existsByPeriodAndArchivedAtIsNullAndIdNot(LocalDate period, Long id);

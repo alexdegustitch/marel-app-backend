@@ -16,6 +16,17 @@ public class RoleService {
         return roleRepository.findAll().stream().map(RoleMapper::toDto).toList();
     }
 
+    /**
+     * Roles offerable on the public registration form — every role except "developer",
+     * which is reserved for internal engineering accounts created by an admin.
+     */
+    public List<RoleDto> findRegistrable() {
+        return roleRepository.findAll().stream()
+                .filter(role -> !"developer".equalsIgnoreCase(role.getRoleName()))
+                .map(RoleMapper::toDto)
+                .toList();
+    }
+
     public RoleDto create(String name) {
 
         if (roleRepository.existsByRoleNameIgnoreCase(name)) {

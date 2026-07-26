@@ -42,4 +42,6 @@ public interface WorkLogDto {
     Boolean getIsActive();
 
     BigDecimal getNormMultiplierSnapshot();
+
+    Boolean getAllowsParallelWork();
 }

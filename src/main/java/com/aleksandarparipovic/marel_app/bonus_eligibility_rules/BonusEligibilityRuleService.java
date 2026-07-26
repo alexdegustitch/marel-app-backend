@@ -39,6 +39,7 @@ public class BonusEligibilityRuleService {
                     if (patch.getSaturdayCount() != null) entity.setSaturdayCount(patch.getSaturdayCount());
                     if (patch.getBonusValue() != null)   entity.setBonusValue(patch.getBonusValue());
                     if (patch.getNote() != null)         entity.setNote(patch.getNote());
+                    if (patch.getIsActive() != null)     entity.setIsActive(patch.getIsActive());
                     return new BonusEligibilityRuleResponse(repository.save(entity));
                 })
                 .toList();

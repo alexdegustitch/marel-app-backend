@@ -12,6 +12,7 @@ public record WorkCodeCategoryDto(
         Boolean fixedHourlyRate,
         Boolean affectsMealAllowance,
         Integer displayOrder,
-        Boolean baseCategory
+        Boolean baseCategory,
+        Boolean allowsParallelWork
 ) {
 }

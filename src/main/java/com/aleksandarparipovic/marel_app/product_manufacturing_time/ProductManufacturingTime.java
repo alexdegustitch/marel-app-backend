@@ -63,4 +63,18 @@ public class ProductManufacturingTime {
 
     @Column(name = "is_active", nullable = false)
     private Boolean active = true;
+
+    /**
+     * The request that most recently produced the current state of this record.
+     *
+     * <p>Cardinality is one-to-one and enforced by uq_pmt_source_request_id: a
+     * request yields at most one manufacturing-time record. A CREATE request sets
+     * it on a new row; UPDATE / RECALCULATE / DEACTIVATE re-stamp it on the row
+     * they act on, so the earlier producing request is superseded here — the full
+     * chain lives in audit_logs. NULL when the record was created directly rather
+     * than through a request.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_request_id")
+    private com.aleksandarparipovic.marel_app.manufacturing_time_request.ManufacturingTimeRequest sourceRequest;
 }

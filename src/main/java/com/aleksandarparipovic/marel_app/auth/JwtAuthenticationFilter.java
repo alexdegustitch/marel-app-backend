@@ -18,6 +18,8 @@ import java.io.IOException;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    public static final String SESSION_ID_ATTRIBUTE = "marel.sessionId";
+
     private final JwtService jwtService;
     private final CustomUserDetailsService customUserDetailsService;
 
@@ -43,9 +45,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String username = jwtService.extractUsername(token);
 
+        // The session (refresh-token family) the caller is authenticated on. Exposed
+        // as a request attribute so the heartbeat endpoint resolves the session from
+        // the verified token rather than from anything the client can choose.
+        request.setAttribute(SESSION_ID_ATTRIBUTE, jwtService.extractSessionId(token));
+
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
                 var userDetails = customUserDetailsService.loadUserByUsername(username);
+
+                // A token outlives a status change by up to its 15-minute TTL, so
+                // an account that stopped being ACTIVE (declined, suspended,
+                // archived) must be refused here and not merely at next login.
+                if (!userDetails.isEnabled()) {
+                    filterChain.doFilter(request, response);
+                    return;
+                }
 
                 var auth = new UsernamePasswordAuthenticationToken(
                         userDetails,

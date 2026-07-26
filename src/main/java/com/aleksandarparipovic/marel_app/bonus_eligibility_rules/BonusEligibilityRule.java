@@ -37,6 +37,13 @@ public class BonusEligibilityRule {
     @Column(name = "note")
     private String note;
 
+    // Whether the calendar date for this Saturday ordinal is actually worked
+    // (per WorkCalendarDayEffectiveStatus.isWorkingForBonusPurposes). false = the
+    // row is shown grayed out — the Saturday isn't worked that month.
+    @Column(name = "is_active", nullable = false)
+    @Builder.Default
+    private Boolean isActive = true;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

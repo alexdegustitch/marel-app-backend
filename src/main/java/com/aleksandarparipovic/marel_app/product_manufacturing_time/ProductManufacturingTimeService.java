@@ -56,6 +56,40 @@ public class ProductManufacturingTimeService {
         return toDto(saved);
     }
 
+    /**
+     * Same as {@link #create} but with the acting user passed explicitly, for the
+     * request workflow where the processor is resolved from the request rather
+     * than re-read from the Authentication. Returns the entity so the caller can
+     * link it to its source request inside the same transaction.
+     */
+    @Transactional
+    public ProductManufacturingTime createForUser(ProductManufacturingTimeCreateRequest req, User user) {
+        Product product = productRepository.findById(req.getProductId())
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+
+        ProductManufacturingTime entity = new ProductManufacturingTime();
+        entity.setUser(user);
+        entity.setTitle(req.getTitle());
+        entity.setProduct(product);
+        entity.setProductName(req.getProductName());
+        entity.setDateOfIssue(LocalDate.now());
+        entity.setManufacturingCoefficient(req.getManufacturingCoefficient());
+        entity.setProductsPerHour(req.getProductsPerHour());
+        entity.setManufacturingTimeSeconds(req.getManufacturingTimeSeconds());
+        entity.setActive(true);
+
+        ProductManufacturingTime saved = repository.save(entity);
+        saveOperations(saved, req.getOperations());
+        return saved;
+    }
+
+    /** Applies an update and returns the entity, for the request workflow. */
+    @Transactional
+    public ProductManufacturingTime applyUpdate(Long id, ProductManufacturingTimeUpdateRequest req) {
+        update(id, req);
+        return getActiveOrThrow(id);
+    }
+
     @Transactional
     public ProductManufacturingTimeDto update(Long id, ProductManufacturingTimeUpdateRequest req) {
         ProductManufacturingTime entity = getActiveOrThrow(id);

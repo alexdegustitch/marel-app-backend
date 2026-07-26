@@ -61,7 +61,8 @@ public class WorkLogMapper {
                 workLog.getEffectiveWorkCode() == null ? null : workLog.getEffectiveWorkCode().getId(),
                 workLog.getEffectiveWorkCode() == null ? null : workLog.getEffectiveWorkCode().getCategoryNo(),
                 workLog.getIsActive(),
-                workLog.getNormMultiplierSnapshot()
+                workLog.getNormMultiplierSnapshot(),
+                workLog.getWorkCode() == null ? null : workLog.getWorkCode().getAllowsParallelWork()
         );
     }
 

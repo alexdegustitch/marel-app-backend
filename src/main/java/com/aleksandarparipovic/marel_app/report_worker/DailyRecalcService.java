@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.report_worker;
 
+import com.aleksandarparipovic.marel_app.analytics.AnalyticsFactSyncService;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
@@ -10,7 +11,6 @@ import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
 import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecordService;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.notification.ReportNotificationService;
-import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.recalc_queue.DailyRecalcQueue;
 import com.aleksandarparipovic.marel_app.recalc_queue.DailyRecalcQueueRepository;
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
@@ -21,6 +21,7 @@ import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRe
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.WorkCodeCategoryMapping;
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.repository.WorkCodeCategoryMappingRepository;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
+import com.aleksandarparipovic.marel_app.work_log.WorkLogPerformanceCalculator;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
 import com.aleksandarparipovic.marel_app.work_shift.repository.WorkShiftRepository;
@@ -78,6 +79,8 @@ public class DailyRecalcService {
     private final ShiftRepository shiftRepository;
     private final TransactionTemplate transactionTemplate;
     private final ApplicationEventPublisher eventPublisher;
+    private final WorkLogPerformanceCalculator performanceCalculator;
+    private final AnalyticsFactSyncService analyticsFactSyncService;
 
     public void processJob(Long jobId) {
         long startedAt = System.nanoTime();
@@ -206,6 +209,11 @@ public class DailyRecalcService {
         reportRepo.saveAndFlush(report);
         categoryRepo.flush();
         boolean reportChanged = !reportSignatureBefore.equals(reportContentSignature(report));
+
+        // Sync the analytics fact table from the same already-loaded logs list. Runs inside
+        // this same transaction, so a sync failure rolls back with the rest of the recalc and
+        // inherits the existing recalc-queue retry semantics for free.
+        analyticsFactSyncService.upsertFactsForShift(workShift, logs);
 
         boolean wasEligible = previousBonusEligibleMinutes != null
                 && previousBonusEligibleMinutes >= WEEKEND_BONUS_MIN_MINUTES;
@@ -608,7 +616,7 @@ public class DailyRecalcService {
         for (WorkLog wl : logs) {
             int duration = safeInt(wl.getDurationMin());
             if (duration <= 0) continue;
-            BigDecimal perfRate = calculatePerformanceRate(wl);
+            BigDecimal perfRate = performanceCalculator.calculatePerformanceRate(wl);
             BigDecimal approvedRate = perfRate.min(appSettingService.getMaxEfficiencyPercentAt(wl.getStartAt()));
             weightedRate = weightedRate.add(perfRate.multiply(BigDecimal.valueOf(duration)));
             weightedApprovedRate = weightedApprovedRate.add(approvedRate.multiply(BigDecimal.valueOf(duration)));
@@ -745,22 +753,6 @@ public class DailyRecalcService {
             total = total.add(coefficient.multiply(weight));
         }
         return total.setScale(6, RoundingMode.HALF_UP);
-    }
-
-    private BigDecimal calculatePerformanceRate(WorkLog log) {
-        Operation operation = log.getOperation();
-        if (operation == null || !operation.isNormRequired()) {
-            return BigDecimal.valueOf(100);
-        }
-
-        BigDecimal hourlyOutput = defaultDecimal(log.getHourlyOutput());
-        if (hourlyOutput.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.valueOf(100);
-        }
-
-        return BigDecimal.valueOf(100)
-                .multiply(hourlyOutput)
-                .divide(BigDecimal.valueOf(operation.getMinNorm()), 6, RoundingMode.HALF_UP);
     }
 
     private BigDecimal resolveMultiplierByCategory(WorkCodeCategory category) {

@@ -56,7 +56,9 @@ public class UserController {
                         req.getUsername(),
                         req.getPassword(),
                         req.getEmailAddress(),
-                        req.getFullName(),
+                        req.getFirstName(),
+                        req.getLastName(),
+                        req.getMobilePhone(),
                         req.getRole()
                 )
         );

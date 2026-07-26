@@ -14,18 +14,18 @@ CREATE TABLE IF NOT EXISTS product_manufacturing_times (
     -- Date of manufacture
     manufacturing_date              date NOT NULL,
 
-    -- Units per product (system calculated / manual override / resolved value)
-    units_per_product_system        integer,
+    -- Units per product (snapshot / manual override / resolved value)
+    units_per_product_snapshot      integer,
     units_per_product_overridden    boolean NOT NULL DEFAULT false,
     units_per_product_value         integer,
 
     -- Number of completed parts per hour (broj uradjenih delova za 1h)
-    parts_per_hour_system           numeric(10,4),
+    parts_per_hour_snapshot         numeric(10,4),
     parts_per_hour_overridden       boolean NOT NULL DEFAULT false,
     parts_per_hour_value            numeric(10,4),
 
-    -- Norm date (system calculated / manual override / resolved value)
-    norm_date_system                date,
+    -- Norm date (snapshot / manual override / resolved value)
+    norm_date_snapshot              date,
     norm_date_overridden            boolean NOT NULL DEFAULT false,
     norm_date_value                 date,
 
@@ -146,17 +146,17 @@ RETURNS trigger AS $$
 BEGIN
     -- units_per_product_value
     IF NOT NEW.units_per_product_overridden THEN
-        NEW.units_per_product_value := NEW.units_per_product_system;
+        NEW.units_per_product_value := NEW.units_per_product_snapshot;
     END IF;
 
-    -- parts_per_hour_value
-    IF NOT NEW.parts_per_hour_overridden THEN
-        NEW.parts_per_hour_value := NEW.parts_per_hour_system;
+    -- norm_value
+    IF NOT NEW.norm_overridden THEN
+        NEW.norm_value := NEW.norm_snapshot;
     END IF;
 
     -- norm_date_value
     IF NOT NEW.norm_date_overridden THEN
-        NEW.norm_date_value := NEW.norm_date_system;
+        NEW.norm_date_value := NEW.norm_date_snapshot;
     END IF;
 
     RETURN NEW;
@@ -170,4 +170,7 @@ FOR EACH ROW
 EXECUTE FUNCTION trg_pmt_resolve_values();
 
 COMMIT;
+
+
+
 

@@ -54,7 +54,7 @@ public class UserService {
         return UserMapper.toDto(user);
     }
 
-    public UserDto create(String username, String password, String email, String fullName, String roleName) {
+    public UserDto create(String username, String password, String email, String firstName, String lastName, String mobilePhone, String roleName) {
 
         if (userRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("Username already taken");
@@ -71,8 +71,11 @@ public class UserService {
                 .username(username)
                 .passwordHash(passwordEncoder.encode(password))
                 .emailAddress(email)
-                .fullName(fullName)
+                .firstName(firstName)
+                .lastName(lastName)
+                .mobilePhone(mobilePhone)
                 .role(role)
+                .accountStatus(UserAccountStatus.ACTIVE)
                 .active(true)
                 .build();
 
@@ -137,6 +140,18 @@ public class UserService {
 
         if (request.getEmailAddress() != null) {
             user.setEmailAddress(request.getEmailAddress());
+        }
+
+        if (request.getFirstName() != null && !request.getFirstName().isBlank()) {
+            user.setFirstName(request.getFirstName());
+        }
+
+        if (request.getLastName() != null && !request.getLastName().isBlank()) {
+            user.setLastName(request.getLastName());
+        }
+
+        if (request.getMobilePhone() != null) {
+            user.setMobilePhone(request.getMobilePhone());
         }
 
         if (request.getActive() != null) {

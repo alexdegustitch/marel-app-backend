@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.bonus_min_hours_rules;
 
+import com.aleksandarparipovic.marel_app.bonus_calendar_sync.BonusCalendarSyncService;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.dto.BonusMinHoursRuleRequest;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.dto.BonusMinHoursRuleResponse;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.dto.BonusMinHoursRulesByYearDto;
@@ -16,6 +17,12 @@ import java.util.List;
 public class BonusMinHoursRuleController {
 
     private final BonusMinHoursRuleService service;
+    private final BonusCalendarSyncService bonusCalendarSyncService;
+
+    @PostMapping("/init-year")
+    public ResponseEntity<List<BonusMinHoursRuleResponse>> initYear(@RequestParam int year) {
+        return ResponseEntity.ok(bonusCalendarSyncService.initYear(year));
+    }
 
     @GetMapping
     public ResponseEntity<List<BonusMinHoursRuleResponse>> findAllActive() {

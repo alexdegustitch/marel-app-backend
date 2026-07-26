@@ -61,6 +61,9 @@ public class WorkCodeCategory {
     @Column(name = "base_category")
     private Boolean baseCategory;
 
+    @Column(name = "allows_parallel_work", nullable = false)
+    private Boolean allowsParallelWork = false;
+
     // DB managed timestamps
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;

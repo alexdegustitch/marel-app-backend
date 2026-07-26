@@ -17,7 +17,8 @@ public class WorkCodeCategoryMapper {
                 category.getFixedHourlyRate(),
                 category.getAffectsMealAllowance(),
                 category.getDisplayOrder(),
-                category.getBaseCategory()
+                category.getBaseCategory(),
+                category.getAllowsParallelWork()
         );
     }
 

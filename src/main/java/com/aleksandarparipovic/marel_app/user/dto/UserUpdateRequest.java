@@ -9,6 +9,12 @@ public class UserUpdateRequest {
 
     private String username;
 
+    private String firstName;
+
+    private String lastName;
+
+    private String mobilePhone;
+
     @Email(message = "Email must be valid")
     private String emailAddress;
 
