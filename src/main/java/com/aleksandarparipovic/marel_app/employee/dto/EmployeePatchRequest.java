@@ -26,4 +26,9 @@ public class EmployeePatchRequest {
     private BigDecimal hourlyRate;
     private Long defaultWorkCategoryId;
     private Boolean worksInCommercial;
+    /**
+     * Language for documents produced FOR this employee (the payroll PDF).
+     * Independent of {@code foreigner} and of the compensation scheme.
+     */
+    private String preferredLocale;
 }

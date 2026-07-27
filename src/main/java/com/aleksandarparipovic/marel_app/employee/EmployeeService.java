@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.employee;
 
 import com.aleksandarparipovic.marel_app.bonus.BonusCategory;
 import com.aleksandarparipovic.marel_app.bonus.BonusCategoryRepository;
+import com.aleksandarparipovic.marel_app.common.i18n.AppLocales;
 import com.aleksandarparipovic.marel_app.department.Department;
 import com.aleksandarparipovic.marel_app.department.DepartmentRepository;
 import com.aleksandarparipovic.marel_app.employee.dto.ArchiveEmployeeRequest;
@@ -283,6 +284,17 @@ public class EmployeeService {
         if (req.getNotes() != null)                employee.setNotes(req.getNotes());
         if (req.getWorksInCommercial() != null)     employee.setWorksInCommercial(req.getWorksInCommercial());
         if (req.getMobilePhone() != null)          employee.setMobilePhone(req.getMobilePhone());
+        if (req.getPreferredLocale() != null) {
+            // Validated against the supported set rather than passed through: the
+            // column has a CHECK constraint, and a raw constraint violation is a
+            // 500 the user cannot act on.
+            if (!AppLocales.SUPPORTED.contains(req.getPreferredLocale())) {
+                throw new IllegalArgumentException(
+                        "Nepodržan jezik: " + req.getPreferredLocale()
+                                + ". Dozvoljeni su: " + String.join(", ", AppLocales.SUPPORTED) + ".");
+            }
+            employee.setPreferredLocale(req.getPreferredLocale());
+        }
 
         boolean hourlyRateChanged = false;
         if (req.getHourlyRate() != null) {

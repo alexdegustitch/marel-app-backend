@@ -15,7 +15,16 @@ public class PayrollAdjustmentDetailDto {
 
     // ── Category definition ──────────────────────────────────────────────────
     private final String categoryCode;
+    /** The master (default-locale) name. Unchanged. */
     private final String categoryName;
+    /**
+     * The name to display, in the requested locale, falling back to
+     * {@link #categoryName}.
+     *
+     * <p>Always resolved through payroll_adjustment_category_id. The adjustment
+     * row itself stores no name, translated or otherwise.
+     */
+    private final String categoryDisplayName;
     private final String sectionCode;
     private final Integer sectionOrder;
     private final Integer sortOrder;
@@ -46,7 +55,16 @@ public class PayrollAdjustmentDetailDto {
     private final OffsetDateTime createdAt;
     private final OffsetDateTime updatedAt;
 
+    /** Default locale: the display name is the master name. */
     public PayrollAdjustmentDetailDto(PayrollAdjustment a) {
+        this(a, java.util.Map.of());
+    }
+
+    /**
+     * @param translations category id -> translated name for one locale, loaded
+     *                     once by the caller.
+     */
+    public PayrollAdjustmentDetailDto(PayrollAdjustment a, java.util.Map<Long, String> translations) {
         PayrollAdjustmentCategory cat = a.getPayrollAdjustmentCategory();
 
         this.id = a.getId();
@@ -54,6 +72,9 @@ public class PayrollAdjustmentDetailDto {
 
         this.categoryCode = cat.getCode();
         this.categoryName = cat.getName();
+        String translated = translations == null ? null : translations.get(cat.getId());
+        this.categoryDisplayName =
+                translated != null && !translated.isBlank() ? translated : this.categoryName;
         this.sectionCode = cat.getSectionCode();
         this.sectionOrder = cat.getSectionOrder();
         this.sortOrder = cat.getSortOrder();

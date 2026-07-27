@@ -1,7 +1,10 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item;
 
+import com.aleksandarparipovic.marel_app.common.i18n.AppLocales;
 import com.aleksandarparipovic.marel_app.common.jpa.EntityReferenceProvider;
 import com.aleksandarparipovic.marel_app.employee.Employee;
+import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategoryNameResolver;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategoryNameResolver;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReport;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReportRepository;
@@ -34,6 +37,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import org.springframework.data.domain.PageRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
@@ -60,6 +64,8 @@ public class PayrollRunItemService {
     private final AppSettingService appSettingService;
     private final EntityReferenceProvider referenceProvider;
     private final CurrentUserService currentUserService;
+    private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
+    private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
 
     // ─── Standard CRUD ──────────────────────────────────────────────────────
 
@@ -186,20 +192,45 @@ public class PayrollRunItemService {
 
     @Transactional
     public PayrollRunItemDetailResponse getDetails(Long monthlyReportId) {
+        return getDetails(monthlyReportId, null);
+    }
+
+    /**
+     * @param requestedLocale the language for category and adjustment display
+     *                        names. {@code null} falls back to the employee's
+     *                        own {@code preferred_locale}, which is what payroll
+     *                        documents are produced in.
+     *
+     * <p>The locale selects display names and nothing else. Every amount on this
+     * response is identical in every locale — the translation maps are read
+     * strictly after the calculation.
+     */
+    @Transactional
+    public PayrollRunItemDetailResponse getDetails(Long monthlyReportId, String requestedLocale) {
         PayrollRunItem item = payrollRunItemRepository.findByMonthlyReport_Id(monthlyReportId)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found for monthlyReportId: " + monthlyReportId));
 
         // version check — recalculate if monthly report has advanced
         item = getForPayrollAccess(item.getId());
 
+        String locale = AppLocales.normalize(
+                requestedLocale != null ? requestedLocale : employeeLocaleFor(item));
+
+        // Two queries, once per response — never one per category or per
+        // adjustment inside the loops below.
+        Map<Long, String> workCodeNames = workCodeCategoryNameResolver.translationsFor(locale);
+        Map<Long, String> adjustmentNames = payrollAdjustmentCategoryNameResolver.translationsFor(locale);
+
         List<PayrollRunItemCategoryDetailDto> categories =
                 payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId())
-                        .stream().map(PayrollRunItemCategoryDetailDto::new).toList();
+                        .stream()
+                        .map(c -> new PayrollRunItemCategoryDetailDto(c, workCodeNames))
+                        .toList();
 
         List<PayrollAdjustmentSectionDto> adjustments =
                 payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId())
                         .stream()
-                        .map(PayrollAdjustmentDetailDto::new)
+                        .map(a -> new PayrollAdjustmentDetailDto(a, adjustmentNames))
                         .collect(java.util.stream.Collectors.groupingBy(
                                 dto -> dto.getSectionCode() != null ? dto.getSectionCode() : ""
                         ))
@@ -226,6 +257,21 @@ public class PayrollRunItemService {
                 adjustments,
                 permissions
         );
+    }
+
+    /**
+     * The locale a payroll document for this item should be produced in.
+     *
+     * <p>The EMPLOYEE's preference, not the clerk's: a payslip is a document
+     * about the employee. Never derived from is_foreigner or the compensation
+     * scheme.
+     */
+    private String employeeLocaleFor(PayrollRunItem item) {
+        MonthlyReport mr = item.getMonthlyReport();
+        if (mr == null || mr.getEmployeeRecord() == null || mr.getEmployeeRecord().getEmployee() == null) {
+            return AppLocales.DEFAULT;
+        }
+        return mr.getEmployeeRecord().getEmployee().getPreferredLocale();
     }
 
     // ─── Patch ──────────────────────────────────────────────────────────────

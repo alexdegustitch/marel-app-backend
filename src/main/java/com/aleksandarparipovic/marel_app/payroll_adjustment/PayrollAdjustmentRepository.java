@@ -15,6 +15,14 @@ public interface PayrollAdjustmentRepository extends JpaRepository<PayrollAdjust
 
     List<PayrollAdjustment> findByPayrollRunItem_IdIn(Collection<Long> itemIds);
 
+    /**
+     * Whether any adjustment still references a master category.
+     *
+     * <p>Checked before deleting the category so the caller gets a clear business
+     * error instead of the raw RESTRICT constraint violation.
+     */
+    boolean existsByPayrollAdjustmentCategory_Id(Long payrollAdjustmentCategoryId);
+
     @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory WHERE a.payrollRunItem.id = :itemId")
     List<PayrollAdjustment> findByPayrollRunItemIdWithCategory(@Param("itemId") Long itemId);
 

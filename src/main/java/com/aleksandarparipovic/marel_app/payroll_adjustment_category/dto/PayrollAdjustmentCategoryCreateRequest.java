@@ -8,6 +8,16 @@ public class PayrollAdjustmentCategoryCreateRequest {
     @NotBlank
     private String code;
     private String name;
+    /**
+     * The English translation of {@link #name}, stored in
+     * payroll_adjustment_category_translations — never as a column on this
+     * category and never copied onto a payroll adjustment.
+     *
+     * <p>{@code null} leaves any existing translation untouched, so a client that
+     * does not know about translations can still edit the other fields. Blank
+     * removes it, and the name falls back to {@link #name}.
+     */
+    private String nameEn;
     private String sectionCode;
     private Integer sectionOrder;
     private Integer sortOrder;

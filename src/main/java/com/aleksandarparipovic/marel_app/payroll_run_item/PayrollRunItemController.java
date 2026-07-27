@@ -63,9 +63,18 @@ public class PayrollRunItemController {
         return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.getForPayrollAccess(id)));
     }
 
+    /**
+     * @param locale optional override for the document language. Omitted, the
+     *               employee's own preferred_locale is used — a payslip is a
+     *               document about the employee, not about the clerk opening it.
+     *               It selects display names only; every amount is identical in
+     *               every locale.
+     */
     @GetMapping("/by-monthly-report/{monthlyReportId}/details")
-    public ResponseEntity<PayrollRunItemDetailResponse> getDetails(@PathVariable Long monthlyReportId) {
-        return ResponseEntity.ok(payrollRunItemService.getDetails(monthlyReportId));
+    public ResponseEntity<PayrollRunItemDetailResponse> getDetails(
+            @PathVariable Long monthlyReportId,
+            @RequestParam(required = false) String locale) {
+        return ResponseEntity.ok(payrollRunItemService.getDetails(monthlyReportId, locale));
     }
 
     /**

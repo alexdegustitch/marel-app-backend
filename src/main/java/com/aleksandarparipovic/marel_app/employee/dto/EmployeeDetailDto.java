@@ -42,6 +42,8 @@ public class EmployeeDetailDto {
     private final String defaultWorkCategoryName;
     private final String defaultWorkCategoryNo;
     private final boolean worksInCommercial;
+    /** Document language. Never derived from {@code foreigner}. */
+    private final String preferredLocale;
 
     private final String notes;
     private final OffsetDateTime createdAt;
@@ -88,6 +90,7 @@ public class EmployeeDetailDto {
         this.probationEndDate = e.getProbationEndDate();
         this.active = e.isActive();
         this.foreigner = e.isForeigner();
+        this.preferredLocale = e.getPreferredLocale();
         this.normGraceDays = e.getNormGraceDays();
 
         this.transportAllowanceRsd = e.getTransportAllowanceRsd();

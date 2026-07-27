@@ -1,5 +1,8 @@
 package com.aleksandarparipovic.marel_app.payroll_adjustment_category;
 
+import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.common.i18n.AppLocales;
+import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentRepository;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.dto.PayrollAdjustmentCategoryCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.dto.PayrollAdjustmentCategoryResponse;
 import lombok.RequiredArgsConstructor;
@@ -7,24 +10,32 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class PayrollAdjustmentCategoryService {
 
     private final PayrollAdjustmentCategoryRepository payrollAdjustmentCategoryRepository;
+    private final PayrollAdjustmentCategoryTranslationRepository translationRepository;
+    private final PayrollAdjustmentRepository payrollAdjustmentRepository;
 
     @Transactional(readOnly = true)
     public List<PayrollAdjustmentCategoryResponse> findAll() {
+        Map<Long, String> englishNames = englishNames();
         return payrollAdjustmentCategoryRepository.findAll()
-                .stream().map(PayrollAdjustmentCategoryResponse::new).toList();
+                .stream()
+                .map(c -> new PayrollAdjustmentCategoryResponse(c, englishNames.get(c.getId())))
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public PayrollAdjustmentCategoryResponse findById(Long id) {
-        return new PayrollAdjustmentCategoryResponse(payrollAdjustmentCategoryRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("PayrollAdjustmentCategory not found")));
+        PayrollAdjustmentCategory entity = payrollAdjustmentCategoryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollAdjustmentCategory not found"));
+        return new PayrollAdjustmentCategoryResponse(entity, englishNameOf(id));
     }
 
     @Transactional
@@ -46,7 +57,9 @@ public class PayrollAdjustmentCategoryService {
         entity.setVisibleInPdf(request.getVisibleInPdf() != null ? request.getVisibleInPdf() : true);
         entity.setCalculationKey(request.getCalculationKey());
         entity.setCreatedAt(OffsetDateTime.now());
-        return new PayrollAdjustmentCategoryResponse(payrollAdjustmentCategoryRepository.save(entity));
+        PayrollAdjustmentCategory saved = payrollAdjustmentCategoryRepository.save(entity);
+        applyEnglishName(saved, request.getNameEn());
+        return new PayrollAdjustmentCategoryResponse(saved, englishNameOf(saved.getId()));
     }
 
     @Transactional
@@ -69,7 +82,9 @@ public class PayrollAdjustmentCategoryService {
         if (request.getVisibleInPdf() != null)   entity.setVisibleInPdf(request.getVisibleInPdf());
         entity.setCalculationKey(request.getCalculationKey());
         entity.setUpdatedAt(OffsetDateTime.now());
-        return new PayrollAdjustmentCategoryResponse(payrollAdjustmentCategoryRepository.save(entity));
+        PayrollAdjustmentCategory saved = payrollAdjustmentCategoryRepository.save(entity);
+        applyEnglishName(saved, request.getNameEn());
+        return new PayrollAdjustmentCategoryResponse(saved, englishNameOf(saved.getId()));
     }
 
     @Transactional
@@ -77,6 +92,63 @@ public class PayrollAdjustmentCategoryService {
         if (!payrollAdjustmentCategoryRepository.existsById(id)) {
             throw new IllegalArgumentException("PayrollAdjustmentCategory not found");
         }
+        // The FK from payroll_adjustments is ON DELETE RESTRICT, so a category
+        // with history cannot be deleted — deleting it used to CASCADE and take
+        // the historical adjustments with it, including ones on locked payroll
+        // runs. Checked here so the caller gets a clear 409 explaining what to do
+        // instead of a raw constraint violation.
+        if (payrollAdjustmentRepository.existsByPayrollAdjustmentCategory_Id(id)) {
+            throw new ConflictException(
+                    "Kategorija se koristi u postojećim obračunima i ne može se obrisati. "
+                            + "Deaktivirajte je umesto brisanja.");
+        }
         payrollAdjustmentCategoryRepository.deleteById(id);
+    }
+
+    // ── English name, stored in the translation table ───────────────────────
+    //
+    // sr-Latn is NOT stored here: it is served from
+    // payroll_adjustment_categories.name, so there is one place to edit the
+    // Serbian name and nothing to drift out of sync. Only the English override
+    // needs a row.
+
+    private Map<Long, String> englishNames() {
+        Map<Long, String> byCategoryId = new HashMap<>();
+        translationRepository.findAllByLocale(AppLocales.ENGLISH).forEach(t ->
+                byCategoryId.put(t.getPayrollAdjustmentCategory().getId(), t.getName()));
+        return byCategoryId;
+    }
+
+    private String englishNameOf(Long categoryId) {
+        return translationRepository.findByCategoryAndLocale(categoryId, AppLocales.ENGLISH)
+                .map(PayrollAdjustmentCategoryTranslation::getName)
+                .orElse(null);
+    }
+
+    /**
+     * Upsert or remove the English name.
+     *
+     * <p>A blank value removes the row rather than storing an empty string, so
+     * the name falls back to the master name instead of rendering as a gap on a
+     * payslip. {@code null} leaves any existing translation alone, which lets a
+     * client that does not know about translations update the other fields
+     * without wiping them.
+     */
+    private void applyEnglishName(PayrollAdjustmentCategory category, String nameEn) {
+        if (nameEn == null) {
+            return;
+        }
+        var existing = translationRepository.findByCategoryAndLocale(category.getId(), AppLocales.ENGLISH);
+        if (nameEn.isBlank()) {
+            existing.ifPresent(translationRepository::delete);
+            return;
+        }
+        PayrollAdjustmentCategoryTranslation translation = existing.orElseGet(() ->
+                PayrollAdjustmentCategoryTranslation.builder()
+                        .payrollAdjustmentCategory(category)
+                        .locale(AppLocales.ENGLISH)
+                        .build());
+        translation.setName(nameEn.trim());
+        translationRepository.save(translation);
     }
 }

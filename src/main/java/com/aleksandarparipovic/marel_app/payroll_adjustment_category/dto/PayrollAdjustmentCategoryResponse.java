@@ -9,8 +9,18 @@ import java.time.OffsetDateTime;
 public class PayrollAdjustmentCategoryResponse {
 
     private final Long id;
+    /** Stable identifier. Never translated. */
     private final String code;
+    /** The default-locale name, held on the master row. */
     private final String name;
+    /**
+     * The English translation, or {@code null} when none has been entered.
+     *
+     * <p>Null rather than a copy of {@link #name}, so an administration screen
+     * can tell "no translation yet" from "translated to the same words" and the
+     * list of categories still needing one is derivable.
+     */
+    private final String nameEn;
     private final String sectionCode;
     private final Integer sectionOrder;
     private final Integer sortOrder;
@@ -29,9 +39,14 @@ public class PayrollAdjustmentCategoryResponse {
     private final OffsetDateTime archivedAt;
 
     public PayrollAdjustmentCategoryResponse(PayrollAdjustmentCategory c) {
+        this(c, null);
+    }
+
+    public PayrollAdjustmentCategoryResponse(PayrollAdjustmentCategory c, String nameEn) {
         this.id = c.getId();
         this.code = c.getCode();
         this.name = c.getName();
+        this.nameEn = nameEn;
         this.sectionCode = c.getSectionCode();
         this.sectionOrder = c.getSectionOrder();
         this.sortOrder = c.getSortOrder();
