@@ -6,13 +6,17 @@ import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdju
 import com.aleksandarparipovic.marel_app.payroll_run.event.PayrollMonthInitEvent;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScope;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Handles async bulk initialization of all payroll structures for a given month.
@@ -29,6 +33,7 @@ public class PayrollRunInitializationService {
     private final PayrollAdjustmentCategoryRepository payrollAdjustmentCategoryRepository;
     private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final PayrollRunInitializationTxService txService;
+    private final PayrollSchemeScopeService payrollSchemeScopeService;
 
     /**
      * Entry point — called from the event listener after HTTP transaction commits.
@@ -57,12 +62,24 @@ public class PayrollRunInitializationService {
 
             // Phase 4: create item categories for each active work code category
             List<WorkCodeCategory> activeWorkCategories = workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc();
-            txService.createPayrollRunItemCategories(items, activeWorkCategories);
+            List<PayrollAdjustmentCategory> allAdjCategoriesForScope =
+                    payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
+
+            // What each employee's compensation scheme allows across this month.
+            // Resolved once for the whole run, not per employee.
+            Map<Long, PayrollSchemeScope> scopes = payrollSchemeScopeService.scopesFor(
+                    items.stream().map(i -> i.getEmployee().getId()).toList(),
+                    YearMonth.of(year, month).atDay(1),
+                    YearMonth.of(year, month).atEndOfMonth(),
+                    activeWorkCategories,
+                    allAdjCategoriesForScope);
+
+            txService.createPayrollRunItemCategories(items, activeWorkCategories, scopes);
 
             // Phase 5: create adjustments for each active adjustment category
             List<PayrollAdjustmentCategory> activeAdjCategories =
                     payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
-            txService.createPayrollAdjustments(items, activeAdjCategories, userId);
+            txService.createPayrollAdjustments(items, activeAdjCategories, scopes, userId);
 
             txService.populatePreviousMonthData(items);
 
@@ -98,10 +115,17 @@ public class PayrollRunInitializationService {
         List<PayrollRunItem> items = txService.createPayrollRunItems(payrollRun, single);
 
         List<WorkCodeCategory> activeWorkCategories = workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc();
-        txService.createPayrollRunItemCategories(items, activeWorkCategories);
-
         List<PayrollAdjustmentCategory> activeAdjCategories = payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
-        txService.createPayrollAdjustments(items, activeAdjCategories, userId);
+
+        Map<Long, PayrollSchemeScope> scopes = payrollSchemeScopeService.scopesFor(
+                items.stream().map(i -> i.getEmployee().getId()).toList(),
+                mr.getStartDate(),
+                mr.getEndDate(),
+                activeWorkCategories,
+                activeAdjCategories);
+
+        txService.createPayrollRunItemCategories(items, activeWorkCategories, scopes);
+        txService.createPayrollAdjustments(items, activeAdjCategories, scopes, userId);
 
         txService.populatePreviousMonthData(items);
 

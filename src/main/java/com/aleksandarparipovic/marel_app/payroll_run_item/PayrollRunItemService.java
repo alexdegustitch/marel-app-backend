@@ -4,6 +4,9 @@ import com.aleksandarparipovic.marel_app.common.i18n.AppLocales;
 import com.aleksandarparipovic.marel_app.common.jpa.EntityReferenceProvider;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategoryNameResolver;
+import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategoryRepository;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScope;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategoryNameResolver;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReport;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
@@ -66,6 +69,8 @@ public class PayrollRunItemService {
     private final CurrentUserService currentUserService;
     private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
     private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
+    private final PayrollAdjustmentCategoryRepository payrollAdjustmentCategoryRepository;
+    private final PayrollSchemeScopeService payrollSchemeScopeService;
 
     // ─── Standard CRUD ──────────────────────────────────────────────────────
 
@@ -492,7 +497,8 @@ public class PayrollRunItemService {
      *       if the category is paid.</li>
      * </ul>
      */
-    private void populateItemCategoriesFromMonthlyReport(PayrollRunItem item, MonthlyReport mr) {
+    private void populateItemCategoriesFromMonthlyReport(PayrollRunItem item, MonthlyReport mr,
+                                                        PayrollSchemeScope scope) {
         List<MonthlyReportCategory> monthlyCategories =
                 monthlyReportCategoryRepository.findByMonthlyReportIdWithCategory(mr.getId());
 
@@ -565,7 +571,14 @@ public class PayrollRunItemService {
             cat.setAmount(amount);
 
             // ── bonusAmount = amount * performanceCoefficient (if paid) ───────
-            if (Boolean.TRUE.equals(wcc.getIsPaid()) && performanceCoeff.compareTo(BigDecimal.ZERO) > 0) {
+            //
+            // A scheme with allows_performance_bonus = false pays no bonus at
+            // all. Efficiency is NOT switched off by this: approved performance
+            // already weighted the minutes that became weightedNormMinutes and
+            // therefore the amount above. Only the bonus on top is removed.
+            boolean bonusAllowed = scope == null || scope.allowsPerformanceBonus();
+            if (bonusAllowed && Boolean.TRUE.equals(wcc.getIsPaid())
+                    && performanceCoeff.compareTo(BigDecimal.ZERO) > 0) {
                 cat.setCategoryAffectsBonusSnapshot(true);
                 cat.setBonusAmount(amount.multiply(performanceCoeff).setScale(2, RoundingMode.HALF_UP));
             } else {
@@ -630,6 +643,22 @@ public class PayrollRunItemService {
                 });
     }
 
+    /**
+     * Whether an adjustment category is available under this scope.
+     *
+     * <p>By code, because these three amounts are computed by name in this class
+     * and there is no entity to hand at the point of the check. A null scope is
+     * unrestricted.
+     */
+    private boolean allowsAdjustmentCode(PayrollSchemeScope scope, String code) {
+        if (scope == null) {
+            return true;
+        }
+        return payrollAdjustmentCategoryRepository.findByCode(code)
+                .map(category -> scope.allowsAdjustmentCategory(category.getId()))
+                .orElse(true);
+    }
+
     private PayrollRunItemPermissionsDto resolvePermissions() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         boolean isAdmin = auth != null && auth.getAuthorities().stream()
@@ -652,6 +681,12 @@ public class PayrollRunItemService {
      * totals from adjustment lines.
      */
     private PayrollRunItem recalculateFromMonthlyReport(PayrollRunItem item, MonthlyReport mr) {
+
+        // What this employee's compensation scheme allows across this month.
+        // Resolved once here and consulted below; null means unrestricted.
+        PayrollSchemeScope scope = payrollSchemeScopeService.scopeFor(
+                item.getEmployee() == null ? null : item.getEmployee().getId(),
+                mr.getStartDate(), mr.getEndDate());
 
         // ── Operational totals from monthly report ────────────────────────────
         item.setTotalShiftMinutes(safe(mr.getTotalShiftMinutes()));
@@ -689,8 +724,15 @@ public class PayrollRunItemService {
         item.setTotalPayrollMinutes(safe(mr.getTotalWorkMinutes()) + manualAdj);
 
         // ── Meal allowance count + recalc total ───────────────────────────────
+        //
+        // Zeroed here, not merely hidden. totalNetEarnings adds
+        // item.totalMealAllowanceAmount DIRECTLY, not through the adjustment
+        // line, so suppressing only the adjustment row would remove the line
+        // from the payslip while still paying the money.
         OffsetDateTime now = OffsetDateTime.now();
-        int mealCount = mr.getMealAllowanceNum() != null ? mr.getMealAllowanceNum() : 0;
+        boolean mealAllowed = allowsAdjustmentCode(scope, "MEAL_ALLOWANCE");
+        int mealCount = !mealAllowed ? 0
+                : (mr.getMealAllowanceNum() != null ? mr.getMealAllowanceNum() : 0);
         item.setMealAllowanceCount(mealCount);
 
         BigDecimal mealSystemRate = appSettingService.getMealAllowancePerDay(now);
@@ -705,9 +747,15 @@ public class PayrollRunItemService {
         updateAdjustmentByCategoryCode(item.getId(), "MEAL_ALLOWANCE", totalMeal, true);
 
         // ── Transport allowance ───────────────────────────────────────────────
-        BigDecimal transportSystemRate = appSettingService.getTransportAllowancePerDay(now);
+        // Same reasoning as the meal allowance above: the item column feeds the
+        // total directly, so it has to be zeroed and not just left unlinked.
+        boolean transportAllowed = allowsAdjustmentCode(scope, CAT_CODE_TRANSPORT);
+        BigDecimal transportSystemRate = transportAllowed
+                ? appSettingService.getTransportAllowancePerDay(now)
+                : BigDecimal.ZERO;
         item.setTransportAllowanceUnitAmount(transportSystemRate);
-        int transportDays = item.getTransportAllowanceDays() != null ? item.getTransportAllowanceDays() : 0;
+        int transportDays = !transportAllowed ? 0
+                : (item.getTransportAllowanceDays() != null ? item.getTransportAllowanceDays() : 0);
         BigDecimal totalTransport = transportSystemRate
                 .multiply(BigDecimal.valueOf(transportDays)).setScale(2, RoundingMode.HALF_UP);
         item.setTotalTransportAllowanceAmountSystem(totalTransport);
@@ -725,7 +773,7 @@ public class PayrollRunItemService {
         }
 
         // ── Populate item categories from monthly report categories ───────────
-        populateItemCategoriesFromMonthlyReport(item, mr);
+        populateItemCategoriesFromMonthlyReport(item, mr, scope);
 
         // ── Recalculate summary totals from adjustment lines ──────────────────
         recalculateSummaryTotals(item);

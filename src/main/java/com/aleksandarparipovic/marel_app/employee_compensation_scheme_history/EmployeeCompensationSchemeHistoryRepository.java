@@ -62,6 +62,26 @@ public interface EmployeeCompensationSchemeHistoryRepository
     List<EmployeeCompensationSchemeHistory> findHistoryFor(@Param("employeeId") Long employeeId);
 
     /**
+     * Every period of these employees that overlaps {@code [from, to]}.
+     *
+     * <p>A payroll month is a range, and an employee can change scheme inside
+     * one, so the payroll layer needs every scheme that governed any part of the
+     * month — not the one in force on a single date.
+     */
+    @Query("""
+            SELECT h FROM EmployeeCompensationSchemeHistory h
+            JOIN FETCH h.compensationScheme
+            WHERE h.employee.id IN :employeeIds
+              AND h.archivedAt IS NULL
+              AND h.validFrom <= :to
+              AND (h.validUntil IS NULL OR h.validUntil >= :from)
+            """)
+    List<EmployeeCompensationSchemeHistory> findOverlapping(
+            @Param("employeeIds") Collection<Long> employeeIds,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
+    /**
      * All of one employee's non-archived periods, row-locked.
      *
      * <p>Used by the "change scheme" transaction. The exclusion constraint is the

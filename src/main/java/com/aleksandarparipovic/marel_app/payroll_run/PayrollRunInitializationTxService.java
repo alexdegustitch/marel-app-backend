@@ -12,6 +12,7 @@ import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdju
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategory;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScope;
 import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategoryRepository;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
@@ -25,6 +26,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -113,9 +115,17 @@ public class PayrollRunInitializationTxService {
         return payrollRunItemRepository.findByPayrollRun_Id(payrollRun.getId());
     }
 
+    /**
+     * @param scopes employee id -> what their compensation scheme allows across
+     *               this payroll period. An employee absent from the map is
+     *               unrestricted: payroll initialisation is not the place to
+     *               refuse somebody, and the work-date resolver already rejected
+     *               anything they should not have recorded.
+     */
     @Transactional
     public void createPayrollRunItemCategories(List<PayrollRunItem> items,
-                                               List<WorkCodeCategory> activeWorkCategories) {
+                                               List<WorkCodeCategory> activeWorkCategories,
+                                               Map<Long, PayrollSchemeScope> scopes) {
         if (activeWorkCategories.isEmpty()) {
             return;
         }
@@ -127,10 +137,17 @@ public class PayrollRunInitializationTxService {
                 .map(c -> c.getPayrollRunItem().getId() + ":" + c.getWorkCodeCategory().getId())
                 .collect(Collectors.toSet());
 
+        // A restricted employee gets rows only for the categories their scheme
+        // can actually produce, so their payslip is not padded with a dozen zero
+        // lines for work they are not allowed to do.
         List<PayrollRunItemCategory> toCreate = items.stream()
-                .flatMap(item -> activeWorkCategories.stream()
-                        .filter(wcc -> !existingKeys.contains(item.getId() + ":" + wcc.getId()))
-                        .map(wcc -> buildItemCategory(item, wcc)))
+                .flatMap(item -> {
+                    PayrollSchemeScope scope = scopeOf(scopes, item);
+                    return activeWorkCategories.stream()
+                            .filter(wcc -> scope == null || scope.allowsWorkCategory(wcc.getId()))
+                            .filter(wcc -> !existingKeys.contains(item.getId() + ":" + wcc.getId()))
+                            .map(wcc -> buildItemCategory(item, wcc));
+                })
                 .toList();
 
         payrollRunItemCategoryRepository.saveAll(toCreate);
@@ -140,6 +157,7 @@ public class PayrollRunInitializationTxService {
     @Transactional
     public void createPayrollAdjustments(List<PayrollRunItem> items,
                                          List<PayrollAdjustmentCategory> activeAdjCategories,
+                                         Map<Long, PayrollSchemeScope> scopes,
                                          Long userId) {
         if (activeAdjCategories.isEmpty()) {
             return;
@@ -159,10 +177,20 @@ public class PayrollRunInitializationTxService {
         }
         final User createdBy = createdByRef;
 
+        // Excluding the row is what actually suppresses meal allowance, transport
+        // and the monthly bonus: PayrollRunItemService updates those amounts
+        // through findByItemIdAndCategoryCode(...).ifPresent(...), so with no row
+        // there is nothing to update. The item-level meal and transport columns
+        // are zeroed separately — they are added to the total directly, not
+        // through the adjustment.
         List<PayrollAdjustment> toCreate = items.stream()
-                .flatMap(item -> activeAdjCategories.stream()
-                        .filter(adjCat -> !existingKeys.contains(item.getId() + ":" + adjCat.getId()))
-                        .map(adjCat -> buildAdjustment(item, adjCat, createdBy)))
+                .flatMap(item -> {
+                    PayrollSchemeScope scope = scopeOf(scopes, item);
+                    return activeAdjCategories.stream()
+                            .filter(adjCat -> scope == null || scope.allowsAdjustmentCategory(adjCat.getId()))
+                            .filter(adjCat -> !existingKeys.contains(item.getId() + ":" + adjCat.getId()))
+                            .map(adjCat -> buildAdjustment(item, adjCat, createdBy));
+                })
                 .toList();
 
         payrollAdjustmentRepository.saveAll(toCreate);
@@ -303,6 +331,13 @@ public class PayrollRunInitializationTxService {
         item.setCalcVersion(1);
         item.setCreatedAt(OffsetDateTime.now());
         return item;
+    }
+
+    private PayrollSchemeScope scopeOf(Map<Long, PayrollSchemeScope> scopes, PayrollRunItem item) {
+        if (scopes == null || item.getEmployee() == null) {
+            return null;
+        }
+        return scopes.get(item.getEmployee().getId());
     }
 
     private PayrollRunItemCategory buildItemCategory(PayrollRunItem item, WorkCodeCategory wcc) {

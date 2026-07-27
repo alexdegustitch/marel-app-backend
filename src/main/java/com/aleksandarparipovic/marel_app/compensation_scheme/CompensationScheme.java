@@ -47,12 +47,26 @@ public class CompensationScheme {
      * <p>{@code false} — unavailable, and rejected if submitted directly.
      */
     @Column(name = "allow_unmapped_categories", nullable = false)
+    @Builder.Default
     private Boolean allowUnmappedCategories = true;
+
+    /**
+     * Whether worked categories earn a bonus on top of what they are worth.
+     *
+     * <p>{@code false} zeroes {@code payroll_run_item_categories.bonus_amount}.
+     * Efficiency still drives the calculation itself — approved performance
+     * weights the minutes that become {@code effective_minutes} — this removes
+     * only the bonus paid on top of them.
+     */
+    @Column(name = "allows_performance_bonus", nullable = false)
+    @Builder.Default
+    private Boolean allowsPerformanceBonus = true;
 
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;
 
     @Column(name = "is_active", nullable = false)
+    @Builder.Default
     private Boolean isActive = true;
 
     // DB-managed timestamps

@@ -284,6 +284,74 @@ application, and converged on `S` by `2026-07-27-09`. Its Serbian name is
 
 ---
 
+## 7a. What a scheme changes on the payroll sheet
+
+Beyond which work categories exist, a scheme controls two more things.
+
+### Adjustment lines — `payroll_adjustment_category_scheme_rules`
+
+Excluded under `FOREIGN_FIXED_COEFFICIENT`, from 2026-08-01:
+
+| Code | |
+|---|---|
+| `MONTHLY_BONUS` | no bonuses under this scheme |
+| `PHONE_CURRENT_MONTH`, `PHONE_PREVIOUS_MONTH` | not applicable |
+| `MEAL_ALLOWANCE` | no meal allowance |
+| `TRANSPORT_ALLOWANCE` | transport is not paid |
+
+Everything else — `FIXED_SALARY`, `POSITIVE_NEGATIVE_CORRECTION`, `INSTALLMENT`,
+`PAID_PREVIOUS_PERIOD`, `PREVIOUS_BALANCE`, `OTHER`, `PAID_PART_1`,
+`PAID_PART_2` — is available.
+
+> **This table defaults to ALLOW, the opposite of
+> `work_code_category_scheme_rules`, and that is deliberate.** For a work
+> category "no rule" means "unknown coefficient" and must be refused. An
+> adjustment category is a labelled amount; closed-by-default would make every
+> future adjustment category silently vanish for restricted employees, and a
+> missing payslip line is far harder to notice than an extra one. So a row
+> exists to say *no*.
+
+**Meal allowance and transport are zeroed on the item, not merely unlinked.**
+`totalNetEarnings` adds `item.total_meal_allowance_amount` and
+`item.total_transport_allowance_amount` **directly**, not through the adjustment
+line (the two are explicitly excluded from `additionsSum` to avoid
+double-counting). Removing only the adjustment row would take the line off the
+payslip while still paying the money.
+
+### Performance bonus — `compensation_schemes.allows_performance_bonus`
+
+`false` zeroes `payroll_run_item_categories.bonus_amount`.
+
+> **Efficiency is not switched off by this.** Approved performance already
+> weighted the minutes that became `weighted_norm_minutes` and therefore the
+> category `amount`. Only the bonus paid *on top* is removed. A
+> fixed-coefficient employee is still paid more for working faster; they simply
+> get no bonus.
+
+### A payroll month is a RANGE
+
+`PayrollSchemeScopeService` answers the payroll question;
+`WorkCategoryResolutionService` answers the work-date question. They differ
+because an employee can change scheme inside a month, so every answer here is
+the **union over every period overlapping the month**.
+
+Union rather than intersection because the failure modes are not symmetric: too
+generous shows a zero row, too strict makes recorded work vanish from the
+payslip with nowhere to land. The seeded cutover falls on a month boundary, so
+in practice one scheme governs a whole month and the unions are exact.
+
+An employee with no scheme period for the month yields no scope, and callers
+read that as unrestricted — payroll initialisation is not the place to refuse
+somebody, and the work-date resolver already rejected anything they should not
+have recorded.
+
+### Net effect for a fixed-coefficient employee
+
+Their payslip contains **`S`** plus `SO`, `B`, `B30`, `BP`, `ND`, `GO`, `NO`,
+and no meal allowance, transport, phone or bonus line.
+
+---
+
 ## 8. Snapshots and historical correctness
 
 Each work log records enough to reconstruct its calculation **without reading the

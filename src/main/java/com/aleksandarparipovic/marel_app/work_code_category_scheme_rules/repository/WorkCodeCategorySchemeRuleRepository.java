@@ -36,6 +36,28 @@ public interface WorkCodeCategorySchemeRuleRepository extends JpaRepository<Work
             @Param("schemeId") Long schemeId,
             @Param("date") LocalDate date);
 
+    /**
+     * Every in-force rule of one scheme overlapping {@code [from, to]}.
+     *
+     * <p>The payroll-period counterpart of {@link #findActiveForSchemeAt}: a
+     * payroll month is a range, and a rule that starts or ends mid-month still
+     * governs part of it.
+     */
+    @Query("""
+            SELECT r FROM WorkCodeCategorySchemeRule r
+            JOIN FETCH r.sourceCategory
+            LEFT JOIN FETCH r.effectiveCategory
+            WHERE r.compensationScheme.id = :schemeId
+              AND r.isActive = true
+              AND r.archivedAt IS NULL
+              AND r.validFrom <= :to
+              AND (r.validUntil IS NULL OR r.validUntil >= :from)
+            """)
+    List<WorkCodeCategorySchemeRule> findInForceForSchemeBetween(
+            @Param("schemeId") Long schemeId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
     /** All rules of one scheme, including inactive ones — administration screens. */
     @Query("""
             SELECT r FROM WorkCodeCategorySchemeRule r

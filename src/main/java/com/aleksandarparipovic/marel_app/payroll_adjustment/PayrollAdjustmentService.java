@@ -4,13 +4,18 @@ import com.aleksandarparipovic.marel_app.common.jpa.EntityReferenceProvider;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentResponse;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentUpdateRequest;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategory;
+import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScope;
+import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -19,6 +24,8 @@ import java.util.List;
 public class PayrollAdjustmentService {
 
     private final PayrollAdjustmentRepository payrollAdjustmentRepository;
+    private final PayrollRunItemRepository payrollRunItemRepository;
+    private final PayrollSchemeScopeService payrollSchemeScopeService;
     private final EntityReferenceProvider referenceProvider;
 
     @Transactional(readOnly = true)
@@ -36,6 +43,11 @@ public class PayrollAdjustmentService {
 
     @Transactional
     public PayrollAdjustmentResponse create(PayrollAdjustmentCreateRequest request) {
+        // Payroll initialisation already skips the lines a scheme excludes, but
+        // this endpoint can add one directly. Checked here too, or the exclusion
+        // would be a UI convention rather than a rule.
+        requireAdjustmentAllowed(request.getPayrollRunItemId(), request.getPayrollAdjustmentCategoryId());
+
         PayrollAdjustment entity = new PayrollAdjustment();
         entity.setPayrollRunItem(referenceProvider.getRequiredReference(PayrollRunItem.class, request.getPayrollRunItemId(), "payrollRunItemId"));
         entity.setPayrollAdjustmentCategory(referenceProvider.getRequiredReference(PayrollAdjustmentCategory.class, request.getPayrollAdjustmentCategoryId(), "payrollAdjustmentCategoryId"));
@@ -77,5 +89,33 @@ public class PayrollAdjustmentService {
             throw new IllegalArgumentException("PayrollAdjustment not found");
         }
         payrollAdjustmentRepository.deleteById(id);
+    }
+
+    /**
+     * Refuse an adjustment line the employee's compensation scheme excludes.
+     *
+     * <p>Resolved over the item's own payroll period, and permissive when
+     * anything needed is missing — this is a guard against a wrong line, not an
+     * extra way for payroll editing to fail.
+     */
+    private void requireAdjustmentAllowed(Long payrollRunItemId, Long adjustmentCategoryId) {
+        if (payrollRunItemId == null || adjustmentCategoryId == null) {
+            return;
+        }
+        payrollRunItemRepository.findById(payrollRunItemId).ifPresent(item -> {
+            if (item.getEmployee() == null || item.getPeriod() == null) {
+                return;
+            }
+            LocalDate periodStart = item.getPeriod().withDayOfMonth(1);
+            LocalDate periodEnd = periodStart.withDayOfMonth(periodStart.lengthOfMonth());
+
+            PayrollSchemeScope scope = payrollSchemeScopeService.scopeFor(
+                    item.getEmployee().getId(), periodStart, periodEnd);
+
+            if (scope != null && !scope.allowsAdjustmentCategory(adjustmentCategoryId)) {
+                throw new ConflictException(
+                        "Ova stavka obračuna nije predviđena za način obračuna ovog zaposlenog.");
+            }
+        });
     }
 }
