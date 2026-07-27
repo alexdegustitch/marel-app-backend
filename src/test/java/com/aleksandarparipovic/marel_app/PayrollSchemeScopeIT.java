@@ -18,6 +18,8 @@ import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeS
 import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
+import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.WorkCodeCategorySchemeRule;
+import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.repository.WorkCodeCategorySchemeRuleRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +49,7 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
     @Autowired private PayrollAdjustmentCategoryRepository adjustmentCategoryRepository;
     @Autowired private PayrollAdjustmentCategorySchemeRuleRepository adjustmentRuleRepository;
     @Autowired private WorkCodeCategoryRepository categoryRepository;
+    @Autowired private WorkCodeCategorySchemeRuleRepository workRuleRepository;
     @Autowired private EmployeeRepository employeeRepository;
     @Autowired private DepartmentRepository departmentRepository;
 
@@ -102,6 +105,28 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
                 .validFrom(LocalDate.of(2026, 8, 1))
                 .isActive(true)
                 .build());
+    }
+
+    /** A source category that remaps onto {@code target} under the restricted scheme. */
+    private WorkCodeCategory remappingTo(WorkCodeCategory target) {
+        int n = COUNTER.incrementAndGet();
+        WorkCodeCategory source = categoryRepository.saveAndFlush(WorkCodeCategory.builder()
+                .categoryNo("IT-REMAP-" + n).categoryName("Izvorna " + n).type("WORK")
+                .isPaid(true).normMultiplier(1.2d).isActive(true).fixedHourlyRate(false)
+                .affectsMealAllowance(true).allowsParallelWork(false).displayOrder(0)
+                .baseCategory(false).build());
+
+        workRuleRepository.saveAndFlush(WorkCodeCategorySchemeRule.builder()
+                .compensationScheme(schemeRepository
+                        .findByCode(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT).orElseThrow())
+                .sourceCategory(source)
+                .effectiveCategory(target)
+                .isAllowed(true)
+                .coefficientOverride(java.math.BigDecimal.ONE)
+                .validFrom(LocalDate.of(2026, 8, 1))
+                .isActive(true)
+                .build());
+        return source;
     }
 
     private PayrollSchemeScope scopeOf(Employee employee) {
@@ -174,8 +199,21 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
                         || "FOREIGN_ALL_SHIFTS".equalsIgnoreCase(c.getCategoryNo()))
                 .findFirst().orElseThrow();
 
-        // This is where the money lands, so it must have a payroll row.
-        assertThat(scopeOf(restricted).allowsWorkCategory(common.getId())).isTrue();
+        // What makes the target payable is a rule REMAPPING onto it, not a rule
+        // OF it — its own rule denies it, because nobody selects it. The test
+        // schema carries no business data, so the remap the real seed provides
+        // (J -> S, D -> S, ...) has to be built here.
+        WorkCodeCategory source = remappingTo(common);
+
+        PayrollSchemeScope scope = scopeOf(restricted);
+
+        // Two questions, answered separately on purpose:
+        //   "may an employee SELECT this?" -> the category's own rule  (no)
+        //   "may money LAND on this?"      -> it is another rule's target (yes)
+        assertThat(scope.allowsWorkCategory(source.getId()))
+                .as("the source is selectable").isTrue();
+        assertThat(scope.allowsWorkCategory(common.getId()))
+                .as("and the target is payable, which is where the money ends up").isTrue();
     }
 
     // ── bonuses ─────────────────────────────────────────────────────────────

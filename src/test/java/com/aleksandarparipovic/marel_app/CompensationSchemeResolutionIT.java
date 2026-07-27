@@ -427,6 +427,9 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
                 .as("each allowed source is its own entry; the list never collapses to the shared target")
                 .doesNotHaveDuplicates()
                 .hasSameSizeAs(allowed);
+        assertThat(codes)
+                .as("the calculation target is not something anyone worked, so it is not selectable")
+                .doesNotContain(foreignAllShifts().getCategoryNo());
         assertThat(allowed).allSatisfy(r -> assertThat(r.allowed()).isTrue());
         assertThat(allowed)
                 .as("every entry carries the effective category and coefficient it resolves to")
@@ -536,6 +539,25 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
         assertThat(context.resolveFor(worked).allowed())
                 .as("no rule on the worked category, and the scheme is closed by default")
                 .isFalse();
+    }
+
+    @Test
+    @DisplayName("the common effective category is not selectable, and is rejected if posted directly")
+    void commonCategoryIsNotSelectable() {
+        Employee employee = anEmployee();
+        period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
+        WorkCodeCategory common = foreignAllShifts();
+
+        // Nobody works "I, II i III smena" — it is where the other categories
+        // land. PayrollSchemeScopeIT covers the other half of this rule: it must
+        // still be PAYABLE, because that is where the money ends up.
+        assertThat(resolutionService.resolve(employee.getId(), WORKDAY, common.getId()).allowed())
+                .isFalse();
+
+        assertThatThrownBy(() ->
+                resolutionService.requireAllowed(employee.getId(), WORKDAY, common.getId()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nije dozvoljena");
     }
 
     @Test

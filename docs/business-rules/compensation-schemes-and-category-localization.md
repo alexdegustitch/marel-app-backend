@@ -268,8 +268,20 @@ So a fixed-coefficient employee's payroll can only ever contain **`S`** plus
 scheme is closed by default so omitting it would have the same effect, but then
 the data could not tell a decision apart from an oversight.
 
-`S` itself is selectable. That follows from its own rule and is intentional —
-it is also the only way a directly-entered `S` has a defined answer.
+`S` itself is **not** selectable (`is_allowed = false`, from `2026-07-27-11`).
+Nobody works "I, II i III smena" — it is where the other categories land.
+
+> **It is still PAYABLE.** Two different questions are answered by two different
+> code paths, and only the first one changes:
+>
+> | Question | Answered by | For `S` |
+> |---|---|---|
+> | may an employee SELECT this? | the category's own rule | no |
+> | may money LAND on this? | `PayrollSchemeScopeService`, which marks any rule's `effective_category_id` payable | yes |
+>
+> The `J → S`, `D → S`, `PL → S` … rules are all still allowed, so `S` keeps its
+> row on the payroll sheet. No mapping produces `S` either, so the recalc engine
+> never asks whether `S` itself is allowed.
 
 ### The common category is called `S`
 
