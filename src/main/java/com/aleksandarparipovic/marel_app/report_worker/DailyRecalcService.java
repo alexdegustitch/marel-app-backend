@@ -49,6 +49,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -173,16 +174,13 @@ public class DailyRecalcService {
             return false;
         }
 
-        // ── Compensation scheme, resolved ONCE for this employee and work date ──
-        // Two queries for the whole shift regardless of how many logs it has.
-        // Everything below reads the resolution or the snapshot it wrote; nothing
-        // in this class asks whether an employee is a foreigner.
-        WorkCategoryResolutionService.ResolutionContext schemeContext =
-                resolutionService.contextFor(employeeId, workDate);
-        Map<Long, WorkCategoryResolution> resolutionByLogId =
-                refreshCompensationSnapshots(logs, schemeContext);
-
-        // Resolve bonus category mappings applicable for this shift
+        // Resolve bonus category mappings applicable for this shift.
+        //
+        // ORDER MATTERS AND IS THE BUSINESS RULE: contextual mapping FIRST, then
+        // the compensation-scheme rule on the mapping's result. The scheme has
+        // the last word on which category the pay row lands on, which is why the
+        // rule set has to cover the mapping TARGETS (JB, DB, GB, ZB, L3, LP3,
+        // PLB) and not only the categories a user can select.
         Set<String> applicableTypes = resolveApplicableMappingTypes(workShift, workDate, employeeId);
         List<WorkCodeCategoryMapping> mappings = applicableTypes.isEmpty()
                 ? List.of()
@@ -212,18 +210,31 @@ public class DailyRecalcService {
             }
         }
 
+        // ── Compensation scheme, resolved ONCE for this employee and work date ──
+        // Two queries for the whole shift regardless of how many logs it has.
+        // Nothing in this class asks whether an employee is a foreigner.
+        WorkCategoryResolutionService.ResolutionContext schemeContext =
+                resolutionService.contextFor(employeeId, workDate);
+
+        // The log's own snapshot stays keyed on the SOURCE category: it records
+        // what the entered work was worth, and it is what ShiftIntervalResolver
+        // weights verified minutes by — the same quantity the source multiplier
+        // drove before compensation schemes existed.
+        Map<Long, WorkCategoryResolution> resolutionByLogId =
+                refreshCompensationSnapshots(logs, schemeContext);
+
         if (report.getId() != null) {
             categoryRepo.deleteAllByDailyReportId(report.getId());
         }
 
-        // Coefficient per base category, filled in by buildCategories. Only the
-        // rows the compensation scheme actually remapped appear here; everything
-        // else keeps using the category's own multiplier exactly as before.
+        // Coefficient per final category, filled in by buildCategories. Only rows
+        // the scheme actually remapped appear here; everything else keeps using
+        // the category's own multiplier exactly as before.
         Map<Long, BigDecimal> schemeCoefficientByCategory = new HashMap<>();
 
         List<DailyReportCategory> categories = buildCategories(
                 logs, report, nightRemap, weekendRemap, plSourceIds, plbCategory,
-                resolutionByLogId, schemeCoefficientByCategory);
+                schemeContext, resolutionByLogId, schemeCoefficientByCategory);
         if (!categories.isEmpty()) {
             categoryRepo.saveAll(categories);
         }
@@ -444,6 +455,7 @@ public class DailyRecalcService {
                                                        Map<Long, WorkCodeCategory> weekendRemap,
                                                        Set<Long> plSourceIds,
                                                        WorkCodeCategory plbCategory,
+                                                       WorkCategoryResolutionService.ResolutionContext schemeContext,
                                                        Map<Long, WorkCategoryResolution> resolutionByLogId,
                                                        Map<Long, BigDecimal> schemeCoefficientByCategory) {
         List<WorkLog> filteredLogs = logs.stream()
@@ -464,41 +476,47 @@ public class DailyRecalcService {
 
         List<DailyReportCategory> result = new ArrayList<>();
 
-        // Non-PL logs: group by the category the base calculation uses.
+        // Non-PL logs: group by the category the pay row lands on.
         //
-        // TWO INDEPENDENT RESOLUTIONS, BOTH KEYED ON THE SOURCE CATEGORY:
+        // THE ORDER IS THE BUSINESS RULE:
         //
-        //   the contextual mapping chain (night then weekend) — unchanged, still
-        //   computed from wl.getWorkCode(), and still persisted onto the log and
-        //   the shift further below as the reversible bonus category;
+        //   1. the contextual mapping chain (night then weekend), from the
+        //      SOURCE category — unchanged, and still persisted onto the log and
+        //      the shift further below as the reversible bonus category;
+        //   2. then the compensation-scheme rule, applied to WHAT THE MAPPING
+        //      PRODUCED. The scheme has the last word.
         //
-        //   the compensation scheme — which decides what the base row is worth.
-        //
-        // When the scheme remaps (a fixed-coefficient employee), the base row is
-        // the scheme's effective category. When it does not — every standard
-        // employee — the base row is the mapped category, exactly as before, so
-        // standard payroll is untouched.
-        //
-        // The fixed coefficient therefore changes what the row is worth WITHOUT
-        // deleting the night mapping: the mapping is still resolved from the
-        // source category and still recorded on the log.
-        Map<Long, WorkCodeCategory> baseCategoryById = new HashMap<>();
-        Map<Long, List<WorkLog>> byBaseCategory = new HashMap<>();
+        // A standard employee has no rules at all, so step 2 returns the mapped
+        // category with its own multiplier — byte-for-byte the previous
+        // behaviour. A fixed-coefficient employee collapses onto one category at
+        // coefficient 1, whichever shift or trade they worked, and whether or
+        // not a night mapping fired on the way.
+        Map<Long, WorkCodeCategory> finalCategoryById = new HashMap<>();
+        Map<Long, List<WorkLog>> byFinalCategory = new HashMap<>();
+        Map<Long, WorkCategoryResolution> rowResolutionByCategory = new HashMap<>();
+
         for (WorkLog wl : otherLogs) {
-            WorkCodeCategory base = resolveBaseCategory(wl, nightRemap, weekendRemap, resolutionByLogId);
-            baseCategoryById.put(base.getId(), base);
-            byBaseCategory.computeIfAbsent(base.getId(), id -> new ArrayList<>()).add(wl);
+            WorkCodeCategory mapped = resolveEffectiveCategory(wl.getWorkCode(), nightRemap, weekendRemap);
+            WorkCategoryResolution rowResolution = schemeContext.resolveFor(mapped);
+            WorkCodeCategory finalCategory = categoryOf(rowResolution, mapped);
+
+            finalCategoryById.put(finalCategory.getId(), finalCategory);
+            rowResolutionByCategory.putIfAbsent(finalCategory.getId(), rowResolution);
+            byFinalCategory.computeIfAbsent(finalCategory.getId(), id -> new ArrayList<>()).add(wl);
         }
 
-        for (Map.Entry<Long, List<WorkLog>> entry : byBaseCategory.entrySet()) {
-            WorkCodeCategory category = baseCategoryById.get(entry.getKey());
+        for (Map.Entry<Long, List<WorkLog>> entry : byFinalCategory.entrySet()) {
+            WorkCodeCategory category = finalCategoryById.get(entry.getKey());
             if (category != null) {
-                recordSchemeCoefficient(entry.getValue(), category, resolutionByLogId, schemeCoefficientByCategory);
+                recordRowCoefficient(category, rowResolutionByCategory.get(entry.getKey()),
+                        schemeCoefficientByCategory);
                 result.add(buildCategoryEntry(entry.getValue(), category, report));
             }
         }
 
-        // PL logs: split between PL (reduced) and PLB (triple-overlap portion)
+        // PL logs: split between PL (reduced) and PLB (triple-overlap portion).
+        // The split is a time-overlap partition rather than a remap, so the two
+        // resulting categories go through the scheme rule individually.
         if (!plLogs.isEmpty()) {
             long plbMinutes = computeTripleOverlapMinutes(plLogs);
             int totalPlMinutes = plLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
@@ -513,15 +531,108 @@ public class DailyRecalcService {
                 // Distribute PLB reduction proportionally across PL source categories
                 long reduction = totalPlMinutes > 0 ? plbMinutes * catMinutes / totalPlMinutes : 0;
                 int plMinutes = (int) Math.max(0, catMinutes - reduction);
-                result.add(buildPlCategoryEntry(catLogs, plCategory, report, plMinutes));
+
+                WorkCategoryResolution plResolution = schemeContext.resolveFor(plCategory);
+                WorkCodeCategory plFinal = categoryOf(plResolution, plCategory);
+                recordRowCoefficient(plFinal, plResolution, schemeCoefficientByCategory);
+                result.add(buildPlCategoryEntry(catLogs, plFinal, report, plMinutes));
             }
 
             if (plbMinutes > 0 && plbCategory != null) {
-                result.add(buildPlbCategoryEntry(plbCategory, report, (int) plbMinutes));
+                WorkCategoryResolution plbResolution = schemeContext.resolveFor(plbCategory);
+                WorkCodeCategory plbFinal = categoryOf(plbResolution, plbCategory);
+                recordRowCoefficient(plbFinal, plbResolution, schemeCoefficientByCategory);
+                result.add(buildPlbCategoryEntry(plbFinal, report, (int) plbMinutes));
             }
         }
 
-        return result;
+        // Several inputs can now legitimately land on the same final category —
+        // a fixed-coefficient employee's ordinary work, their PL work and the PLB
+        // portion all collapse onto S. daily_report_categories is UNIQUE on
+        // (daily_report_id, work_code_category_id), so they have to be merged
+        // rather than saved as separate rows.
+        return mergeByCategory(result);
+    }
+
+    /** The final category: the scheme's effective one, or the input when it did not remap. */
+    private WorkCodeCategory categoryOf(WorkCategoryResolution resolution, WorkCodeCategory fallback) {
+        if (resolution == null || !resolution.isCategoryRemapped()) {
+            return fallback;
+        }
+        return workCodeCategoryRepository.findById(resolution.effectiveCategoryId()).orElse(fallback);
+    }
+
+    /**
+     * Record the coefficient for a row the scheme remapped.
+     *
+     * <p>Nothing is recorded when it did not, so {@code fillDailyTotals} falls
+     * back to the category's own multiplier and standard employees keep their
+     * exact previous numbers.
+     */
+    private void recordRowCoefficient(WorkCodeCategory finalCategory,
+                                      WorkCategoryResolution resolution,
+                                      Map<Long, BigDecimal> schemeCoefficientByCategory) {
+        if (resolution == null || resolution.coefficient() == null || !resolution.isCategoryRemapped()) {
+            return;
+        }
+        schemeCoefficientByCategory.put(finalCategory.getId(), resolution.coefficient());
+    }
+
+    /**
+     * Fold rows that share a category into one.
+     *
+     * <p>Minutes, quantities and weighted norm minutes add up. The performance
+     * coefficients are re-derived as a minute-weighted average, which is what
+     * they already are within a single row — merging two rows must not turn a
+     * weighted average into an unweighted one.
+     */
+    private List<DailyReportCategory> mergeByCategory(List<DailyReportCategory> rows) {
+        Map<Long, DailyReportCategory> byCategory = new LinkedHashMap<>();
+
+        for (DailyReportCategory row : rows) {
+            Long categoryId = row.getWorkCodeCategory().getId();
+            DailyReportCategory existing = byCategory.get(categoryId);
+            if (existing == null) {
+                byCategory.put(categoryId, row);
+                continue;
+            }
+
+            int minutesA = safeInt(existing.getTotalMinutes());
+            int minutesB = safeInt(row.getTotalMinutes());
+            int minutesTotal = minutesA + minutesB;
+
+            existing.setTotalMinutes(minutesTotal);
+            existing.setTotalPaidMinutes(safeInt(existing.getTotalPaidMinutes()) + safeInt(row.getTotalPaidMinutes()));
+            existing.setTotalQuantity(safeInt(existing.getTotalQuantity()) + safeInt(row.getTotalQuantity()));
+            existing.setTotalScrap(safeInt(existing.getTotalScrap()) + safeInt(row.getTotalScrap()));
+            existing.setTotalWeightedNormMinutes(
+                    defaultDecimal(existing.getTotalWeightedNormMinutes())
+                            .add(defaultDecimal(row.getTotalWeightedNormMinutes())));
+
+            existing.setPerformanceCoefficient(weightedMerge(
+                    existing.getPerformanceCoefficient(), minutesA,
+                    row.getPerformanceCoefficient(), minutesB, minutesTotal));
+            existing.setApprovedPerformanceCoefficient(weightedMerge(
+                    existing.getApprovedPerformanceCoefficient(), minutesA,
+                    row.getApprovedPerformanceCoefficient(), minutesB, minutesTotal));
+
+            // WORK wins: a merged row that contains any worked time is worked
+            // time, and the daily totals split on this value.
+            if ("WORK".equalsIgnoreCase(row.getSourceType())) {
+                existing.setSourceType("WORK");
+            }
+        }
+
+        return new ArrayList<>(byCategory.values());
+    }
+
+    private BigDecimal weightedMerge(BigDecimal a, int weightA, BigDecimal b, int weightB, int total) {
+        if (total <= 0) {
+            return defaultDecimal(a).max(defaultDecimal(b));
+        }
+        return defaultDecimal(a).multiply(BigDecimal.valueOf(weightA))
+                .add(defaultDecimal(b).multiply(BigDecimal.valueOf(weightB)))
+                .divide(BigDecimal.valueOf(total), 6, RoundingMode.HALF_UP);
     }
 
     /**
@@ -571,72 +682,6 @@ public class DailyRecalcService {
                 workLog.getId(), workLog.getWorkCode().getCategoryNo(),
                 schemeContext.scheme().getCode(), schemeContext.workDate(),
                 resolution.resolutionReason());
-    }
-
-    /**
-     * The category the base calculation groups this log under.
-     *
-     * <p>The scheme's effective category when the scheme remapped, otherwise the
-     * contextual mapping chain's result — which is what this method returned
-     * before compensation schemes existed, for every log.
-     */
-    private WorkCodeCategory resolveBaseCategory(WorkLog workLog,
-                                                 Map<Long, WorkCodeCategory> nightRemap,
-                                                 Map<Long, WorkCodeCategory> weekendRemap,
-                                                 Map<Long, WorkCategoryResolution> resolutionByLogId) {
-        WorkCategoryResolution resolution = resolutionByLogId.get(workLog.getId());
-        if (resolution != null && resolution.isCategoryRemapped()) {
-            WorkCodeCategory schemeEffective = workLog.getSchemeEffectiveWorkCode();
-            if (schemeEffective != null) {
-                return schemeEffective;
-            }
-            return workCodeCategoryRepository.findById(resolution.effectiveCategoryId())
-                    .orElse(workLog.getWorkCode());
-        }
-        return resolveEffectiveCategory(workLog.getWorkCode(), nightRemap, weekendRemap);
-    }
-
-    /**
-     * Record the coefficient for a base category the scheme remapped.
-     *
-     * <p>Nothing is recorded when the scheme did not remap, so
-     * {@code fillDailyTotals} falls back to the category's own multiplier and
-     * standard employees keep their exact previous numbers.
-     *
-     * <p>When two source categories with different overrides land on the same
-     * effective category the result is minute-weighted, which is exact when they
-     * agree (the normal case) and proportional when they do not.
-     */
-    private void recordSchemeCoefficient(List<WorkLog> categoryLogs,
-                                         WorkCodeCategory baseCategory,
-                                         Map<Long, WorkCategoryResolution> resolutionByLogId,
-                                         Map<Long, BigDecimal> schemeCoefficientByCategory) {
-        BigDecimal weightedSum = BigDecimal.ZERO;
-        long totalMinutes = 0;
-        boolean anyRemapped = false;
-
-        for (WorkLog wl : categoryLogs) {
-            WorkCategoryResolution resolution = resolutionByLogId.get(wl.getId());
-            if (resolution == null || resolution.coefficient() == null) {
-                return;
-            }
-            if (resolution.isCategoryRemapped()) {
-                anyRemapped = true;
-            }
-            int minutes = safeInt(wl.getDurationMin());
-            if (minutes <= 0) {
-                continue;
-            }
-            weightedSum = weightedSum.add(resolution.coefficient().multiply(BigDecimal.valueOf(minutes)));
-            totalMinutes += minutes;
-        }
-
-        if (!anyRemapped || totalMinutes <= 0) {
-            return;
-        }
-        schemeCoefficientByCategory.put(
-                baseCategory.getId(),
-                weightedSum.divide(BigDecimal.valueOf(totalMinutes), 6, RoundingMode.HALF_UP));
     }
 
     // Sets the shift's bonus-effective category WITHOUT touching the original

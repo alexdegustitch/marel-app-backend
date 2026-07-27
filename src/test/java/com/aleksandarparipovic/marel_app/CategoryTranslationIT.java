@@ -180,7 +180,8 @@ class CategoryTranslationIT extends AbstractIntegrationTest {
     @DisplayName("the seeded English names are present for the categories the migration knows")
     void seededEnglishNameExistsForTheCommonCategory() {
         WorkCodeCategory allShifts = categoryRepository.findAll().stream()
-                .filter(c -> "FOREIGN_ALL_SHIFTS".equalsIgnoreCase(c.getCategoryNo()))
+                .filter(c -> "S".equalsIgnoreCase(c.getCategoryNo())
+                        || "FOREIGN_ALL_SHIFTS".equalsIgnoreCase(c.getCategoryNo()))
                 .findFirst().orElseThrow();
 
         Map<Long, String> english = categoryNameResolver.translationsFor(AppLocales.ENGLISH);

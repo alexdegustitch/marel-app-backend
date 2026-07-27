@@ -95,7 +95,12 @@ JOIN (VALUES
         ('NO',                 'Unpaid leave'),
         ('SO',                 'Authorised absence'),
         ('PLO',                'Paid leave'),
-        ('FOREIGN_ALL_SHIFTS', '1st, 2nd and 3rd shift')
+        -- The common effective category, under both codes it has had: created as
+        -- FOREIGN_ALL_SHIFTS here, renamed to S by 2026-07-27-09. Only one of the
+        -- two ever matches a row, and the join is on the code, so listing both is
+        -- safe and keeps this script correct whichever order it runs in.
+        ('FOREIGN_ALL_SHIFTS', '1st, 2nd and 3rd shift'),
+        ('S',                  '1st, 2nd and 3rd shift')
      ) AS v(category_no, name_en)
   ON lower(c.category_no) = lower(v.category_no)
 WHERE NOT EXISTS (

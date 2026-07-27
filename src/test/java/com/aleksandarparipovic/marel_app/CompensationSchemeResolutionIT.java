@@ -110,13 +110,21 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
                 .build());
     }
 
-    /** Created unconditionally by 2026-07-27-03, so it exists even in an empty database. */
+    /**
+     * The common effective category, created by 2026-07-27-03 and renamed to "S"
+     * by 2026-07-27-09, so it exists even in an empty database.
+     *
+     * <p>Looked up under both codes on purpose: a category code is
+     * administrator-editable, and keying a lookup on it is exactly the mistake
+     * that broke 03's idempotence once already.
+     */
     private WorkCodeCategory foreignAllShifts() {
         return categoryRepository.findAll().stream()
-                .filter(c -> "FOREIGN_ALL_SHIFTS".equalsIgnoreCase(c.getCategoryNo()))
+                .filter(c -> "S".equalsIgnoreCase(c.getCategoryNo())
+                        || "FOREIGN_ALL_SHIFTS".equalsIgnoreCase(c.getCategoryNo()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
-                        "FOREIGN_ALL_SHIFTS missing — 2026-07-27-03 should create it"));
+                        "the common effective category is missing — 2026-07-27-03/09 should create it"));
     }
 
     /**
@@ -180,10 +188,13 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("the migration creates the common effective category unconditionally")
+    @DisplayName("the migration creates the common effective category, converged on the code S")
     void foreignAllShiftsCategoryExists() {
         WorkCodeCategory allShifts = foreignAllShifts();
 
+        assertThat(allShifts.getCategoryNo())
+                .as("2026-07-27-09 converges the code, whichever one 03 created it under")
+                .isEqualTo("S");
         assertThat(allShifts.getIsActive()).isTrue();
         assertThat(allShifts.getType()).isEqualTo("WORK");
         assertThat(allShifts.getNormMultiplier())
@@ -413,13 +424,14 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
                 .as("both shifts stay separately selectable — the employee records what they really worked")
                 .contains(shifts.get(0).getCategoryNo(), shifts.get(1).getCategoryNo());
         assertThat(codes)
-                .as("the calculation target is not something anyone worked, so it is not selectable")
-                .doesNotContain("FOREIGN_ALL_SHIFTS");
+                .as("each allowed source is its own entry; the list never collapses to the shared target")
+                .doesNotHaveDuplicates()
+                .hasSameSizeAs(allowed);
         assertThat(allowed).allSatisfy(r -> assertThat(r.allowed()).isTrue());
         assertThat(allowed)
                 .as("every entry carries the effective category and coefficient it resolves to")
                 .allSatisfy(r -> {
-                    assertThat(r.effectiveCategoryCode()).isEqualTo("FOREIGN_ALL_SHIFTS");
+                    assertThat(r.effectiveCategoryCode()).isEqualTo(foreignAllShifts().getCategoryNo());
                     assertThat(r.coefficient()).isEqualByComparingTo("1");
                 });
     }
@@ -486,13 +498,65 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
                             source.getCategoryNo(), source.getNormMultiplier())
                     .isEqualByComparingTo("1");
             assertThat(resolution.coefficientOverridden()).isTrue();
-            assertThat(resolution.effectiveCategoryCode()).isEqualTo("FOREIGN_ALL_SHIFTS");
+            assertThat(resolution.effectiveCategoryCode()).isEqualTo(foreignAllShifts().getCategoryNo());
             assertThat(resolution.isCategoryRemapped()).isTrue();
             assertThat(resolution.sourceCategoryCode())
                     .as("the source category is never erased by the effective one")
                     .isEqualTo(source.getCategoryNo());
             assertThat(resolution.schemeRuleId()).isNotNull();
         }
+    }
+
+    @Test
+    @DisplayName("the rule must exist for the MAPPING TARGET, because the scheme runs after the mapping")
+    void schemeRunsOnTheMappingResult() {
+        Employee employee = anEmployee();
+        period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
+
+        int n = COUNTER.incrementAndGet();
+        WorkCodeCategory worked = category("IT-SRC-" + n, 1.0d);   // what the user selects
+        WorkCodeCategory nightTarget = category("IT-TGT-" + n, 1.2d); // what NIGHT_SHIFT_BONUS produces
+        WorkCodeCategory allShifts = foreignAllShifts();
+
+        // Only the TARGET gets a rule. This mirrors the real seed, where JB, DB,
+        // GB, ZB, L3, LP3 and PLB have rules even though nobody selects them.
+        rule(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, nightTarget, allShifts, true,
+                BigDecimal.ONE, RULES_FROM, null);
+
+        var context = resolutionService.contextFor(employee.getId(), WORKDAY);
+
+        // The recalc engine resolves the MAPPED category, not the worked one.
+        WorkCategoryResolution afterMapping = context.resolveFor(nightTarget);
+        assertThat(afterMapping.allowed()).isTrue();
+        assertThat(afterMapping.effectiveCategoryId()).isEqualTo(allShifts.getId());
+        assertThat(afterMapping.coefficient()).isEqualByComparingTo("1");
+
+        // And without a rule on the target the pay row would have had no answer —
+        // which is exactly why the seeded list covers the mapping targets.
+        assertThat(context.resolveFor(worked).allowed())
+                .as("no rule on the worked category, and the scheme is closed by default")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("daily report categories are unique per report, so collapsed rows must be merged")
+    void dailyReportCategoriesAreUniquePerCategory() {
+        // Under the fixed scheme a shift's ordinary work, its PL work and the PLB
+        // portion can all resolve to the same category. This constraint is the
+        // reason DailyRecalcService merges them into one row instead of saving
+        // three.
+        @SuppressWarnings("unchecked")
+        List<String> indexes = entityManager.createNativeQuery("""
+                        select indexdef from pg_indexes
+                        where tablename = 'daily_report_categories'
+                          and indexdef ilike '%unique%'
+                          and indexdef ilike '%work_code_category_id%'
+                        """)
+                .getResultList();
+
+        assertThat(indexes)
+                .as("a UNIQUE index on (daily_report_id, work_code_category_id) must exist")
+                .isNotEmpty();
     }
 
     @Test

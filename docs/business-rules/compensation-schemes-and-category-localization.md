@@ -133,15 +133,35 @@ work_code_category_mappings
       - what derived category does the SOURCE category produce?
 ```
 
-Contextual mappings continue to be keyed on the **source** category. This is the
-single most important invariant in the feature:
+### Order of evaluation — this IS the business rule
 
-> **A fixed coefficient changes what the base row is worth. It does not delete a
-> night mapping.**
+```
+1. contextual mapping, from the SOURCE category   (night → weekend chain)
+2. then the scheme rule, on WHAT THE MAPPING PRODUCED
+   → that result is the FINAL category of the pay row
+```
 
-If the source category were replaced by the effective one before the mapping
-lookup ran, `FOREIGN_ALL_SHIFTS` would have no night mapping and the mapping
-would be silently lost. It is not.
+The mapping lookup is always keyed on the **source** category, so a fixed
+coefficient never deletes a night mapping — the mapping still fires, and is
+still recorded on the log and the shift. What the scheme decides is what the
+resulting row is *worth*.
+
+**Consequence, and it is easy to miss:** the rule set must cover the mapping
+**targets**, not only the categories a user can select. `JB`, `DB`, `GB`, `ZB`,
+`L3`, `LP3` and `PLB` are produced by mappings and never chosen by anyone, yet
+each needs a rule — otherwise a foreign employee's night shift maps `J → D` and
+lands on a category the scheme has no answer for.
+
+The rule set is also closed under its own output: `S → S`, so a second pass can
+never change the result.
+
+### Rows that collapse
+
+Under the restricted scheme a shift's ordinary work, its `PL` work and the `PLB`
+portion can all resolve to `S`. `daily_report_categories` is UNIQUE on
+`(daily_report_id, work_code_category_id)`, so `DailyRecalcService` **merges**
+them into one row: minutes and quantities add up, and the performance
+coefficients are re-derived as a minute-weighted average.
 
 ---
 
@@ -166,8 +186,19 @@ calculation path.
    Always `BigDecimal`, never binary floating point.
    `BigDecimal.valueOf(double)` goes through `Double.toString`, so `1.2` becomes
    exactly `1.2`.
-5. **Contextual mappings** run afterwards, from the **source** category,
-   unchanged.
+5. **Contextual mappings run FIRST**, from the source category; the scheme rule
+   in steps 3–4 is then applied to the mapping's result. See §4.
+
+### Two coefficients, deliberately
+
+| Used for | Resolved on |
+|---|---|
+| `work_logs.norm_multiplier_snapshot` → verified minutes, PL/PLB weighting | the **source** category |
+| the pay row's coefficient → bonus-eligible minutes | the **final** (post-mapping, post-scheme) category |
+
+This split is not new — it is what the system already did, and preserving it is
+what keeps standard payroll numerically identical. Under the restricted scheme
+both resolve to 1 anyway.
 
 ### Batching
 
@@ -201,45 +232,55 @@ existed before.
 
 ```
 employee scheme:      FOREIGN_FIXED_COEFFICIENT
-source category:      D   (III smena, norm_multiplier 1.2)
-effective category:   FOREIGN_ALL_SHIFTS
-base coefficient:     1   (from the rule's coefficient_override)
+source category:      J   (I, II smena, norm_multiplier 1.0)
 actual shift:         NIGHT
-contextual mapping:   still resolved from the SOURCE category and still
-                      recorded on the log and the shift
-base report row:      FOREIGN_ALL_SHIFTS at coefficient 1
+contextual mapping:   J -> D fires, from the SOURCE category, and is recorded
+                      on the log and the shift as before
+scheme rule on D:     D -> S, coefficient_override 1
+final report row:     S at coefficient 1
 ```
 
 The same category `D` is worth `1.2` under `STANDARD` and `1` under
 `FOREIGN_FIXED_COEFFICIENT`, on the same day, for two different employees.
 
+Note that the rule that fires is the one on `D` — the mapping's *target* — not
+the one on `J`. That is why §7 lists the bonus categories.
+
 ---
 
 ## 7. Which categories the restricted scheme allows
 
-Seeded by `2026-07-27-03`, effective **2026-08-01**:
+Authoritative set, from the business, seeded by `2026-07-27-09`, effective
+**2026-08-01**:
 
-| Source | Effective | `coefficient_override` |
-|---|---|---|
-| `J` (I, II smena) | `FOREIGN_ALL_SHIFTS` | `1` |
-| `D` (III smena) | `FOREIGN_ALL_SHIFTS` | `1` |
-| every `ABSENCE` and `SICK_LEAVE` category | *(none — passes through)* | *(none)* |
+| Source | → | `coefficient_override` | Note |
+|---|---|---|---|
+| `J`, `D`, `G`, `Z`, `L`, `LP`, `PL` | `S` | `1` | what an employee selects |
+| `JB`, `DB`, `GB`, `ZB`, `L3`, `LP3`, `PLB` | `S` | `1` | what the **mappings produce** |
+| `S` | `S` | `1` | closes the set under its own output |
+| `SO`, `B`, `B30`, `BP`, `ND`, `GO`, `NO` | *(unchanged)* | *(none)* | statutory, passes through |
+| `PLO` | — | — | **explicitly denied** |
 
-Both shift categories stay **separately selectable**: the employee still records
-which shift they actually worked. `FOREIGN_ALL_SHIFTS` is a calculation target
-and is never offered as a selectable option.
+So a fixed-coefficient employee's payroll can only ever contain **`S`** plus
+`SO`, `B`, `B30`, `BP`, `ND`, `GO` and `NO`.
 
-Absence and sick leave pass through unchanged because blocking them would make it
-impossible to record leave for these employees, and their pay treatment is a
-statutory matter the compensation scheme has no business changing.
+`PLO` is an explicit `is_allowed = false` row rather than a missing one. The
+scheme is closed by default so omitting it would have the same effect, but then
+the data could not tell a decision apart from an oversight.
 
-### ⚠️ Open business question
+`S` itself is selectable. That follows from its own rule and is intentional —
+it is also the only way a directly-entered `S` has a defined answer.
 
-The remaining WORK categories — `G`, `GB`, `Z`, `ZB`, `L`, `L3`, `LP`, `LP3`,
-`PL`, `PLB`, `JB`, `DB` — are trade- and bonus-specific and were **deliberately
-not given rules**. Because the scheme is closed by default they are currently
-**unavailable** to fixed-coefficient employees. Somebody with the business
-knowledge must decide what each should resolve to. See §10 for how to add one.
+### The common category is called `S`
+
+Created by `2026-07-27-03` as `FOREIGN_ALL_SHIFTS`, renamed through the
+application, and converged on `S` by `2026-07-27-09`. Its Serbian name is
+"I, II i III smena", English "1st, 2nd and 3rd shift".
+
+> **Never key a lookup on a category code.** Codes are administrator-editable —
+> this rename broke `03`'s idempotence, which resolved the category by code and
+> would have raised on a re-run. Both scripts now resolve it by identity (the
+> category an existing rule already points at) and fall back to either code.
 
 ---
 
@@ -314,7 +355,7 @@ INSERT INTO work_code_category_scheme_rules
 SELECT s.id, src.id, eff.id, true, 1, DATE '2026-09-01', 'Why'
 FROM compensation_schemes s
 JOIN work_code_categories src ON src.category_no = 'G'
-LEFT JOIN work_code_categories eff ON eff.category_no = 'FOREIGN_ALL_SHIFTS'
+LEFT JOIN work_code_categories eff ON eff.category_no = 'S'
 WHERE s.code = 'FOREIGN_FIXED_COEFFICIENT'
   AND NOT EXISTS (
       SELECT 1 FROM work_code_category_scheme_rules r

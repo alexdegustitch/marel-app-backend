@@ -145,8 +145,10 @@ SELECT 'FOREIGN_ALL_SHIFTS',
        FALSE,
        DATE '2026-08-01',
        'Common effective category for the FOREIGN_FIXED_COEFFICIENT scheme. Never selected directly on a work log: it is resolved from a source category (J, D, ...) by work_code_category_scheme_rules. The source category is always preserved.'
+-- Either code: the category was later renamed to 'S' through the application,
+-- and this guard must not create a second one on a re-run.
 WHERE NOT EXISTS (
-    SELECT 1 FROM work_code_categories WHERE lower(category_no) = lower('FOREIGN_ALL_SHIFTS')
+    SELECT 1 FROM work_code_categories WHERE lower(category_no) IN ('s', 'foreign_all_shifts')
 );
 
 
@@ -182,10 +184,27 @@ DECLARE
     v_all_shifts BIGINT;
 BEGIN
     SELECT id INTO v_scheme FROM compensation_schemes WHERE code = 'FOREIGN_FIXED_COEFFICIENT';
-    SELECT id INTO v_all_shifts FROM work_code_categories WHERE lower(category_no) = lower('FOREIGN_ALL_SHIFTS');
+
+    -- Resolved by IDENTITY first: the category an existing rule of this scheme
+    -- already points at. A category code is administrator-editable — this one
+    -- was in fact renamed to 'S' after this script first ran — so keying the
+    -- idempotence guard on the code made a re-run raise instead of no-op.
+    -- Falls back to either known code, and only then to the insert above.
+    SELECT r.effective_category_id INTO v_all_shifts
+    FROM work_code_category_scheme_rules r
+    WHERE r.compensation_scheme_id = v_scheme
+      AND r.effective_category_id IS NOT NULL
+    LIMIT 1;
+
+    IF v_all_shifts IS NULL THEN
+        SELECT id INTO v_all_shifts FROM work_code_categories
+        WHERE lower(category_no) IN ('s', 'foreign_all_shifts')
+        ORDER BY CASE lower(category_no) WHEN 's' THEN 0 ELSE 1 END
+        LIMIT 1;
+    END IF;
 
     IF v_scheme IS NULL OR v_all_shifts IS NULL THEN
-        RAISE EXCEPTION 'FOREIGN_FIXED_COEFFICIENT scheme or FOREIGN_ALL_SHIFTS category missing';
+        RAISE EXCEPTION 'FOREIGN_FIXED_COEFFICIENT scheme or its common effective category is missing';
     END IF;
 
     -- 1. Shift categories -> common effective category at coefficient 1.
