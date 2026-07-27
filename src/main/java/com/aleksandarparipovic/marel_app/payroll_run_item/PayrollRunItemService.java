@@ -226,15 +226,30 @@ public class PayrollRunItemService {
         Map<Long, String> workCodeNames = workCodeCategoryNameResolver.translationsFor(locale);
         Map<Long, String> adjustmentNames = payrollAdjustmentCategoryNameResolver.translationsFor(locale);
 
+        // Only what pertains to this employee. Rows a run was initialised with
+        // before the employee moved onto a restricted scheme are filtered out
+        // here rather than deleted, so the payslip is right immediately and the
+        // data stays recoverable.
+        //
+        // ANYTHING WITH ACTIVITY IS ALWAYS SHOWN, even if the scheme now excludes
+        // it. Hiding recorded work would turn a display rule into missing money
+        // on a document somebody is paid from. Only empty rows are dropped.
+        PayrollSchemeScope scope = scopeFor(item);
+
         List<PayrollRunItemCategoryDetailDto> categories =
                 payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId())
                         .stream()
+                        .filter(c -> scope == null
+                                || scope.allowsWorkCategory(c.getWorkCodeCategory().getId())
+                                || hasActivity(c))
                         .map(c -> new PayrollRunItemCategoryDetailDto(c, workCodeNames))
                         .toList();
 
         List<PayrollAdjustmentSectionDto> adjustments =
                 payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId())
                         .stream()
+                        .filter(a -> scope == null
+                                || scope.allowsAdjustmentCategory(a.getPayrollAdjustmentCategory().getId()))
                         .map(a -> new PayrollAdjustmentDetailDto(a, adjustmentNames))
                         .collect(java.util.stream.Collectors.groupingBy(
                                 dto -> dto.getSectionCode() != null ? dto.getSectionCode() : ""
@@ -262,6 +277,23 @@ public class PayrollRunItemService {
                 adjustments,
                 permissions
         );
+    }
+
+    /** True when a category row carries real work, whatever the scheme says today. */
+    private boolean hasActivity(PayrollRunItemCategory category) {
+        return safe(category.getTotalMinutes()) > 0
+                || safe(category.getTotalQuantity()) > 0
+                || (category.getAmount() != null && category.getAmount().compareTo(BigDecimal.ZERO) != 0);
+    }
+
+    /** The scheme scope for one item's own payroll month; null means unrestricted. */
+    private PayrollSchemeScope scopeFor(PayrollRunItem item) {
+        MonthlyReport mr = item.getMonthlyReport();
+        if (mr == null || mr.getStartDate() == null || mr.getEndDate() == null || item.getEmployee() == null) {
+            return null;
+        }
+        return payrollSchemeScopeService.scopeFor(
+                item.getEmployee().getId(), mr.getStartDate(), mr.getEndDate());
     }
 
     /**
@@ -512,7 +544,38 @@ public class PayrollRunItemService {
                         (a, b) -> a));
 
         List<PayrollRunItemCategory> itemCategories =
-                payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId());
+                new java.util.ArrayList<>(
+                        payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId()));
+
+        // A category the monthly report HAS but the item does not gets a row
+        // created for it now.
+        //
+        // Without this, those minutes are silently dropped from payroll: the loop
+        // below walks the item's existing rows and matches the monthly report to
+        // them, so anything with no row simply never appears. It happens whenever
+        // the set of categories changes after a run was initialised — a new
+        // category, or an employee moved onto a scheme whose work lands on a
+        // category their payroll item was never given a row for.
+        //
+        // Created regardless of what the scheme allows: this row exists because
+        // the work is REAL and already recorded. Refusing it here would lose
+        // money to make a display rule tidy.
+        java.util.Set<Long> existingCategoryIds = itemCategories.stream()
+                .map(c -> c.getWorkCodeCategory().getId())
+                .collect(java.util.stream.Collectors.toSet());
+
+        for (MonthlyReportCategory mrc : monthlyCategories) {
+            Long wccId = mrc.getWorkCodeCategory().getId();
+            if (existingCategoryIds.contains(wccId)) {
+                continue;
+            }
+            PayrollRunItemCategory created =
+                    payrollRunItemCategoryRepository.save(newItemCategory(item, mrc.getWorkCodeCategory()));
+            itemCategories.add(created);
+            existingCategoryIds.add(wccId);
+            log.info("PayrollRunItem {}: added missing category row for {} — the monthly report has activity there",
+                    item.getId(), mrc.getWorkCodeCategory().getCategoryNo());
+        }
 
         BigDecimal hourlyRate = item.getHourlyRate() != null ? item.getHourlyRate() : BigDecimal.ZERO;
         BigDecimal performanceCoeff = item.getPerformanceCoefficient() != null
@@ -641,6 +704,83 @@ public class PayrollRunItemService {
                     adj.setUpdatedAt(OffsetDateTime.now());
                     payrollAdjustmentRepository.save(adj);
                 });
+    }
+
+    /**
+     * Take every adjustment the scheme excludes out of the arithmetic.
+     *
+     * <p>Not merely hidden: zeroed and un-applied, so it contributes nothing to
+     * any sum. Every total in this class filters on {@code isApplied}, so this is
+     * what makes "does not affect this employee" literally true rather than
+     * cosmetically true.
+     *
+     * <p>Rows are neutralised rather than deleted. A run initialised before a
+     * scheme change already has them, deleting is irreversible, and an
+     * administrator who moves the employee back gets the line back with no data
+     * lost.
+     */
+    private void neutraliseExcludedAdjustments(PayrollRunItem item, PayrollSchemeScope scope) {
+        if (scope == null) {
+            return;
+        }
+        List<PayrollAdjustment> adjustments =
+                payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId());
+
+        List<PayrollAdjustment> changed = new java.util.ArrayList<>();
+        for (PayrollAdjustment adjustment : adjustments) {
+            Long categoryId = adjustment.getPayrollAdjustmentCategory().getId();
+            if (scope.allowsAdjustmentCategory(categoryId)) {
+                continue;
+            }
+            boolean wasCounted = Boolean.TRUE.equals(adjustment.getIsApplied())
+                    || (adjustment.getAmount() != null && adjustment.getAmount().compareTo(BigDecimal.ZERO) != 0);
+            if (!wasCounted) {
+                continue;
+            }
+            adjustment.setIsApplied(false);
+            adjustment.setAmount(BigDecimal.ZERO);
+            adjustment.setSystemAmount(BigDecimal.ZERO);
+            adjustment.setUpdatedAt(OffsetDateTime.now());
+            changed.add(adjustment);
+        }
+
+        if (!changed.isEmpty()) {
+            payrollAdjustmentRepository.saveAll(changed);
+            log.info("PayrollRunItem {}: {} adjustment line(s) excluded by the compensation scheme were zeroed",
+                    item.getId(), changed.size());
+        }
+    }
+
+    /**
+     * An empty payroll category row.
+     *
+     * <p>Mirrors {@code PayrollRunInitializationTxService.buildItemCategory} —
+     * the same shape, created at a different moment. Every value is filled in by
+     * the population loop immediately afterwards; this only has to be valid
+     * enough to insert.
+     */
+    private PayrollRunItemCategory newItemCategory(PayrollRunItem item,
+                                                   com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory wcc) {
+        PayrollRunItemCategory cat = new PayrollRunItemCategory();
+        cat.setPayrollRunItem(item);
+        cat.setWorkCodeCategory(wcc);
+        cat.setSourceType(wcc.getType());
+        cat.setTotalMinutes(0);
+        cat.setTotalPaidMinutes(0);
+        cat.setTotalQuantity(0);
+        cat.setTotalScrap(0);
+        cat.setWeightedNormMinutes(BigDecimal.ZERO);
+        cat.setCategoryCoefficientSnapshot(wcc.getNormMultiplier() != null
+                ? BigDecimal.valueOf(wcc.getNormMultiplier()) : BigDecimal.ONE);
+        cat.setEffectiveMinutes(BigDecimal.ZERO);
+        cat.setHourlyRate(Boolean.TRUE.equals(wcc.getFixedHourlyRate()) && wcc.getHourlyRate() != null
+                ? wcc.getHourlyRate()
+                : (item.getHourlyRate() != null ? item.getHourlyRate() : BigDecimal.ZERO));
+        cat.setAmount(BigDecimal.ZERO);
+        cat.setCategoryAffectsNormSnapshot("WORK".equals(wcc.getType()));
+        cat.setCategoryAffectsBonusSnapshot("WORK".equals(wcc.getType()));
+        cat.setCreatedAt(OffsetDateTime.now());
+        return cat;
     }
 
     /**
@@ -773,6 +913,7 @@ public class PayrollRunItemService {
         }
 
         // ── Populate item categories from monthly report categories ───────────
+        neutraliseExcludedAdjustments(item, scope);
         populateItemCategoriesFromMonthlyReport(item, mr, scope);
 
         // ── Recalculate summary totals from adjustment lines ──────────────────

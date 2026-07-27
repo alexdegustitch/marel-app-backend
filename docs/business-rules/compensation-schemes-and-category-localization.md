@@ -365,6 +365,28 @@ payslip while still paying the money.
 > fixed-coefficient employee is still paid more for working faster; they simply
 > get no bonus.
 
+### What an excluded line does to the payslip
+
+Three separate things, because "hidden" and "not counted" are not the same:
+
+| | |
+|---|---|
+| **Excluded adjustment** | zeroed and un-applied at recalculation, then dropped from the response. Every total filters on `is_applied`, so it contributes nothing to any sum. |
+| **Excluded work category** | empty rows are dropped from the response. Rows with real activity are **always shown**, whatever the scheme says today. |
+| **Meal / transport** | zeroed on the item columns too — `total_net_earnings` adds those directly, so removing only the line would still pay the money. |
+
+Rows are **neutralised, not deleted**. A run initialised before a scheme change
+already has them; deleting is irreversible, and moving the employee back
+restores the line with nothing lost.
+
+> **A category the monthly report has activity in ALWAYS gets a payroll row**,
+> created on the spot if the item lacks one — `populateItemCategoriesFromMonthlyReport`
+> otherwise walks only the item's existing rows and those minutes vanish from
+> payroll entirely. This is checked before any scheme filtering: the row exists
+> because the work is real.
+
+`LOCKED` payroll is never touched by any of this.
+
 ### A payroll month is a RANGE
 
 `PayrollSchemeScopeService` answers the payroll question;
@@ -450,6 +472,64 @@ WHERE NOT EXISTS (SELECT 1 FROM compensation_schemes WHERE code = 'MY_SCHEME');
 ```
 
 Resolve by `code`. Never insert a hard-coded id.
+
+### Add a whole new worker type — data only, no code
+
+Adding a scheme (seasonal worker, trainee, anything) is rows in three tables.
+**No Java changes.** Exactly one place in `src/main` names a scheme at all —
+`CompensationSchemeInitializer`, deciding which one a newly created employee
+opens on — and nothing in the calculation path does.
+`NewCompensationSchemeIsDataOnlyIT` builds a scheme this codebase has never
+heard of and drives the whole path through it, so a future
+`if (scheme.getCode().equals(...))` breaks the build.
+
+```sql
+-- 1. The scheme.
+--    allow_unmapped_categories  false = only explicitly ruled categories usable
+--    allows_performance_bonus   false = no bonus on top (efficiency still
+--                                       weights the minutes themselves)
+INSERT INTO compensation_schemes
+    (code, name, allow_unmapped_categories, allows_performance_bonus, note)
+SELECT 'SEASONAL', 'Sezonski radnik', false, false, 'Why this exists'
+WHERE NOT EXISTS (SELECT 1 FROM compensation_schemes WHERE code = 'SEASONAL');
+
+-- 2. Work-category rules. valid_from is NOT a rollout date — start it early
+--    enough to cover any scheme period anyone might assign. See §7.
+--    effective_category_id NULL  -> effective category IS the source
+--    coefficient_override  NULL  -> the category's own norm_multiplier
+--    is_selectable        false  -> reachable by the calculation, never offered
+INSERT INTO work_code_category_scheme_rules
+    (compensation_scheme_id, source_category_id, effective_category_id,
+     is_allowed, is_selectable, coefficient_override, valid_from, note)
+SELECT s.id, src.id, eff.id, true, true, 0.90, DATE '2020-01-01', 'Why'
+FROM compensation_schemes s
+JOIN work_code_categories src ON src.category_no IN ('J', 'D')
+LEFT JOIN work_code_categories eff ON eff.category_no = 'S'
+WHERE s.code = 'SEASONAL'
+  AND NOT EXISTS (SELECT 1 FROM work_code_category_scheme_rules r
+                  WHERE r.compensation_scheme_id = s.id
+                    AND r.source_category_id = src.id);
+
+-- 3. Payroll lines that do NOT apply. Absent = allowed, so list only exclusions.
+INSERT INTO payroll_adjustment_category_scheme_rules
+    (compensation_scheme_id, payroll_adjustment_category_id, is_allowed, valid_from, note)
+SELECT s.id, c.id, false, DATE '2020-01-01', 'Why'
+FROM compensation_schemes s
+JOIN payroll_adjustment_categories c ON c.code IN ('MEAL_ALLOWANCE', 'MONTHLY_BONUS')
+WHERE s.code = 'SEASONAL'
+  AND NOT EXISTS (SELECT 1 FROM payroll_adjustment_category_scheme_rules r
+                  WHERE r.compensation_scheme_id = s.id
+                    AND r.payroll_adjustment_category_id = c.id);
+```
+
+Employees are then moved onto it through the existing employee screen, which
+appends a dated period. **A checklist for a closed scheme:** every category a
+supervisor may pick, every category the contextual MAPPINGS can produce from
+those (§4), and the remap target itself with `is_selectable = false`.
+
+There is deliberately no administration screen for this yet. It is the obvious
+next step and nothing above blocks it — the tables already carry everything a
+screen would write.
 
 ### Add a category rule
 
