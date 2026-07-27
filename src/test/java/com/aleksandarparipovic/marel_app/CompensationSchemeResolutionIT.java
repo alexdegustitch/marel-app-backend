@@ -427,9 +427,6 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
                 .as("each allowed source is its own entry; the list never collapses to the shared target")
                 .doesNotHaveDuplicates()
                 .hasSameSizeAs(allowed);
-        assertThat(codes)
-                .as("the calculation target is not something anyone worked, so it is not selectable")
-                .doesNotContain(foreignAllShifts().getCategoryNo());
         assertThat(allowed).allSatisfy(r -> assertThat(r.allowed()).isTrue());
         assertThat(allowed)
                 .as("every entry carries the effective category and coefficient it resolves to")
@@ -542,22 +539,62 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("the common effective category is not selectable, and is rejected if posted directly")
-    void commonCategoryIsNotSelectable() {
+    @DisplayName("the seeded rules start early enough to cover any scheme period that exists")
+    void ruleValidityCoversEverySchemePeriod() {
+        // The bug this guards: the rules were dated from the backfill cutover, as
+        // if valid_from were a rollout switch. It is not — a rule says what the
+        // scheme MEANS, while the scheme period says who is under it and when.
+        // An administrator assigned a period starting a month before the rules
+        // did, and for that month a closed scheme refused every category and the
+        // work-entry dropdown came up empty with no error.
+        LocalDate earliestPeriod = historyRepository.findAll().stream()
+                .filter(h -> h.getArchivedAt() == null)
+                .map(EmployeeCompensationSchemeHistory::getValidFrom)
+                .min(LocalDate::compareTo)
+                .orElse(LocalDate.of(2020, 1, 1));
+
+        List<WorkCodeCategorySchemeRule> rules = ruleRepository.findAllForScheme(
+                scheme(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT).getId());
+
+        assertThat(rules).isNotEmpty();
+        assertThat(rules).allSatisfy(rule ->
+                assertThat(rule.getValidFrom())
+                        .as("rule for %s must already be in force when the scheme can be",
+                                rule.getSourceCategory().getCategoryNo())
+                        .isBeforeOrEqualTo(earliestPeriod));
+    }
+
+    @Test
+    @DisplayName("a closed scheme whose rules are not yet in force refuses everything — the failure mode, pinned")
+    void closedSchemeWithNoRulesInForceRefusesEverything() {
+        Employee employee = anEmployee();
+        period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
+
+        WorkCodeCategory category = category("IT-GAP-" + COUNTER.incrementAndGet(), 1.0d);
+        // Rule starts well after the date being asked about.
+        rule(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, category, null, true,
+                BigDecimal.ONE, LocalDate.of(2030, 1, 1), null);
+
+        assertThat(resolutionService.listAllowedCategories(employee.getId(), LocalDate.of(2029, 12, 31)))
+                .as("nothing is selectable, which is why the resolver logs a warning for this case")
+                .noneMatch(r -> r.sourceCategoryId().equals(category.getId()));
+    }
+
+    @Test
+    @DisplayName("the common effective category IS selectable — the supervisor enters it, the backend maps it")
+    void commonCategoryIsSelectable() {
         Employee employee = anEmployee();
         period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
         WorkCodeCategory common = foreignAllShifts();
 
-        // Nobody works "I, II i III smena" — it is where the other categories
-        // land. PayrollSchemeScopeIT covers the other half of this rule: it must
-        // still be PAYABLE, because that is where the money ends up.
-        assertThat(resolutionService.resolve(employee.getId(), WORKDAY, common.getId()).allowed())
-                .isFalse();
+        WorkCategoryResolution resolution =
+                resolutionService.resolve(employee.getId(), WORKDAY, common.getId());
 
-        assertThatThrownBy(() ->
-                resolutionService.requireAllowed(employee.getId(), WORKDAY, common.getId()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("nije dozvoljena");
+        assertThat(resolution.allowed()).isTrue();
+        assertThat(resolution.coefficient()).isEqualByComparingTo("1");
+        assertThat(resolution.effectiveCategoryId())
+                .as("maps to itself, so a directly entered S has a defined answer")
+                .isEqualTo(common.getId());
     }
 
     @Test

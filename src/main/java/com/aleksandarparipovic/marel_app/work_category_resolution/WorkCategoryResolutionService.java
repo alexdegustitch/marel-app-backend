@@ -120,6 +120,19 @@ public class WorkCategoryResolutionService {
             }
         }
 
+        // A closed scheme with no rules at all in force refuses EVERY category,
+        // which looks identical to "correctly refused" from the outside — an
+        // empty dropdown and no error. It is almost always a configuration gap:
+        // a scheme period assigned from a date earlier than its rules cover.
+        // Said out loud here so the next occurrence is one log line, not an
+        // investigation.
+        if (bySourceCategory.isEmpty() && !Boolean.TRUE.equals(scheme.getAllowUnmappedCategories())) {
+            log.warn("Compensation scheme {} refuses every category on {} for employee {}:"
+                            + " it does not allow unmapped categories and has no rules in force for that date."
+                            + " Check work_code_category_scheme_rules.valid_from against the employee's scheme period.",
+                    scheme.getCode(), workDate, employeeId);
+        }
+
         return new ResolutionContext(employeeId, workDate, scheme, bySourceCategory);
     }
 

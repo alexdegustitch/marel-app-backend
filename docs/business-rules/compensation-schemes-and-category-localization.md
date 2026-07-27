@@ -268,20 +268,26 @@ So a fixed-coefficient employee's payroll can only ever contain **`S`** plus
 scheme is closed by default so omitting it would have the same effect, but then
 the data could not tell a decision apart from an oversight.
 
-`S` itself is **not** selectable (`is_allowed = false`, from `2026-07-27-11`).
-Nobody works "I, II i III smena" — it is where the other categories land.
+`S` **is** selectable, like every other work category. The supervisor enters
+what was actually worked and the backend does the mapping — that is the division
+of labour, and hiding a category from the person doing the entry works against
+it. It maps to itself, so a directly entered `S` has a defined answer.
 
-> **It is still PAYABLE.** Two different questions are answered by two different
-> code paths, and only the first one changes:
->
-> | Question | Answered by | For `S` |
-> |---|---|---|
-> | may an employee SELECT this? | the category's own rule | no |
-> | may money LAND on this? | `PayrollSchemeScopeService`, which marks any rule's `effective_category_id` payable | yes |
->
-> The `J → S`, `D → S`, `PL → S` … rules are all still allowed, so `S` keeps its
-> row on the payroll sheet. No mapping produces `S` either, so the recalc engine
-> never asks whether `S` itself is allowed.
+### `valid_from` on a rule is NOT a rollout date
+
+A rule says **what the scheme means**. The scheme PERIOD says **who is under it
+and when**. Only the period is a rollout date.
+
+The rules were first dated from the 2026-08-01 backfill cutover, and an
+administrator then assigned a scheme period from 2026-07-01. For that month the
+scheme was in force with no rules in force, and since it is closed by default it
+refused every category — an empty work-entry dropdown and no error anywhere.
+
+`2026-07-27-13` starts every rule at a computed baseline (the earlier of
+2020-01-01 and the earliest scheme period), so a period assigned further back
+cannot reopen the gap. `WorkCategoryResolutionService` also logs a warning when a
+closed scheme has no rules in force at all, because that state is otherwise
+indistinguishable from "correctly refused everything".
 
 ### The common category is called `S`
 
