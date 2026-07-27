@@ -207,4 +207,22 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     );
 
     List<WorkShift> findByEmployee_IdAndWorkDateIn(Long employeeId, List<LocalDate> workDates);
+
+    /**
+     * One employee's active shifts on or after a date.
+     *
+     * <p>Used when a compensation-scheme change invalidates work from its
+     * effective date onward: only that employee, and only from that date, so the
+     * invalidation never touches unrelated employees or earlier periods whose
+     * calculation did not change.
+     */
+    @Query("""
+            SELECT ws FROM WorkShift ws
+            WHERE ws.employee.id = :employeeId
+              AND ws.isActive = true
+              AND ws.workDate >= :fromDate
+            ORDER BY ws.workDate ASC
+            """)
+    List<WorkShift> findActiveByEmployeeFromDate(@Param("employeeId") Long employeeId,
+                                                 @Param("fromDate") LocalDate fromDate);
 }

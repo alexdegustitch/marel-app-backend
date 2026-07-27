@@ -40,7 +40,14 @@ CREATE TABLE IF NOT EXISTS work_code_category_scheme_rules (
     is_allowed             BOOLEAN       NOT NULL DEFAULT TRUE,
     -- NULL = fall through to the normal coefficient logic. NUMERIC, never a
     -- float: this value multiplies paid minutes.
-    coefficient_override   NUMERIC(10,4),
+    --
+    -- Scale 2 deliberately matches work_logs.norm_multiplier_snapshot, which is
+    -- where a resolved coefficient is recorded. A wider scale here would let an
+    -- administrator enter a precision the snapshot column cannot store, and the
+    -- rule and the history it produced would silently disagree. Every coefficient
+    -- currently in use (work_code_categories.norm_multiplier: 0, 0.6, 1, 1.1,
+    -- 1.2, 1.3) has at most one decimal, so this is not a practical limit.
+    coefficient_override   NUMERIC(10,2),
     valid_from             DATE          NOT NULL,
     valid_until            DATE,
     note                   TEXT,

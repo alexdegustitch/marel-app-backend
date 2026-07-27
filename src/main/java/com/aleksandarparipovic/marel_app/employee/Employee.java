@@ -47,8 +47,29 @@ public class Employee {
     @Column(name = "notes", columnDefinition = "text")
     private String notes;
 
+    /**
+     * A personnel attribute, not a payroll rule and not a language.
+     *
+     * <p>Nothing in the calculation path reads this. Which categories an employee
+     * may use and what coefficient applies comes from their compensation scheme
+     * (see {@code employee_compensation_scheme_history}); which language their
+     * documents are in comes from {@link #preferredLocale}. It was used once, by
+     * the {@code 2026-07-27-02} migration, to seed the initial scheme periods.
+     */
     @Column(name = "is_foreigner", nullable = false)
     private boolean foreigner;
+
+    /**
+     * Language for documents produced FOR this employee, currently the payroll
+     * PDF.
+     *
+     * <p>Deliberately independent of {@link #foreigner} and of the compensation
+     * scheme: "foreign employee therefore English" is not a rule this system
+     * implements. The language is chosen explicitly. It never affects a
+     * calculated amount.
+     */
+    @Column(name = "preferred_locale", nullable = false, length = 35)
+    private String preferredLocale = com.aleksandarparipovic.marel_app.common.i18n.AppLocales.DEFAULT;
 
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
