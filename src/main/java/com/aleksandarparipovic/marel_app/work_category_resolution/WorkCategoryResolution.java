@@ -23,9 +23,14 @@ import java.time.LocalDate;
  *       SOURCE category, and never replaced by the effective category.</li>
  * </ul>
  *
- * @param allowed              false means the category must not be recorded for
- *                             this employee on this date; {@link #resolutionReason}
- *                             says why, and the coefficient is meaningless
+ * @param allowed              false means the calculation must not resolve to
+ *                             this category for this employee on this date;
+ *                             {@link #resolutionReason} says why, and the
+ *                             coefficient is meaningless
+ * @param selectable           false means a supervisor may not CHOOSE it when
+ *                             entering work, even though the calculation may
+ *                             still land on it. The common effective category is
+ *                             exactly that: allowed, never offered
  * @param coefficient          the resolved coefficient, {@code null} only when
  *                             {@code allowed} is false
  * @param coefficientOverridden true when the coefficient came from the scheme
@@ -48,6 +53,7 @@ public record WorkCategoryResolution(
         String effectiveCategoryCode,
 
         boolean allowed,
+        boolean selectable,
 
         BigDecimal coefficient,
         boolean coefficientOverridden,

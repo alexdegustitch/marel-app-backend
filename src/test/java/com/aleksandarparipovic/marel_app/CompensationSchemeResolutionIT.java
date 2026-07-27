@@ -427,7 +427,13 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
                 .as("each allowed source is its own entry; the list never collapses to the shared target")
                 .doesNotHaveDuplicates()
                 .hasSameSizeAs(allowed);
-        assertThat(allowed).allSatisfy(r -> assertThat(r.allowed()).isTrue());
+        assertThat(allowed).allSatisfy(r -> {
+            assertThat(r.allowed()).isTrue();
+            assertThat(r.selectable()).isTrue();
+        });
+        assertThat(codes)
+                .as("the calculation target is never offered — work becomes it after the mapping")
+                .doesNotContain(foreignAllShifts().getCategoryNo());
         assertThat(allowed)
                 .as("every entry carries the effective category and coefficient it resolves to")
                 .allSatisfy(r -> {
@@ -581,8 +587,8 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("the common effective category IS selectable — the supervisor enters it, the backend maps it")
-    void commonCategoryIsSelectable() {
+    @DisplayName("the common effective category is ALLOWED but not SELECTABLE — two questions, two flags")
+    void commonCategoryIsAllowedButNotSelectable() {
         Employee employee = anEmployee();
         period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
         WorkCodeCategory common = foreignAllShifts();
@@ -590,11 +596,35 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
         WorkCategoryResolution resolution =
                 resolutionService.resolve(employee.getId(), WORKDAY, common.getId());
 
+        // Work BECOMES this after the mapping, so the calculation must be able to
+        // resolve it and it keeps its coefficient and self-mapping...
         assertThat(resolution.allowed()).isTrue();
         assertThat(resolution.coefficient()).isEqualByComparingTo("1");
-        assertThat(resolution.effectiveCategoryId())
-                .as("maps to itself, so a directly entered S has a defined answer")
-                .isEqualTo(common.getId());
+        assertThat(resolution.effectiveCategoryId()).isEqualTo(common.getId());
+
+        // ...but nobody performs it, so it is never offered and cannot be entered.
+        assertThat(resolution.selectable()).isFalse();
+        assertThat(resolutionService.listAllowedCategories(employee.getId(), WORKDAY))
+                .noneMatch(r -> r.sourceCategoryId().equals(common.getId()));
+        assertThatThrownBy(() ->
+                resolutionService.requireAllowed(employee.getId(), WORKDAY, common.getId()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("an ordinary category is both allowed and selectable without saying so")
+    void ordinaryCategoryIsSelectableByDefault() {
+        Employee employee = anEmployee();
+        period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
+        WorkCodeCategory shift = shiftCategoriesUnderFixedScheme().get(0);
+
+        WorkCategoryResolution resolution =
+                resolutionService.resolve(employee.getId(), WORKDAY, shift.getId());
+
+        assertThat(resolution.allowed()).isTrue();
+        assertThat(resolution.selectable())
+                .as("is_selectable defaults to true, so only exclusions are ever written")
+                .isTrue();
     }
 
     @Test

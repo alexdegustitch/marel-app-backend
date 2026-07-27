@@ -268,10 +268,29 @@ So a fixed-coefficient employee's payroll can only ever contain **`S`** plus
 scheme is closed by default so omitting it would have the same effect, but then
 the data could not tell a decision apart from an oversight.
 
-`S` **is** selectable, like every other work category. The supervisor enters
-what was actually worked and the backend does the mapping — that is the division
-of labour, and hiding a category from the person doing the entry works against
-it. It maps to itself, so a directly entered `S` has a defined answer.
+`S` is **allowed but not selectable** — two questions, two flags, because one
+boolean cannot answer both:
+
+| Flag | Question | For `S` |
+|---|---|---|
+| `is_selectable` | may a supervisor CHOOSE this when entering work? | **no** |
+| `is_allowed` | may the calculation RESOLVE to this at all? | **yes** |
+
+Work *becomes* `S` after the mapping, so it keeps its coefficient and its
+self-mapping and can still carry a payroll row — but nobody performs it, so it
+never appears in the picker and is rejected on submission.
+
+`is_selectable` defaults to `TRUE`, so only exclusions are ever written.
+
+> Expressing this with `is_allowed` alone was tried twice and was wrong both
+> times: denying it removed the `S → S` definition, allowing it put it back in
+> the dropdown.
+
+**A restricted employee's picker therefore shows 21 categories** — the fourteen
+work ones plus `SO`, `B`, `B30`, `BP`, `ND`, `GO`, `NO` — labelled with the bare
+code, exactly as for any other employee. The scheme changes *which* codes are
+offered, never how they are written: the supervisor enters what was worked and
+the mapping is the backend's business.
 
 ### `valid_from` on a rule is NOT a rollout date
 

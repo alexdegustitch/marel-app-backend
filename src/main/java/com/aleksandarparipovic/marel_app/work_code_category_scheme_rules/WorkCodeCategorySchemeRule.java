@@ -59,6 +59,18 @@ public class WorkCodeCategorySchemeRule {
     private Boolean isAllowed = true;
 
     /**
+     * Whether a supervisor may CHOOSE this category when entering work.
+     *
+     * <p>Separate from {@link #isAllowed}, which asks whether the calculation may
+     * RESOLVE to it. One boolean cannot answer both: the common effective
+     * category is what work becomes after the mapping, so it must stay fully
+     * resolvable while never appearing in the picker.
+     */
+    @Column(name = "is_selectable", nullable = false)
+    @Builder.Default
+    private Boolean isSelectable = true;
+
+    /**
      * {@code null} = fall through to the normal coefficient logic
      * ({@code work_code_categories.norm_multiplier}). {@code BigDecimal}, never a
      * float: this value multiplies paid minutes.

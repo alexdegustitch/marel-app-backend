@@ -163,7 +163,9 @@ public class WorkCategoryResolutionService {
         List<WorkCategoryResolution> allowed = new ArrayList<>();
         for (WorkCodeCategory category : candidates) {
             WorkCategoryResolution resolution = context.resolveFor(category);
-            if (resolution.allowed()) {
+            // selectable(), not allowed(): the common effective category is a
+            // calculation target, so it stays resolvable but is never offered.
+            if (resolution.selectable()) {
                 allowed.add(resolution);
             }
         }
@@ -340,10 +342,14 @@ public class WorkCategoryResolutionService {
             }
 
             WorkCategoryResolution resolution = resolveFor(category);
-            if (!resolution.allowed()) {
-                log.info("Rejected work-code category {} for employee {} on {}: scheme={} reason={}",
+            if (!resolution.selectable()) {
+                log.info("Rejected work-code category {} for employee {} on {}: scheme={} allowed={} reason={}",
                         category.getCategoryNo(), employeeId, workDate,
-                        scheme.getCode(), resolution.resolutionReason());
+                        scheme.getCode(), resolution.allowed(), resolution.resolutionReason());
+                // Deliberately the same message whether the category is
+                // disallowed outright or merely not selectable: from the
+                // supervisor's side both mean "you cannot enter this", and the
+                // distinction is an internal one.
                 throw new IllegalArgumentException(
                         "Kategorija rada \"" + category.getCategoryNo()
                                 + "\" nije dozvoljena za način obračuna \"" + scheme.getName()
@@ -359,6 +365,10 @@ public class WorkCategoryResolutionService {
                                              boolean coefficientOverridden,
                                              WorkCodeCategorySchemeRule rule,
                                              WorkCategoryResolution.Reason reason) {
+            // Selectable only matters when a rule says otherwise; with no rule
+            // the question does not arise and the default is yes.
+            boolean selectable = allowed
+                    && (rule == null || Boolean.TRUE.equals(rule.getIsSelectable()));
             return new WorkCategoryResolution(
                     employeeId,
                     workDate,
@@ -369,6 +379,7 @@ public class WorkCategoryResolutionService {
                     effective == null ? null : effective.getId(),
                     effective == null ? null : effective.getCategoryNo(),
                     allowed,
+                    selectable,
                     coefficient,
                     coefficientOverridden,
                     rule == null ? null : rule.getId(),
