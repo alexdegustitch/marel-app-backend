@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.WorkCodeCategoryMapping;
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.repository.WorkCodeCategoryMappingRepository;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
+import com.aleksandarparipovic.marel_app.work_log.WorkLogCompensationSnapshot;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,10 +39,19 @@ public class ShiftIntervalResolver {
     /**
      * Convert active work logs into interval inputs.
      *
-     * <p>Parallel capability and the coefficient both come from the log's own
-     * work-code category. The original {@code workCode} is used rather than
-     * {@code effectiveWorkCode}: the night/weekend remap is a bonus-pay concern
-     * and must not change which operations can run in parallel.
+     * <p>Parallel capability comes from the log's own work-code category. The
+     * original {@code workCode} is used rather than {@code effectiveWorkCode}:
+     * the night/weekend remap is a bonus-pay concern and must not change which
+     * operations can run in parallel.
+     *
+     * <p>The coefficient comes from the log's snapshot
+     * ({@link WorkLogCompensationSnapshot#coefficientOf}), falling back to the
+     * category's own multiplier for rows recorded before compensation schemes
+     * existed. Reading the snapshot rather than the live category is what lets
+     * the fast read path and the recalc engine stay in agreement — both read the
+     * same persisted value — and is what makes an employee-specific coefficient
+     * apply here at all without this class needing to know anything about
+     * schemes.
      */
     public List<WorkIntervalInput> toIntervals(Collection<WorkLog> logs) {
         if (logs == null || logs.isEmpty()) {
@@ -54,7 +64,7 @@ public class ShiftIntervalResolver {
                         log.getStartAt(),
                         log.getEndAt(),
                         Boolean.TRUE.equals(log.getWorkCode().getAllowsParallelWork()),
-                        multiplierOf(log.getWorkCode())))
+                        WorkLogCompensationSnapshot.coefficientOf(log)))
                 .toList();
     }
 

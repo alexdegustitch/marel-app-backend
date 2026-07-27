@@ -16,6 +16,7 @@ import com.aleksandarparipovic.marel_app.employee.specification.EmployeeSpecific
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonusRepository;
+import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.CompensationSchemeInitializer;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
@@ -54,6 +55,7 @@ public class EmployeeService {
     private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
+    private final CompensationSchemeInitializer compensationSchemeInitializer;
 
 
     public EmployeeBasicInfoDto getEmployeeById(Long employeeId){
@@ -91,6 +93,13 @@ public class EmployeeService {
         employee.setNotes(request.getNotes());
 
         employee = repository.save(employee);
+
+        // Every employee needs a compensation scheme from their first day, or the
+        // first work log recorded for them is rejected and their first recalc job
+        // fails. STANDARD, deliberately, and regardless of is_foreigner: the
+        // restricted policy is assigned explicitly by an administrator, never
+        // inferred from a personnel attribute.
+        compensationSchemeInitializer.assignInitialScheme(employee);
 
         BonusCategory category = bonusCategoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new EntityNotFoundException("Bonus category not found"));

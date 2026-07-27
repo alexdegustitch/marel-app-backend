@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
 import com.aleksandarparipovic.marel_app.utils.dates.DateUtil;
 import com.aleksandarparipovic.marel_app.utils.dto.StartEndResult;
+import com.aleksandarparipovic.marel_app.work_category_resolution.WorkCategoryResolution;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDto;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDtoImpl;
@@ -24,6 +25,7 @@ public class WorkLogMapper {
     private final WorkLogValidator workLogValidator;
     private final EntityReferenceProvider referenceProvider;
     private final DateUtil dateUtil;
+    private final WorkLogCompensationSnapshot compensationSnapshot;
 
     public WorkLogDto toDto(WorkLog workLog) {
         Operation operation = workLog.getOperation();
@@ -70,7 +72,14 @@ public class WorkLogMapper {
         return value == null ? null : value.toInstant();
     }
 
-    public WorkLog toEntity(WorkLogFormDto dto) {
+    /**
+     * @param resolution the already-validated compensation-scheme resolution for
+     *                   this log's employee, work date and source category. It is
+     *                   passed in rather than resolved here so a batch of logs on
+     *                   the same shift shares one resolution context instead of
+     *                   issuing two queries per log.
+     */
+    public WorkLog toEntity(WorkLogFormDto dto, WorkCategoryResolution resolution) {
         Operation operation = referenceProvider.getRequiredReference(Operation.class, dto.getOperationId(), "operationId");
         // validateOperationProductConsistency(dto.getProductId(), operation);
 
@@ -82,7 +91,7 @@ public class WorkLogMapper {
 
         workLogValidator.validateTimeRange(time.start(), time.end());
 
-        return WorkLog.builder()
+        WorkLog workLog = WorkLog.builder()
                 .workShift(workShift)
                 .productionOrder(referenceProvider.getOptionalReference(ProductionOrder.class, dto.getProductionOrderId()))
                 .operation(operation)
@@ -96,9 +105,16 @@ public class WorkLogMapper {
                 .performanceRate(dto.getPerformanceRate())
                 .approvedPerformanceRate(dto.getApprovedPerformanceRate())
                 .build();
+
+        // The coefficient and effective category come from the resolver, never
+        // from the request body: a client must not be able to choose what its own
+        // work is worth.
+        compensationSnapshot.apply(workLog, resolution);
+
+        return workLog;
     }
 
-    public void updateEntity(WorkLog entity, WorkLogFormDto dto) {
+    public void updateEntity(WorkLog entity, WorkLogFormDto dto, WorkCategoryResolution resolution) {
         if (dto.getWorkShiftId() != null) {
             entity.setWorkShift(referenceProvider.getRequiredReference(WorkShift.class, dto.getWorkShiftId(), "workShiftId"));
         }
@@ -124,7 +140,14 @@ public class WorkLogMapper {
         entity.setNote(dto.getNote());
         entity.setPerformanceRate(dto.getPerformanceRate());
         entity.setApprovedPerformanceRate(dto.getApprovedPerformanceRate());
-        entity.setNormMultiplierSnapshot(dto.getNormMultiplierSnapshot());
+
+        // Re-resolved from the employee's scheme for the work date, deliberately
+        // ignoring dto.normMultiplierSnapshot. The DTO value used to be written
+        // straight through, which meant a client could post any coefficient it
+        // liked and a stale value round-tripped from an open form could overwrite
+        // a correct one.
+        compensationSnapshot.apply(entity, resolution);
+
         if (dto.getIsActive() != null) {
             entity.setIsActive(dto.getIsActive());
         }
