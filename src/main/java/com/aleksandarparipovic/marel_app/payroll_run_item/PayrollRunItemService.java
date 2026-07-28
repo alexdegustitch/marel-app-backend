@@ -71,6 +71,7 @@ public class PayrollRunItemService {
     private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
     private final PayrollAdjustmentCategoryRepository payrollAdjustmentCategoryRepository;
     private final PayrollSchemeScopeService payrollSchemeScopeService;
+    private final com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository workCodeCategoryRepository;
 
     // ─── Standard CRUD ──────────────────────────────────────────────────────
 
@@ -163,12 +164,20 @@ public class PayrollRunItemService {
             return item;
         }
 
+        // Same reasoning as in refreshIfStale, which keeps its own copy of this
+        // check: the monthly report's version guards the AMOUNTS, not the ROW
+        // SET. The row set also follows the employee's compensation scheme, and
+        // changing that does not touch the monthly report — so an item refreshed
+        // before a scheme change would look up to date forever and never grow the
+        // row its work now lands on.
+        boolean addedRowWithActivity = reconcileItemCategories(item, mr);
+
         Integer latestVersion = mr.getVersion();
         Integer usedVersion   = item.getBasedOnVersion();
         boolean versionStale  = latestVersion != null && !latestVersion.equals(usedVersion);
         boolean flaggedForRecalc = Boolean.TRUE.equals(item.getNeedsRecalculation());
 
-        if (!versionStale && !flaggedForRecalc) {
+        if (!versionStale && !flaggedForRecalc && !addedRowWithActivity) {
             log.debug("PayrollRunItem {} is up-to-date at version {}", id, latestVersion);
             return item;
         }
@@ -1058,14 +1067,93 @@ public class PayrollRunItemService {
                 .map(fresh -> {
                     MonthlyReport mr = fresh.getMonthlyReport();
                     if (mr == null) return fresh;
+
+                    // WHICH ROWS EXIST AND WHAT THEY ARE WORTH ARE GUARDED
+                    // DIFFERENTLY, and this is why. monthly_reports.version
+                    // tracks the CONTENT of the report, so it is the right guard
+                    // for the amounts. It says nothing about the ROW SET, which
+                    // also depends on the employee's compensation scheme — and
+                    // moving an employee to another scheme does not touch the
+                    // monthly report at all.
+                    //
+                    // So the row set is reconciled first, unconditionally. It is
+                    // a cheap idempotent INSERT of what is missing and never
+                    // touches an amount. Without it an item that was refreshed
+                    // before a scheme change looks up to date forever and simply
+                    // never grows the row its work now lands on.
+                    boolean addedRowWithActivity = reconcileItemCategories(fresh, mr);
+
                     Integer latest = mr.getVersion();
                     Integer used   = fresh.getBasedOnVersion();
                     boolean versionStale   = latest != null && !latest.equals(used);
                     boolean flaggedForRecalc = Boolean.TRUE.equals(fresh.getNeedsRecalculation());
-                    if (!versionStale && !flaggedForRecalc) return fresh;
+                    if (!versionStale && !flaggedForRecalc && !addedRowWithActivity) return fresh;
                     return recalculateFromMonthlyReport(fresh, mr);
                 })
                 .orElse(item);
+    }
+
+    /**
+     * Give the item a row for every category it can legitimately carry.
+     *
+     * <p>Two sources, unioned:
+     * <ul>
+     *   <li>what the employee's scheme says is payable — so a category work is
+     *       mapped INTO gets its row even in a month with no activity yet, which
+     *       is what makes it a category this worker type "has";</li>
+     *   <li>what the monthly report actually has activity in — the money-safety
+     *       net, applied whatever the scheme says, because a row missing here
+     *       means those minutes never reach payroll.</li>
+     * </ul>
+     *
+     * <p>Only inserts. Never deletes and never touches an amount, so it is safe
+     * to run on any read.
+     *
+     * @return true when a row was added that the monthly report has activity for,
+     *         meaning the amounts are now out of date and must be recalculated
+     */
+    private boolean reconcileItemCategories(PayrollRunItem item, MonthlyReport mr) {
+        if (STATUS_LOCKED.equals(item.getStatus())) {
+            return false;
+        }
+
+        java.util.Set<Long> existing = payrollRunItemCategoryRepository
+                .findByPayrollRunItemIdWithWorkCodeCategory(item.getId()).stream()
+                .map(c -> c.getWorkCodeCategory().getId())
+                .collect(java.util.stream.Collectors.toSet());
+
+        java.util.Map<Long, Integer> monthlyMinutes = monthlyReportCategoryRepository
+                .findByMonthlyReportIdWithCategory(mr.getId()).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        c -> c.getWorkCodeCategory().getId(),
+                        c -> safe(c.getTotalMinutes()),
+                        (a, b) -> a));
+
+        PayrollSchemeScope scope = scopeFor(item);
+        java.util.Set<Long> wanted = new java.util.HashSet<>(monthlyMinutes.keySet());
+        if (scope != null) {
+            wanted.addAll(scope.allowedWorkCategoryIds());
+        }
+        wanted.removeAll(existing);
+        if (wanted.isEmpty()) {
+            return false;
+        }
+
+        List<com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory> categories =
+                workCodeCategoryRepository.findAllById(wanted);
+
+        boolean addedWithActivity = false;
+        for (var category : categories) {
+            payrollRunItemCategoryRepository.save(newItemCategory(item, category));
+            if (monthlyMinutes.getOrDefault(category.getId(), 0) > 0) {
+                addedWithActivity = true;
+            }
+        }
+
+        log.info("PayrollRunItem {}: added {} missing category row(s){}",
+                item.getId(), categories.size(),
+                addedWithActivity ? " — recalculating, one of them has activity" : "");
+        return addedWithActivity;
     }
 
     private static int safe(Integer v) { return v != null ? v : 0; }

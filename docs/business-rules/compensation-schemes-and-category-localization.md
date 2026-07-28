@@ -390,6 +390,38 @@ A fixed-coefficient employee's payslip therefore carries **`S`, `SO`, `B`,
 `B30`, `BP`, `ND`, `GO`, `NO`** — and none of the fourteen categories that feed
 into `S`.
 
+### The row set and the amounts are guarded differently
+
+`monthly_reports.version` tracks the report's CONTENT, so it is the right guard
+for what a payroll row is **worth**. It says nothing about **which rows exist** —
+that also follows the employee's compensation scheme, and moving an employee to
+another scheme does not touch the monthly report at all.
+
+Guarding both with the version produced exactly the failure you would expect: an
+item refreshed before a scheme change looked up to date forever and never grew
+the row its work now lands on. The payslip was missing `S` while the daily and
+monthly reports both had it.
+
+So the row set is reconciled first, on every read, unconditionally. It is a cheap
+idempotent INSERT of what is missing, never a delete and never an amount. The
+wanted set is the union of:
+
+- **what the scheme says is payable** — so a category work maps INTO gets its row
+  even in a month with no activity yet, which is what makes it a category this
+  worker type *has*;
+- **what the monthly report has activity in** — the money-safety net, applied
+  whatever the scheme says, because a missing row here means those minutes never
+  reach payroll at all.
+
+If a row is added that the monthly report has activity for, the amounts are by
+definition out of date and a recalculation follows. `LOCKED` items are skipped
+entirely.
+
+> `getForPayrollAccess` and `refreshIfStale` each keep their own copy of the
+> staleness check — pre-existing duplication — so the reconciliation call had to
+> go in both. Changing one without the other reintroduces this bug on one path
+> only.
+
 ### What an excluded line does to the payslip
 
 Three separate things, because "hidden" and "not counted" are not the same:
