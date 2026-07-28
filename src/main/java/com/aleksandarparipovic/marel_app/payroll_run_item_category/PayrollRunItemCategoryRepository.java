@@ -16,7 +16,24 @@ public interface PayrollRunItemCategoryRepository extends JpaRepository<PayrollR
 
     List<PayrollRunItemCategory> findByPayrollRunItem_IdIn(Collection<Long> itemIds);
 
-    @Query("SELECT c FROM PayrollRunItemCategory c JOIN FETCH c.workCodeCategory WHERE c.payrollRunItem.id = :itemId")
+    /**
+     * One item's category rows, in the order the categories are configured to
+     * appear in.
+     *
+     * <p>Ordered here rather than in the caller because this is what the payroll
+     * screen and the PDF both render directly — neither re-sorts. Without the
+     * ORDER BY the sequence is whatever PostgreSQL happens to return, which is
+     * stable enough to look deliberate and then changes after an update.
+     *
+     * <p>{@code id} breaks ties so the order is total even if two categories are
+     * ever given the same display_order.
+     */
+    @Query("""
+            SELECT c FROM PayrollRunItemCategory c
+            JOIN FETCH c.workCodeCategory wcc
+            WHERE c.payrollRunItem.id = :itemId
+            ORDER BY wcc.displayOrder ASC, wcc.id ASC
+            """)
     List<PayrollRunItemCategory> findByPayrollRunItemIdWithWorkCodeCategory(@Param("itemId") Long itemId);
 
     void deleteAllByPayrollRunItemId(Long payrollRunItemId);
