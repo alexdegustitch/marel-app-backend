@@ -207,16 +207,62 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
 
         PayrollSchemeScope scope = scopeOf(restricted);
 
-        // Two questions, answered separately on purpose:
-        //   "may an employee SELECT this?" -> the category's own rule  (no)
-        //   "may money LAND on this?"      -> it is another rule's target (yes)
+        // THREE questions, three answers, and the payslip only cares about the
+        // third:
+        //   may a supervisor SELECT it?   -> the source, yes (covered elsewhere)
+        //   may the calculation RESOLVE it? -> both, yes
+        //   may money LAND on it?         -> only the target
+        //
+        // The source remaps, so nothing can ever accumulate against it and a row
+        // for it would be a permanent zero.
         assertThat(scope.allowsWorkCategory(source.getId()))
-                .as("the source is selectable").isTrue();
+                .as("a remapped source never carries money, so it gets no payroll row")
+                .isFalse();
         assertThat(scope.allowsWorkCategory(common.getId()))
-                .as("and the target is payable, which is where the money ends up").isTrue();
+                .as("the target does, which is where the money ends up")
+                .isTrue();
     }
 
     // ── bonuses ─────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("a self-mapping rule stays payable — that is how the target earns its row")
+    void selfMappingIsPayable() {
+        Employee restricted = anEmployee();
+        period(restricted, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
+
+        WorkCodeCategory common = categoryRepository.findAll().stream()
+                .filter(c -> "S".equalsIgnoreCase(c.getCategoryNo())
+                        || "FOREIGN_ALL_SHIFTS".equalsIgnoreCase(c.getCategoryNo()))
+                .findFirst().orElseThrow();
+
+        // S -> S is not a remap: it does not send the money anywhere else.
+        assertThat(scopeOf(restricted).allowsWorkCategory(common.getId())).isTrue();
+    }
+
+    @Test
+    @DisplayName("a pass-through rule keeps its own category payable")
+    void passThroughIsPayable() {
+        Employee restricted = anEmployee();
+        period(restricted, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
+
+        int n = COUNTER.incrementAndGet();
+        WorkCodeCategory leave = categoryRepository.saveAndFlush(WorkCodeCategory.builder()
+                .categoryNo("IT-PASS-" + n).categoryName("Odsustvo " + n).type("ABSENCE")
+                .isPaid(true).normMultiplier(1.0d).isActive(true).fixedHourlyRate(false)
+                .affectsMealAllowance(false).allowsParallelWork(false).displayOrder(0)
+                .baseCategory(false).build());
+
+        workRuleRepository.saveAndFlush(WorkCodeCategorySchemeRule.builder()
+                .compensationScheme(schemeRepository
+                        .findByCode(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT).orElseThrow())
+                .sourceCategory(leave).effectiveCategory(null)
+                .isAllowed(true).coefficientOverride(null)
+                .validFrom(LocalDate.of(2020, 1, 1)).isActive(true).build());
+
+        // No remap, so the work stays on this category and it must appear.
+        assertThat(scopeOf(restricted).allowsWorkCategory(leave.getId())).isTrue();
+    }
 
     @Test
     @DisplayName("the restricted scheme pays no performance bonus; the standard one does")

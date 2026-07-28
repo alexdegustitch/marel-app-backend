@@ -365,6 +365,31 @@ payslip while still paying the money.
 > fixed-coefficient employee is still paid more for working faster; they simply
 > get no bonus.
 
+### Three questions, three answers
+
+The same category gets a different answer depending on what is being asked, and
+conflating any two of them is a bug. Under `FOREIGN_FIXED_COEFFICIENT`:
+
+| Question | Answered by | `J` | `S` |
+|---|---|:-:|:-:|
+| May a supervisor **SELECT** it when entering work? | the rule's `is_selectable` | **yes** | no |
+| May the calculation **RESOLVE** to it? | the rule's `is_allowed` | yes | yes |
+| May it appear on the **PAYSLIP**? | `PayrollSchemeScopeService` | **no** | **yes** |
+
+The third is the one that is easy to get wrong. `J` remaps to `S`, so after the
+mapping nothing can ever accumulate against `J` — a row for it on the payslip
+would be a permanent zero for work that by construction cannot land there. So:
+
+> **A source category that remaps to a DIFFERENT category is not payable. Only
+> its target is.** A self-mapping rule (`S → S`) is not a remap and stays
+> payable, which is how the target earns its row. A pass-through rule (no
+> effective category) keeps its own category payable, which is how `SO`, `B`,
+> `GO` and the rest appear.
+
+A fixed-coefficient employee's payslip therefore carries **`S`, `SO`, `B`,
+`B30`, `BP`, `ND`, `GO`, `NO`** — and none of the fourteen categories that feed
+into `S`.
+
 ### What an excluded line does to the payslip
 
 Three separate things, because "hidden" and "not counted" are not the same:

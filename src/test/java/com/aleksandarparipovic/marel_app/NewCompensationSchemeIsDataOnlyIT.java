@@ -194,9 +194,13 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
         PayrollSchemeScope scope = scopeService.scopeFor(employee.getId(), PERIOD_START, PERIOD_END);
 
         assertThat(scope).isNotNull();
-        assertThat(scope.allowsWorkCategory(worked.getId())).isTrue();
+        assertThat(scope.allowsWorkCategory(worked.getId()))
+                .as("remapped, so nothing can accumulate against it — no payroll row")
+                .isFalse();
         assertThat(scope.allowsWorkCategory(target.getId()))
-                .as("payable — it is where the money lands").isTrue();
+                .as("payable: it is where the money lands").isTrue();
+        assertThat(scope.allowsWorkCategory(leave.getId()))
+                .as("no remap, so the work stays here and it must appear").isTrue();
         assertThat(scope.allowsWorkCategory(forbidden.getId())).isFalse();
         assertThat(scope.allowsAdjustmentCategory(kept.getId())).isTrue();
         assertThat(scope.allowsAdjustmentCategory(excluded.getId())).isFalse();

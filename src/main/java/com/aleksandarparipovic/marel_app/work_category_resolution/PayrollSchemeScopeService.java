@@ -131,15 +131,32 @@ public class PayrollSchemeScopeService {
         List<WorkCodeCategorySchemeRule> workRules =
                 workRuleRepository.findInForceForSchemeBetween(scheme.getId(), periodStart, periodEnd);
 
+        // THE QUESTION HERE IS "WHAT CAN LAND ON THE PAYSLIP", NOT "WHAT MAY BE
+        // SELECTED". They differ exactly where a rule remaps.
+        //
+        // Under the fixed-coefficient scheme a supervisor picks J, but the
+        // calculation turns it into S, so nothing ever accumulates against J.
+        // Listing J on the payslip would put a permanent zero row there for work
+        // that by construction cannot land on it. So a source that remaps to a
+        // DIFFERENT category is not payable; only its target is.
+        //
+        // A self-mapping rule (S -> S) is not a remap and stays payable, which is
+        // how the target earns its row.
         Map<Long, Boolean> workAllowedByRule = new HashMap<>();
         for (WorkCodeCategorySchemeRule rule : workRules) {
-            // Union across the period: allowed if any in-force rule allows it.
-            workAllowedByRule.merge(rule.getSourceCategory().getId(),
-                    Boolean.TRUE.equals(rule.getIsAllowed()), (a, b) -> a || b);
-            if (rule.getEffectiveCategory() != null && Boolean.TRUE.equals(rule.getIsAllowed())) {
-                // The remap target has to be able to appear on the payslip even
-                // though nobody selects it — it is where the money lands.
-                workAllowedByRule.merge(rule.getEffectiveCategory().getId(), true, (a, b) -> a || b);
+            boolean allowed = Boolean.TRUE.equals(rule.getIsAllowed());
+            Long sourceId = rule.getSourceCategory().getId();
+            Long effectiveId = rule.getEffectiveCategory() == null
+                    ? null : rule.getEffectiveCategory().getId();
+            boolean remapsElsewhere = effectiveId != null && !effectiveId.equals(sourceId);
+
+            // Union across the period on both flags: payable if any in-force rule
+            // makes it payable.
+            workAllowedByRule.merge(sourceId, allowed && !remapsElsewhere, (a, b) -> a || b);
+
+            if (allowed && effectiveId != null) {
+                // Where the money actually ends up, whether or not anyone selects it.
+                workAllowedByRule.merge(effectiveId, true, (a, b) -> a || b);
             }
         }
 
