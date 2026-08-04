@@ -93,14 +93,28 @@ public class PayrollRunItem {
     // ── Payroll minutes ─────────────────────────────────────────────────────
 
     /**
-     * Manually entered minute adjustment (positive or negative).
-     * Used to increase or decrease the calculated payroll minutes.
+     * The manual minute correction, positive or negative — DERIVED, not stored.
+     *
+     * <p>The corrections are rows in {@code payroll_time_adjustments}: one per
+     * cause, each with its reason and its own audit trail. This is their applied,
+     * unarchived sum, which is all a single integer could ever have expressed.
+     *
+     * <p>It was a column beside those rows, written from them on every save. The
+     * two never disagreed — 0 drift across 849 items — but nothing except that
+     * discipline made them agree, and a column that has to be kept in step with a
+     * table is the same double bookkeeping the meal, transport, bonus and phone
+     * mirrors were dropped to end.
+     *
+     * <p>Filled by the service, which is the layer that can read the rows, and in
+     * one batched query for lists. Zero rather than null: the screen divides it by
+     * 60, and "no correction" is 0.
      */
-    @Column(name = "manual_adjusted_minutes")
-    private Integer manualAdjustedMinutes;
+    @Transient
+    @Builder.Default
+    private Integer manualAdjustedMinutes = 0;
 
     /**
-     * total_work_minutes + manual_adjusted_minutes
+     * total_work_minutes + the applied minute corrections
      */
     @Column(name = "total_payroll_minutes")
     private Integer totalPayrollMinutes;

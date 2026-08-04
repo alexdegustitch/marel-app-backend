@@ -19,15 +19,21 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The two values on payroll_run_items that a person types rather than the
- * calculation derives now leave a trail.
+ * What a person TYPES on a payroll item leaves a trail; what the calculation
+ * derives does not.
  *
- * <p>2026-08-05-02 left this table unaudited on the grounds that "the amounts on
- * an item are all derived from the adjustments and categories that ARE audited".
- * True of the money, false of {@code manual_adjusted_minutes} and
+ * <p>2026-08-05-02 left payroll_run_items unaudited on the grounds that "the
+ * amounts on an item are all derived from the adjustments and categories that ARE
+ * audited". True of the money, false of the manual time correction and
  * {@code hourly_rate_overridden}: nobody derives those, an administrator enters
  * them, and they change what an employee is paid. Until 2026-08-26-01 they were
  * recorded nowhere.
+ *
+ * <p>THE MINUTES MOVED TABLES. manual_adjusted_minutes was dropped in
+ * 2026-09-09-01 and the correction is now rows in payroll_time_adjustments, which
+ * carry their own audit trigger — and their own reason, which the item column
+ * never had. So the assertion moved with it rather than being deleted: typing a
+ * correction must still be recorded, just where the correction now lives.
  *
  * <p>The other half of the requirement is just as important and is why the
  * trigger carries a WHEN clause rather than auditing the row: a recalculation
@@ -53,6 +59,23 @@ class PayrollItemHumanInputAuditIT extends AbstractIntegrationTest {
                 PayrollRunItemPatchRequest.class);
     }
 
+    /** Audit entries for the item's time-correction ROWS, wherever they were written. */
+    @SuppressWarnings("unchecked")
+    private List<String> timeCorrectionAuditFor(Long itemId) {
+        entityManager.flush();
+        return entityManager.createNativeQuery("""
+                SELECT l.changes::text
+                FROM audit_logs l
+                JOIN audit_tables t ON t.id = l.table_id
+                WHERE t.table_name = 'payroll_time_adjustments'
+                  AND l.record_id IN (SELECT a.id FROM payroll_time_adjustments a
+                                      WHERE a.payroll_run_item_id = :itemId)
+                ORDER BY l.id
+                """)
+                .setParameter("itemId", itemId)
+                .getResultList();
+    }
+
     @SuppressWarnings("unchecked")
     private List<String> auditEntriesFor(Long itemId) {
         entityManager.flush();
@@ -71,18 +94,25 @@ class PayrollItemHumanInputAuditIT extends AbstractIntegrationTest {
     // ── what must be recorded ───────────────────────────────────────────────
 
     @Test
-    @DisplayName("typing manual minutes is recorded, with the old and the new value")
+    @DisplayName("typing manual minutes is recorded, with the reason it was given")
     void manualMinutesAreRecorded() {
         var scenario = fixture.scenario().build();
         Long itemId = scenario.item().getId();
-        assertThat(auditEntriesFor(itemId)).isEmpty();
+        assertThat(timeCorrectionAuditFor(itemId)).isEmpty();
 
         payrollRunItemService.patch(itemId, patchWithMinutes(120));
 
-        assertThat(auditEntriesFor(itemId))
+        // On payroll_time_adjustments now, and richer for it: the item column could
+        // record that 120 minutes appeared, never why.
+        assertThat(timeCorrectionAuditFor(itemId))
                 .singleElement(org.assertj.core.api.InstanceOfAssertFactories.STRING)
-                .contains("manual_adjusted_minutes")
-                .contains("\"new\": 120");
+                .contains("minutes")
+                .contains("120")
+                .contains("Zaboravljena smena");
+
+        // And NOT on the item: it holds no correction any more, so a trail there
+        // would be about a column that no longer exists.
+        assertThat(auditEntriesFor(itemId)).isEmpty();
     }
 
     @Test
@@ -117,6 +147,7 @@ class PayrollItemHumanInputAuditIT extends AbstractIntegrationTest {
         payrollRunItemService.getForPayrollAccess(itemId);
 
         assertThat(auditEntriesFor(itemId)).isEmpty();
+        assertThat(timeCorrectionAuditFor(itemId)).isEmpty();
     }
 
     @Test
@@ -126,12 +157,15 @@ class PayrollItemHumanInputAuditIT extends AbstractIntegrationTest {
         Long itemId = scenario.item().getId();
 
         payrollRunItemService.patch(itemId, patchWithMinutes(120));
-        int afterFirst = auditEntriesFor(itemId).size();
+        int afterFirst = timeCorrectionAuditFor(itemId).size();
 
         payrollRunItemService.patch(itemId, patchWithMinutes(120));
 
-        // The trigger compares values, not the statement's column list — which is
-        // the whole reason it is a WHEN clause and not AFTER UPDATE OF.
-        assertThat(auditEntriesFor(itemId)).hasSize(afterFirst);
+        // Nothing is written when nothing changed. Re-saving used to move
+        // edited_by and edited_at, which is a row change, which is an audit entry
+        // — so re-opening a payroll and pressing save would have read as an edit
+        // to somebody's paid time.
+        assertThat(timeCorrectionAuditFor(itemId)).hasSize(afterFirst);
+        assertThat(auditEntriesFor(itemId)).isEmpty();
     }
 }

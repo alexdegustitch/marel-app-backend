@@ -55,8 +55,10 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.data.domain.PageRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
@@ -99,13 +101,50 @@ public class PayrollRunItemService {
 
     @Transactional(readOnly = true)
     public List<PayrollRunItem> findAll() {
-        return payrollRunItemRepository.findAll();
+        return withCorrections(payrollRunItemRepository.findAll());
     }
 
     @Transactional(readOnly = true)
     public PayrollRunItem findById(Long id) {
-        return payrollRunItemRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found"));
+        return withCorrection(payrollRunItemRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found")));
+    }
+
+    /**
+     * Fill the derived minute correction on an item about to leave the service.
+     *
+     * <p>manual_adjusted_minutes was a column written from payroll_time_adjustments
+     * on every save. The rows are the record — one per cause, each with its reason
+     * and its own audit trail — and the column was a second copy that only stayed
+     * right because every writer remembered to keep it right. This reads it where
+     * it lives, at the moment it is needed.
+     */
+    private PayrollRunItem withCorrection(PayrollRunItem item) {
+        if (item != null) {
+            item.setManualAdjustedMinutes(payableMinuteCorrectionFor(item.getId()));
+        }
+        return item;
+    }
+
+    /**
+     * The same for a whole list, in ONE query.
+     *
+     * <p>Per-item would be a query per row of a payroll run — the shape
+     * PayrollSchemeScopeBatchingIT exists to keep out of this class.
+     */
+    private List<PayrollRunItem> withCorrections(List<PayrollRunItem> items) {
+        if (items.isEmpty()) {
+            return items;
+        }
+        Map<Long, Integer> byItem = new HashMap<>();
+        timeAdjustmentRepository.sumPayableMinutesByItem(
+                        items.stream().map(PayrollRunItem::getId).filter(Objects::nonNull).toList())
+                .forEach(row -> byItem.put((Long) row[0], ((Number) row[1]).intValue()));
+
+        // Absent means no correction: GROUP BY returns no row for an item with
+        // none, and 0 is what "nothing was corrected" reads as on screen.
+        items.forEach(item -> item.setManualAdjustedMinutes(byItem.getOrDefault(item.getId(), 0)));
+        return items;
     }
 
     @Transactional(readOnly = true)
@@ -182,6 +221,13 @@ public class PayrollRunItemService {
 
     @Transactional
     public PayrollRunItem getForPayrollAccess(Long id) {
+        // Wrapped rather than filled at each of the four exits below — one of them
+        // is easy to add and forget, and then one screen shows the correction and
+        // another shows nothing.
+        return withCorrection(loadForPayrollAccess(id));
+    }
+
+    private PayrollRunItem loadForPayrollAccess(Long id) {
         PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
 
@@ -240,9 +286,9 @@ public class PayrollRunItemService {
             return items;
         }
         ScopeSource scopes = scopeSourceFor(items);
-        return items.stream()
+        return withCorrections(items.stream()
                 .map(item -> STATUS_LOCKED.equals(item.getStatus()) ? item : refreshIfStale(item, scopes))
-                .toList();
+                .toList());
     }
 
     /**
@@ -1462,7 +1508,7 @@ public class PayrollRunItemService {
         // means two corrections with different causes add up correctly, and one
         // can be withdrawn without anybody recomputing the other by hand.
         int minuteCorrection = payableMinuteCorrectionFor(item.getId());
-        item.setManualAdjustedMinutes(minuteCorrection);   // mirror, dropped in phase 7
+        item.setManualAdjustedMinutes(minuteCorrection);   // derived; not persisted
         item.setTotalPayrollMinutes(safe(mr.getTotalWorkMinutes()) + minuteCorrection);
 
         // ── Meal allowance count + recalc total ───────────────────────────────
@@ -1952,6 +1998,9 @@ public class PayrollRunItemService {
                 existing.setEditedAt(OffsetDateTime.now());
                 timeAdjustmentRepository.save(existing);
             }
+            // The in-flight object, so this request's own response is right. It is
+            // not persisted — the archived row above is what says there is no
+            // correction any more.
             item.setManualAdjustedMinutes(0);
             return;
         }
@@ -1985,7 +2034,10 @@ public class PayrollRunItemService {
                     .isApplied(true)
                     .createdBy(currentUserService.getCurrentUserId())
                     .build());
-        } else {
+        } else if (changed
+                || !java.util.Objects.equals(effectiveReason, existing.getReason())
+                || !Boolean.TRUE.equals(existing.getIsApplied())
+                || existing.getArchivedAt() != null) {
             existing.setMinutes(minutes);
             existing.setReason(effectiveReason);
             existing.setHasManualInput(true);
@@ -1995,6 +2047,12 @@ public class PayrollRunItemService {
             existing.setEditedAt(OffsetDateTime.now());
             timeAdjustmentRepository.save(existing);
         }
+        // ELSE: THE SAME CORRECTION, SENT AGAIN — nothing is written.
+        //
+        // Saving anyway would still move edited_by and edited_at, so the row would
+        // change and its audit trigger would record an entry. Re-opening a payroll
+        // and pressing save would then read as an edit to somebody's paid time.
+        // The trail is for decisions, and re-confirming is not one.
         item.setManualAdjustedMinutes(minutes);
     }
 
@@ -2015,7 +2073,6 @@ public class PayrollRunItemService {
         if (item.getTotalPaidDays() == null)            item.setTotalPaidDays(0);
         if (item.getTotalAbsenceDays() == null)         item.setTotalAbsenceDays(0);
 
-        if (item.getManualAdjustedMinutes() == null)   item.setManualAdjustedMinutes(0);
         if (item.getTotalPayrollMinutes() == null)      item.setTotalPayrollMinutes(0);
 
         if (item.getStatus() == null)                   item.setStatus(STATUS_DRAFT);

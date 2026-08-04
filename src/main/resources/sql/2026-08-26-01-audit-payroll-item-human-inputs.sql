@@ -44,16 +44,40 @@ INSERT INTO audit_tables (table_name)
 SELECT 'payroll_run_items'
 WHERE NOT EXISTS (SELECT 1 FROM audit_tables WHERE table_name = 'payroll_run_items');
 
-DROP TRIGGER IF EXISTS trg_audit_logs_payroll_run_items_human_input ON payroll_run_items;
-CREATE TRIGGER trg_audit_logs_payroll_run_items_human_input
-    AFTER UPDATE ON payroll_run_items
-    FOR EACH ROW
-    WHEN (OLD.manual_adjusted_minutes IS DISTINCT FROM NEW.manual_adjusted_minutes
-       OR OLD.hourly_rate_overridden   IS DISTINCT FROM NEW.hourly_rate_overridden)
-    EXECUTE FUNCTION audit_trigger_fn();
+-- BUILT AS DYNAMIC SQL because a later migration takes one of these columns away.
+-- 2026-09-09-01 moves the time correction into payroll_time_adjustments and drops
+-- manual_adjusted_minutes, and a WHEN clause naming a dropped column fails at
+-- execution — which would make THIS file unrunnable, and re-running is the only
+-- recovery path this project has. On a database that has been through 09-09 the
+-- trigger is created watching the rate alone, which is exactly what 09-09 leaves
+-- behind; on one that has not, both columns are watched as before.
+DO $$
+DECLARE
+    v_has_minutes BOOLEAN;
+    v_when        TEXT;
+    v_comment     TEXT;
+BEGIN
+    SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'payroll_run_items'
+                     AND column_name = 'manual_adjusted_minutes')
+    INTO v_has_minutes;
 
-COMMENT ON TRIGGER trg_audit_logs_payroll_run_items_human_input ON payroll_run_items IS
-    'PARTIAL audit. Fires only when manual_adjusted_minutes or hourly_rate_overridden actually change — the two values on this table a person enters rather than the calculation derives. Everything else on the item is recalculated constantly and is auditable through payroll_adjustments. Do not read the payroll_run_items row in audit_tables as full coverage.';
+    IF v_has_minutes THEN
+        v_when := 'OLD.manual_adjusted_minutes IS DISTINCT FROM NEW.manual_adjusted_minutes '
+               || 'OR OLD.hourly_rate_overridden IS DISTINCT FROM NEW.hourly_rate_overridden';
+        v_comment := 'PARTIAL audit. Fires only when manual_adjusted_minutes or hourly_rate_overridden actually change — the two values on this table a person enters rather than the calculation derives. Everything else on the item is recalculated constantly and is auditable through payroll_adjustments. Do not read the payroll_run_items row in audit_tables as full coverage.';
+    ELSE
+        v_when := 'OLD.hourly_rate_overridden IS DISTINCT FROM NEW.hourly_rate_overridden';
+        v_comment := 'PARTIAL audit. Fires only when hourly_rate_overridden actually changes — the one value left on this table that a person enters rather than the calculation derives. The manual time correction moved to payroll_time_adjustments, which is audited on its own table. Do not read the payroll_run_items row in audit_tables as full coverage.';
+    END IF;
+
+    EXECUTE 'DROP TRIGGER IF EXISTS trg_audit_logs_payroll_run_items_human_input ON payroll_run_items';
+    EXECUTE 'CREATE TRIGGER trg_audit_logs_payroll_run_items_human_input '
+         || 'AFTER UPDATE ON payroll_run_items FOR EACH ROW WHEN (' || v_when || ') '
+         || 'EXECUTE FUNCTION audit_trigger_fn()';
+    EXECUTE 'COMMENT ON TRIGGER trg_audit_logs_payroll_run_items_human_input ON payroll_run_items IS '
+         || quote_literal(v_comment);
+END $$;
 
 -- No INSERT trigger: an insert here is the run initialising an item with
 -- defaults, which is not a decision anybody made. No DELETE trigger: items are
@@ -64,7 +88,16 @@ DECLARE
     v_manual INTEGER;
     v_rate   INTEGER;
 BEGIN
-    SELECT count(*) INTO v_manual FROM payroll_run_items WHERE manual_adjusted_minutes <> 0;
+    -- Same reason as above: the column may be gone by the time this is re-run.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'payroll_run_items' AND column_name = 'manual_adjusted_minutes') THEN
+        EXECUTE 'SELECT count(*) FROM payroll_run_items WHERE manual_adjusted_minutes <> 0'
+            INTO v_manual;
+    ELSE
+        SELECT count(DISTINCT t.payroll_run_item_id) INTO v_manual
+        FROM payroll_time_adjustments t
+        WHERE t.is_applied AND t.archived_at IS NULL AND t.minutes <> 0;
+    END IF;
     SELECT count(*) INTO v_rate   FROM payroll_run_items WHERE hourly_rate_overridden;
 
     RAISE NOTICE 'Partial audit live on payroll_run_items. % item(s) already carry manual minutes and % an overridden rate; those PAST decisions have no trail and cannot get one — the trigger records changes from now on.',

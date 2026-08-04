@@ -295,7 +295,6 @@ public class PayrollRunInitializationTxService {
         item.setTotalPaidDays(0);
         item.setTotalAbsenceDays(0);
 
-        item.setManualAdjustedMinutes(0);
         item.setTotalPayrollMinutes(0);
 
         item.setTotalNetEarnings(BigDecimal.ZERO);
