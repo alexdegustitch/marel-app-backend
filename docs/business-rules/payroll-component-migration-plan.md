@@ -1063,7 +1063,10 @@ Changed expectations, deliberately, both in test 1 and test 12:
 employee's own rate, and the fixture employee has none.
 
 Still owed: `required_manual_input` behaviour (columns and status values exist,
-the lock-time validation does not), and the backfill-SQL test from Phase 2.
+the lock-time validation does not). ~~The backfill-SQL test from Phase 2~~ —
+`PayrollValueBackfillIT`: seeds a known rate sequence, re-runs the real migration
+file through psql, and reads the period boundaries back. Covers the collapse, a
+rate that returns to an earlier value, a missing month, and re-running.
 
 ### Phase 4 ✅
 - 16 the legacy columns still mirror the adjustment rows exactly — this IS the
@@ -1138,7 +1141,26 @@ TWO CHECKS FROM THE SPEC ARE DELIBERATELY ABSENT:
   can fill, so the check cannot be made honest. A report whose first run shows 33
   blockers on a correct configuration teaches its reader to close it.
 
-Still owed: the category/scheme activation gates.
+~~Still owed: the category/scheme activation gates.~~ — built, and they REFUSE
+rather than warn. R6 left that choice open; made on 2026-08-04. A missing rule is
+not "no restriction", so an active category with a gap stops the payroll of every
+employee on the scheme that lacks it; warning would mean finding that out on a
+Friday under an employee's name. Both messages name what is missing.
+
+The two halves live in different places, and that is not an inconsistency:
+categories are created and activated through the application, so the guard is in
+`PayrollAdjustmentCategoryService`; schemes are data only — the controller is
+read-only and `NewCompensationSchemeIsDataOnlyIT` keeps it that way — so a rule
+about activating one lives where activation happens, in
+`2026-09-11-01-a-scheme-cannot-be-activated-with-a-gap.sql`.
+
+A new category now defaults to INACTIVE. It defaulted to active, which meant
+every new category shipped with a gap for every scheme.
+
+Only the TRANSITION into active is checked, both sides: an already-active scheme
+or category whose matrix predates this rule must not become impossible to edit.
+The already-active ones are reported, not deactivated — see
+`PayrollConfigurationValidationService`.
 
 ### Phase 6 ✅ (backend)
 `PayrollGoldenSnapshotIT` 18–18g

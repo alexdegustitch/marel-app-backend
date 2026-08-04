@@ -80,6 +80,26 @@ public abstract class AbstractIntegrationTest {
         }
     }
 
+    /**
+     * Re-run ONE migration script against the data a test has just seeded.
+     *
+     * <p>For the migrations whose whole job is to transform existing rows. Their
+     * own {@code DO $$} verification blocks check whatever they find in the
+     * database they run against — which on a virgin test schema is nothing — so
+     * they can only be tested by giving them a known input and reading the output.
+     *
+     * <p>Runs through psql on its own connection, so the seeded rows must be
+     * COMMITTED: a test using this cannot be {@code @Transactional} and has to
+     * clean up after itself.
+     */
+    protected static void runMigrationScript(String fileName) {
+        try {
+            copyAndRun(Path.of("src/main/resources/sql", fileName), "rerun-" + fileName);
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to re-run " + fileName, ex);
+        }
+    }
+
     private static void copyAndRun(Path hostPath, String name) throws Exception {
         String target = "/tmp/" + name;
         POSTGRES.copyFileToContainer(MountableFile.forHostPath(hostPath), target);
