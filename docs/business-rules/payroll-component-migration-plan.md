@@ -1076,8 +1076,22 @@ the lock-time validation does not), and the backfill-SQL test from Phase 2.
 - `sectionCodeRoutesMoneyNotImpactCode` unchanged and still green — 102 420,00 /
   52 700,00 / 23 500,00 / 49 720,00 — which is the proof the switch moved no money
 
-Still owed: audit reconstruction test (who changed what, from which value to
-which, and why), which needs the reason field from Phase 6.
+~~Still owed: audit reconstruction test~~ — `PayrollAuditReconstructionIT`, once
+the reason fields existed (Phase 6 for lines, 2026-08-27-01 for time). It asks
+the business question rather than naming a column, so it survives a decision
+moving tables — which three of them since have.
+
+It also PINS A DEFECT it found rather than asserting it away:
+`trg_audit_logs_payroll_adjustments` has no WHEN clause, so every recalculation
+writes a full-row diff per line. 20 954 of 33 472 update entries in the
+development database touch nothing but `system_*`, `calculated_at` and
+`calculation_inputs`, against roughly thirty real decisions — and a read of a
+stale item is a write, so the count grows whenever anybody opens a payroll. A
+WHEN clause cannot fix it, for the reason 2026-09-03-01 gives about activity: a
+patch and the recalculation it triggers land in the same UPDATE, so a clause
+narrow enough to drop the churn drops the decision with it. The fix is the one
+that worked for activity — record decisions at the caller and stop auditing the
+row — and it is not done.
 
 ### Phase 5 ✅
 `PayrollSchemeScopeIT` — rewritten, as the plan required rather than deleted:
