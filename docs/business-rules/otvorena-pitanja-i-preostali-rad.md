@@ -135,15 +135,22 @@ meseca** — tako je 560 stavki dobilo lažnu „aktivnost".
 **Na 2 — bilo je bolje nego što je izgledalo, ali ne dovoljno dobro.** Kod nikad
 nije čitao `now()`; čitao je **prvi** dan meseca. Sada:
 
-| Cena | Kada se čita | Zašto |
+| Vrednost | Kada se čita | Zašto |
 |---|---|---|
-| prevoz po danu | **poslednji** dan meseca | pravilo klijenta |
-| topli obrok | **prvi** dan meseca | ranije pribijeno pravilo, klijent nije pitan |
+| prevoz po danu (firmina cena) | **poslednji** dan meseca | pravilo klijenta |
+| topli obrok (firmina cena) | **poslednji** dan meseca | pravilo klijenta (potvrđeno posebno) |
+| satnica, fiksni prevoz, prava — **vrednosti radnika** | **prvi** dan meseca | nije menjano; niko nije pitan |
 
-Namerno se razlikuju. Klijent je odgovorio o prevozu; da sam to preneo i na topli
-obrok, oborio bih pravilo koje niko nije doveo u pitanje — što je zlatni test i
-uhvatio. **Otvoreno: da li i topli obrok da prati prevoz?** Jedna linija u oba
-smera, i danas ne pomera ni dinar (obe cene imaju tačno po jedan period ikada).
+**Ovo je oborilo ranije pravilo, namerno i po nalogu.** Topli obrok je bio
+pribijen na prvi dan meseca — „mesec se cenovno određuje onim što je važilo kad
+je počeo" — i zlatni test „12c" je to čuvao. Test je **prepisan, ne obrisan**, pa
+je obaranje na zapisniku umesto da izgleda kao pravilo koje nikad nije postojalo.
+
+Vrednosti **radnika** ostaju na prvom danu meseca: kad povišica data 15-og stupa
+na snagu je zasebno pitanje sa novcem, i nije postavljeno. Firmina cena i nečiji
+lični uslovi nisu ista stvar — to čuva test „12c2".
+
+Danas ne pomera ni dinar: obe cene imaju tačno po jedan period ikada.
 
 **Na 3 — urađeno**, migracija
 [`2026-09-10-01`](../../src/main/resources/sql/2026-09-10-01-transport-per-day-is-dated-per-employee.sql):

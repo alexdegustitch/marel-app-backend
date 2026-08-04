@@ -1151,34 +1151,30 @@ public class PayrollRunItemService {
                 : employeePayrollValueService.trueFlagsOn(List.of(employeeId), pricingDate)
                         .getOrDefault(employeeId, java.util.Set.of());
 
-        // THE TWO COMPANY PRICES ARE READ ON DIFFERENT DAYS, and that is not an
-        // oversight.
+        // BOTH COMPANY PRICES ARE READ AT THE MONTH'S LAST DAY.
         //
-        //   transport — the month's LAST day. Client's rule, given in answer to
-        //               OPEN-15: "the per-day transport value for the last day of
-        //               the month and year of the payroll being calculated". A
-        //               price raised mid-month applies to that whole month.
+        // Client's rule, given for transport in answer to OPEN-15 and then for meal
+        // in the same words: "the value on the last day of the month and year of
+        // the payroll being calculated". A price raised mid-month applies to that
+        // whole month.
         //
-        //   meal      — the month's FIRST day, unchanged. The opposite rule, and
-        //               it was pinned deliberately: "a payroll month is priced by
-        //               what was true when it started". The client answered about
-        //               transport, so only transport moved. Extending it to meal
-        //               would have reversed a stated rule nobody asked about —
-        //               which is precisely what the golden test caught.
+        // THIS REVERSED AN EARLIER RULE, deliberately and on instruction. Meal was
+        // pinned at the month's FIRST day — "a payroll month is priced by what was
+        // true when it started" — and the golden test that said so has been
+        // rewritten rather than deleted, so the reversal is on the record instead
+        // of looking like a rule that never existed.
         //
-        // OUTSTANDING: whether meal should follow transport. One line either way,
-        // and no money moves today — both settings have exactly one period ever.
-        //
-        // The EMPLOYEE's own values above stay at the month's start too: when an
-        // employee's own rate change takes effect is a separate question with money
-        // attached, and it has not been asked.
-        LocalDate transportPriceDate = mr.getEndDate() != null ? mr.getEndDate() : pricingDate;
+        // THE EMPLOYEE'S OWN VALUES STAY AT THE MONTH'S START. Their rate, their
+        // fixed transport, their entitlements: when a change to one of those takes
+        // effect is a separate question with money attached, and it has not been
+        // asked. A company price and a person's own terms are not the same thing.
+        LocalDate priceDate = mr.getEndDate() != null ? mr.getEndDate() : pricingDate;
 
         Map<String, BigDecimal> settings = new java.util.HashMap<>();
         settings.put(MealAllowanceCalculator.SETTING_MEAL_PER_DAY,
-                appSettingService.getMealAllowancePerDayOn(pricingDate));
+                appSettingService.getMealAllowancePerDayOn(priceDate));
         settings.put(TransportAllowanceCalculator.SETTING_TRANSPORT_PER_DAY,
-                appSettingService.getTransportAllowancePerDayOn(transportPriceDate));
+                appSettingService.getTransportAllowancePerDayOn(priceDate));
 
         return new ComponentContext(item, mr, mr.getStartDate(), mr.getEndDate(),
                 employeeValues, settings, employeeFlags);

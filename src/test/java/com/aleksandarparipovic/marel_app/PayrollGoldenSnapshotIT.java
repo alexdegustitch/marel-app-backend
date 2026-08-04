@@ -971,11 +971,9 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // raised mid-month applies to that whole month.
         assertThat(lineSystemUnit(item, "TRANSPORT_ALLOWANCE")).isEqualByComparingTo("500.00");
 
-        // AND MEAL IS DELIBERATELY THE OPPOSITE, still priced at the month's start
-        // — see aMidMonthRiseAppliesFromTheNextMonth. The client answered about
-        // transport; extending it to meal would have reversed a stated rule nobody
-        // asked about. Whether it should follow is an open question, and this
-        // assertion is what makes the difference visible rather than accidental.
+        // Meal follows the same rule — the client confirmed it in the same words.
+        // Untouched here, so it stays at the fixture's 300 all month; 12c is where
+        // both are raised mid-month together.
         assertThat(lineSystemUnit(item, "MEAL_ALLOWANCE")).isEqualByComparingTo("300.00");
     }
 
@@ -1213,19 +1211,57 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("12c. a rate that starts mid-month does not reprice that month")
-    void aMidMonthRiseAppliesFromTheNextMonth() {
+    @DisplayName("12c. a rate that starts mid-month prices that WHOLE month")
+    void aMidMonthRiseAppliesToTheWholeMonth() {
+        // THIS TEST USED TO SAY THE OPPOSITE, and is rewritten rather than deleted
+        // so the reversal is on the record.
+        //
+        // It read: "a payroll month is priced by what was true when it started",
+        // and the company prices were taken at the month's FIRST day. The client
+        // answered otherwise on 2026-08-04 — first for transport, in answer to
+        // OPEN-15, then in the same words for meal: the value on the LAST day of
+        // the month being calculated. A price raised mid-month applies to that
+        // whole month.
+        //
+        // It moves no money today: both settings have exactly one period ever.
+        // This is what happens the first time somebody reprices mid-month.
         var scenario = fixture.scenario().period(YearMonth.of(2026, 7)).build();
 
-        // In force from 15 July: not yet true on 1 July, so July keeps 300.
         fixture.appSetting("meal_allowance_per_day", new BigDecimal("500.00"),
                 OffsetDateTime.of(2026, 7, 15, 0, 0, 0, 0, ZoneOffset.UTC), null);
+        fixture.appSetting("transport_allowance_per_day", new BigDecimal("900.00"),
+                OffsetDateTime.of(2026, 7, 15, 0, 0, 0, 0, ZoneOffset.UTC), null);
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 7, 3), 6, 480, 450);
 
         PayrollRunItem item = calculate(scenario);
 
+        // Both, and by the same rule — they were briefly split, and a company price
+        // and a company price should not need two rules between them.
         assertThat(lineSystemUnit(item, "MEAL_ALLOWANCE"))
-                .as("a payroll month is priced by what was true when it started")
-                .isEqualByComparingTo("300.00");
+                .as("in force on 31 July, so July is priced at 500")
+                .isEqualByComparingTo("500.00");
+        assertThat(lineSystemUnit(item, "TRANSPORT_ALLOWANCE"))
+                .isEqualByComparingTo("900.00");
+    }
+
+    @Test
+    @DisplayName("12c2. the EMPLOYEE'S own terms still change from the month they start")
+    void anEmployeeValueStillTakesEffectFromItsOwnMonth() {
+        // The company price moved to the month's end; a person's own terms did not,
+        // and the difference is deliberate. When a raise given on the 15th takes
+        // effect is a separate question with money attached, and nobody has asked
+        // it — so it keeps answering the way it always has.
+        var scenario = fixture.scenario().period(YearMonth.of(2026, 7)).build();
+
+        valueService.changeValue(scenario.employee().getId(),
+                EmployeePayrollValueCodes.TRANSPORT_FIXED_MONTHLY,
+                new BigDecimal("8000.00"), LocalDate.of(2026, 7, 15), null, null);
+
+        PayrollRunItem item = calculate(scenario);
+
+        assertThat(lineAmount(item, "TRANSPORT_ALLOWANCE"))
+                .as("in force from 15 July, so July is not yet on the fixed mode")
+                .isEqualByComparingTo("0.00");
     }
 
     @Test

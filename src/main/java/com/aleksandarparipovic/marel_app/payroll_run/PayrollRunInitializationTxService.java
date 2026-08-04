@@ -1,6 +1,5 @@
 package com.aleksandarparipovic.marel_app.payroll_run;
 
-import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
 import com.aleksandarparipovic.marel_app.employee_record.repository.EmployeeRecordRepository;
@@ -44,7 +43,6 @@ public class PayrollRunInitializationTxService {
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
     private final PayrollAdjustmentRepository payrollAdjustmentRepository;
-    private final AppSettingService appSettingService;
 
     @Transactional
     public void createMonthlyReports(List<Long> employeeRecordIds, int year, int month) {
@@ -266,11 +264,10 @@ public class PayrollRunInitializationTxService {
     }
 
     private PayrollRunItem buildPayrollRunItem(PayrollRun payrollRun, MonthlyReport mr) {
-        // The rate that applied when the payroll month began, not the rate today.
-        // Initialising a past month must not stamp it with the current price.
-        LocalDate pricingDate = mr.getStartDate();
-        BigDecimal mealRate = appSettingService.getMealAllowancePerDayOn(pricingDate);
-        BigDecimal transportRate = appSettingService.getTransportAllowancePerDayOn(pricingDate);
+        // No price is read here any more. The meal and transport rates were
+        // stamped onto the item's mirror columns at initialisation; the columns are
+        // gone and the calculation reads both prices for itself, at the month's
+        // last day. These two lookups outlived the columns they fed.
 
         PayrollRunItem item = new PayrollRunItem();
         item.setPayrollRun(payrollRun);
