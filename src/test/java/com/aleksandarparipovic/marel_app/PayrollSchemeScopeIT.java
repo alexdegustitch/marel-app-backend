@@ -14,6 +14,7 @@ import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdju
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategorySchemeRule;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategorySchemeRuleRepository;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
+import com.aleksandarparipovic.marel_app.work_category_resolution.IncompletePayrollConfigurationException;
 import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScope;
 import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * What a compensation scheme allows across a payroll PERIOD, as opposed to on a
@@ -52,6 +54,7 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
     @Autowired private WorkCodeCategorySchemeRuleRepository workRuleRepository;
     @Autowired private EmployeeRepository employeeRepository;
     @Autowired private DepartmentRepository departmentRepository;
+    @Autowired private com.aleksandarparipovic.marel_app.support.PayrollScenarioFixture fixture;
 
     private static final AtomicInteger COUNTER = new AtomicInteger();
     private static final LocalDate PERIOD_START = LocalDate.of(2026, 9, 1);
@@ -94,17 +97,16 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
         c.setVisibleInPdf(true);
         c.setShowName(true);
         c.setCreatedAt(OffsetDateTime.now());
-        return adjustmentCategoryRepository.saveAndFlush(c);
+        PayrollAdjustmentCategory saved = adjustmentCategoryRepository.saveAndFlush(c);
+        // D6: a new category is not usable until every active scheme has a rule for
+        // it. That is the lifecycle the application must enforce, so a test that
+        // invents a category has to satisfy it too.
+        fixture.completeSchemeMatrix();
+        return saved;
     }
 
     private void deny(String schemeCode, PayrollAdjustmentCategory category) {
-        adjustmentRuleRepository.saveAndFlush(PayrollAdjustmentCategorySchemeRule.builder()
-                .compensationScheme(schemeRepository.findByCode(schemeCode).orElseThrow())
-                .payrollAdjustmentCategory(category)
-                .isAllowed(false)
-                .validFrom(LocalDate.of(2026, 8, 1))
-                .isActive(true)
-                .build());
+        fixture.deny(schemeCode, category);
     }
 
     /** A source category that remaps onto {@code target} under the restricted scheme. */
@@ -136,15 +138,39 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
     // ── the two opposite defaults ───────────────────────────────────────────
 
     @Test
-    @DisplayName("an adjustment category with no rule is ALLOWED, even under the restricted scheme")
-    void adjustmentCategoriesAreOpenByDefault() {
+    @DisplayName("an adjustment category with NO rule is a configuration error, not a default")
+    void adjustmentCategoryWithoutARuleIsAnError() {
         Employee employee = anEmployee();
         period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT, LocalDate.of(2020, 1, 1), null);
-        PayrollAdjustmentCategory fresh = adjustmentCategory();
 
-        // The opposite default from work categories, on purpose: a payslip line
-        // that silently disappears is much harder to notice than an extra one.
-        assertThat(scopeOf(employee).allowsAdjustmentCategory(fresh.getId())).isTrue();
+        int n = COUNTER.incrementAndGet();
+        PayrollAdjustmentCategory orphan = new PayrollAdjustmentCategory();
+        orphan.setCode("IT-ORPHAN-" + n);
+        orphan.setName("Bez pravila " + n);
+        orphan.setSectionCode("ADDITIONS");
+        orphan.setSectionOrder(0);
+        orphan.setSortOrder(0);
+        orphan.setImpactCode("GROSS_PLUS");
+        orphan.setIsManual(true);
+        orphan.setAllowOverride(false);
+        orphan.setOverrideTarget("AMOUNT");
+        orphan.setAllowNegative(false);
+        orphan.setIsActive(true);
+        orphan.setVisibleInUi(true);
+        orphan.setVisibleInPdf(true);
+        orphan.setShowName(true);
+        orphan.setCreatedAt(OffsetDateTime.now());
+        adjustmentCategoryRepository.saveAndFlush(orphan);
+        // Deliberately NOT completing the matrix.
+
+        // THIS REVERSES THE OLD DEFAULT (D6). A missing rule used to mean ALLOW,
+        // chosen because a line that silently disappears is harder to notice than
+        // an extra one. Both defaults hide the same thing though: that nobody ever
+        // decided. Now the calculation refuses to guess and says which line it
+        // cannot answer for.
+        assertThatThrownBy(() -> scopeOf(employee))
+                .isInstanceOf(IncompletePayrollConfigurationException.class)
+                .hasMessageContaining(orphan.getCode());
     }
 
     @Test
@@ -285,39 +311,38 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
     // ── mid-month scheme change ─────────────────────────────────────────────
 
     @Test
-    @DisplayName("a mid-month scheme change unions both schemes, so recorded work keeps a payroll row")
-    void midMonthChangeUnionsBothSchemes() {
+    @DisplayName("two schemes in one payroll month is an error, not a union")
+    void twoSchemesInOneMonthIsAnError() {
         Employee employee = anEmployee();
         period(employee, CompensationSchemeCodes.STANDARD,
                 LocalDate.of(2020, 1, 1), LocalDate.of(2026, 9, 14));
         period(employee, CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT,
                 LocalDate.of(2026, 9, 15), null);
 
-        int n = COUNTER.incrementAndGet();
-        WorkCodeCategory standardOnly = categoryRepository.saveAndFlush(WorkCodeCategory.builder()
-                .categoryNo("IT-MID-" + n).categoryName("Samo standard " + n).type("WORK")
-                .isPaid(true).normMultiplier(1.1d).isActive(true).fixedHourlyRate(false)
-                .affectsMealAllowance(true).allowsParallelWork(false).displayOrder(0)
-                .baseCategory(false).build());
-
-        PayrollSchemeScope scope = scopeOf(employee);
-
-        // Allowed under STANDARD for the first half of the month. Excluding it
-        // would leave minutes already recorded against it with nowhere to land.
-        assertThat(scope.allowsWorkCategory(standardOnly.getId()))
-                .as("union, not intersection: being too generous shows a zero row, being too strict loses money")
-                .isTrue();
-
-        // The bonus follows the same union rule.
-        assertThat(scope.allowsPerformanceBonus()).isTrue();
+        // D1: a scheme change now takes effect on the first day of the FOLLOWING
+        // month, so this pair cannot be created through the application at all. One
+        // that predates the rule needs a person to look at it, not an average.
+        //
+        // The union this replaces was not merely redundant, it leaked: a restricted
+        // employee inherited every permission of the scheme they had left, for the
+        // whole month, in both directions.
+        assertThatThrownBy(() -> scopeOf(employee))
+                .isInstanceOf(IncompletePayrollConfigurationException.class)
+                .hasMessageContaining("tačno jedan");
     }
 
     @Test
-    @DisplayName("an employee with no scheme period at all yields no scope, which callers read as unrestricted")
-    void noSchemeYieldsNoScope() {
+    @DisplayName("an employee with no scheme period at all is an error, not 'unrestricted'")
+    void noSchemeIsAnError() {
         Employee employee = anEmployee();
 
-        assertThat(scopeService.scopeFor(employee.getId(), PERIOD_START, PERIOD_END)).isNull();
+        // It used to return null, and every caller read null as "no restriction
+        // known" and fell back to the full list — the quietest possible way to pay
+        // somebody under a policy nobody chose. Production has no such employees
+        // (diagnostic Q4), so making it loud costs nothing and closes the hole.
+        assertThatThrownBy(() -> scopeService.scopeFor(employee.getId(), PERIOD_START, PERIOD_END))
+                .isInstanceOf(IncompletePayrollConfigurationException.class)
+                .hasMessageContaining("nema način obračuna");
     }
 
     @Test

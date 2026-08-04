@@ -38,6 +38,16 @@ public interface PayrollRunItemCategoryRepository extends JpaRepository<PayrollR
 
     void deleteAllByPayrollRunItemId(Long payrollRunItemId);
 
+    /**
+     * @deprecated Retroactive repricing — do not use. Writing a rate onto items
+     * this way overwrites months the rate was never in force for, which is the
+     * defect employee_payroll_value_history exists to close. Record the rate with
+     * {@code EmployeePayrollValueService.setValue} and call
+     * {@link #markNeedsRecalculationByEmployeeId} instead: each item then
+     * re-resolves the rate for ITS OWN month. Kept only so an existing caller
+     * outside this repository is not silently removed.
+     */
+    @Deprecated
     @Modifying
     @Query("""
         UPDATE PayrollRunItemCategory c

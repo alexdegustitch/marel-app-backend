@@ -24,6 +24,17 @@ public class EmployeePatchRequest {
     private String notes;
     private String mobilePhone;
     private BigDecimal hourlyRate;
+    /**
+     * The date the new hourly rate starts to apply. Optional; when absent the
+     * rate applies from the FIRST OF THE CURRENT MONTH.
+     *
+     * <p>That default is not arbitrary. Payroll prices a month at its start date,
+     * so a rate recorded from mid-month would not reach the month being
+     * calculated and the correction would appear to do nothing until the next
+     * one. Supplying the field explicitly is how a genuinely older start —
+     * "this was actually their rate from January 2025" — is recorded.
+     */
+    private LocalDate hourlyRateEffectiveFrom;
     private Long defaultWorkCategoryId;
     private Boolean worksInCommercial;
     /**

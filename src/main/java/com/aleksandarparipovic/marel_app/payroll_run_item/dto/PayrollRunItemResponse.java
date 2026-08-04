@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.payroll_run_item.dto;
 
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -29,6 +30,21 @@ public class PayrollRunItemResponse {
     private final BigDecimal totalEffectiveMinutes;
     private final BigDecimal performanceRate;
     private final BigDecimal approvedPerformanceRate;
+
+    /**
+     * The efficiency ceiling this month was measured against — max_efficiency_percent
+     * as it stood on the LAST DAY of the period.
+     *
+     * <p>Sent so the screen does not have to guess. The monthly efficiency bar had
+     * 120 % written into it, which was neither the configured limit nor tied to the
+     * month being shown: a factory that raised the ceiling saw the same scale, and
+     * an old month was drawn against today's number.
+     *
+     * <p>Not final and set after construction, because it comes from app_settings
+     * rather than from the item, and a DTO has no business reaching for a service.
+     */
+    @Setter
+    private BigDecimal maxEfficiencyPercent;
     private final BigDecimal performanceCoefficient;
     private final Integer totalWorkDays;
     private final Integer totalPaidDays;
@@ -39,25 +55,14 @@ public class PayrollRunItemResponse {
     private final Integer totalPayrollMinutes;
 
     // ── Rate & base pay ──────────────────────────────────────────────────────
-    private final BigDecimal adjustmentAmount;
     private final BigDecimal totalNetEarnings;
     private final BigDecimal hourlyRate;
     private final BigDecimal hourlyRateSystem;
     private final Boolean hourlyRateOverridden;
 
     // ── Meal allowance ───────────────────────────────────────────────────────
-    private final Integer mealAllowanceCount;
-    private final BigDecimal mealAllowanceUnitAmountSystem;
-    private final BigDecimal mealAllowanceUnitAmount;
-    private final Boolean mealAllowanceUnitAmountOverridden;
-    private final BigDecimal totalMealAllowanceAmount;
 
     // ── Transport allowance ──────────────────────────────────────────────────
-    private final Integer transportAllowanceDays;
-    private final BigDecimal transportAllowanceUnitAmount;
-    private final BigDecimal totalTransportAllowanceAmountSystem;
-    private final BigDecimal totalTransportAllowanceAmount;
-    private final Boolean totalTransportAllowanceAmountOverridden;
 
     // ── Bonus components ─────────────────────────────────────────────────────
     private final BigDecimal baseBonusAmountSystem;
@@ -89,7 +94,6 @@ public class PayrollRunItemResponse {
     private final OffsetDateTime archivedAt;
     private final Integer basedOnVersion;
     private final Boolean needsRecalculation;
-    private final LocalDateTime lastCalculatedAt;
     private final OffsetDateTime lockedAt;
     private final Long lockedBy;
 
@@ -120,23 +124,12 @@ public class PayrollRunItemResponse {
         this.manualAdjustedMinutes = item.getManualAdjustedMinutes();
         this.totalPayrollMinutes = item.getTotalPayrollMinutes();
 
-        this.adjustmentAmount = item.getAdjustmentAmount();
         this.totalNetEarnings = item.getTotalNetEarnings();
         this.hourlyRate = item.getHourlyRate();
         this.hourlyRateSystem = item.getHourlyRateSystem();
         this.hourlyRateOverridden = item.getHourlyRateOverridden();
 
-        this.mealAllowanceCount = item.getMealAllowanceCount();
-        this.mealAllowanceUnitAmountSystem = item.getMealAllowanceUnitAmountSystem();
-        this.mealAllowanceUnitAmount = item.getMealAllowanceUnitAmount();
-        this.mealAllowanceUnitAmountOverridden = item.getMealAllowanceUnitAmountOverridden();
-        this.totalMealAllowanceAmount = item.getTotalMealAllowanceAmount();
 
-        this.transportAllowanceDays = item.getTransportAllowanceDays();
-        this.transportAllowanceUnitAmount = item.getTransportAllowanceUnitAmount();
-        this.totalTransportAllowanceAmountSystem = item.getTotalTransportAllowanceAmountSystem();
-        this.totalTransportAllowanceAmount = item.getTotalTransportAllowanceAmount();
-        this.totalTransportAllowanceAmountOverridden = item.getTotalTransportAllowanceAmountOverridden();
 
         this.baseBonusAmountSystem = item.getBaseBonusAmountSystem();
         this.baseBonusAmount = item.getBaseBonusAmount();
@@ -165,7 +158,6 @@ public class PayrollRunItemResponse {
         this.archivedAt = item.getArchivedAt();
         this.basedOnVersion = item.getBasedOnVersion();
         this.needsRecalculation = item.getNeedsRecalculation();
-        this.lastCalculatedAt = item.getLastCalculatedAt();
         this.lockedAt = item.getLockedAt();
         this.lockedBy = item.getLockedBy();
     }

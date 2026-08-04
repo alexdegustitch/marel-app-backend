@@ -53,6 +53,7 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
 
     @Autowired private WorkCategoryResolutionService resolutionService;
     @Autowired private PayrollSchemeScopeService scopeService;
+    @Autowired private com.aleksandarparipovic.marel_app.support.PayrollScenarioFixture fixture;
     @Autowired private CompensationSchemeRepository schemeRepository;
     @Autowired private EmployeeCompensationSchemeHistoryRepository historyRepository;
     @Autowired private WorkCodeCategorySchemeRuleRepository workRuleRepository;
@@ -152,6 +153,13 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
         adjustmentRuleRepository.saveAndFlush(PayrollAdjustmentCategorySchemeRule.builder()
                 .compensationScheme(seasonal).payrollAdjustmentCategory(excluded)
                 .isAllowed(false).validFrom(RULES_FROM).isActive(true).build());
+
+        // ── Step 3b: the rest of the matrix (D6). ──────────────────────────
+        // A new scheme is data, but it is not COMPLETE data until every active
+        // category has a rule under it. That is the one thing a new scheme cannot
+        // skip: the calculation refuses to guess what a missing rule means, so
+        // "needs no code" does not extend to "needs no configuration".
+        fixture.completeSchemeMatrix();
 
         // ── Step 4: put an employee on it. ─────────────────────────────────
         Employee employee = anEmployee();

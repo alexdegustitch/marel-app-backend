@@ -46,6 +46,39 @@ public class PayrollAdjustmentCategorySchemeRule {
     @Builder.Default
     private Boolean isAllowed = true;
 
+    // ── Phase 5: what the scheme says beyond "allowed or not" ────────────────
+    //
+    // Every nullable field below means "inherit from the category" when null. A
+    // scheme states only what it CHANGES, which is what keeps a 39-row matrix
+    // readable instead of 39 rows of duplicated defaults.
+
+    /**
+     * INHERIT, ZERO or MANUAL. NOT NULL with an explicit INHERIT rather than
+     * nullable, because "this scheme does not calculate this line" and "this
+     * scheme has no opinion" are different statements and both need saying.
+     */
+    @Column(name = "calculation_mode", nullable = false)
+    @Builder.Default
+    private String calculationMode = "INHERIT";
+
+    @Column(name = "visible_in_ui")
+    private Boolean visibleInUi;
+
+    @Column(name = "visible_in_pdf")
+    private Boolean visibleInPdf;
+
+    @Column(name = "show_when_zero")
+    private Boolean showWhenZero;
+
+    @Column(name = "editable_input")
+    private String editableInput;
+
+    @Column(name = "allow_total_override")
+    private Boolean allowTotalOverride;
+
+    @Column(name = "required_manual_input")
+    private Boolean requiredManualInput;
+
     @Column(name = "valid_from", nullable = false)
     private LocalDate validFrom;
 

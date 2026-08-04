@@ -258,9 +258,11 @@ public class PayrollRunInitializationTxService {
     }
 
     private PayrollRunItem buildPayrollRunItem(PayrollRun payrollRun, MonthlyReport mr) {
-        OffsetDateTime now = OffsetDateTime.now();
-        BigDecimal mealRate = appSettingService.getMealAllowancePerDay(now);
-        BigDecimal transportRate = appSettingService.getTransportAllowancePerDay(now);
+        // The rate that applied when the payroll month began, not the rate today.
+        // Initialising a past month must not stamp it with the current price.
+        LocalDate pricingDate = mr.getStartDate();
+        BigDecimal mealRate = appSettingService.getMealAllowancePerDayOn(pricingDate);
+        BigDecimal transportRate = appSettingService.getTransportAllowancePerDayOn(pricingDate);
 
         PayrollRunItem item = new PayrollRunItem();
         item.setPayrollRun(payrollRun);
@@ -288,7 +290,6 @@ public class PayrollRunInitializationTxService {
         item.setManualAdjustedMinutes(0);
         item.setTotalPayrollMinutes(0);
 
-        item.setAdjustmentAmount(BigDecimal.ZERO);
         item.setTotalNetEarnings(BigDecimal.ZERO);
         BigDecimal empRate = mr.getEmployeeRecord().getEmployee().getHourlyRate() != null
                 ? mr.getEmployeeRecord().getEmployee().getHourlyRate() : BigDecimal.ZERO;
@@ -296,17 +297,7 @@ public class PayrollRunInitializationTxService {
         item.setHourlyRateSystem(empRate);
         item.setHourlyRateOverridden(false);
 
-        item.setMealAllowanceCount(0);
-        item.setMealAllowanceUnitAmountSystem(mealRate);
-        item.setMealAllowanceUnitAmount(mealRate);
-        item.setMealAllowanceUnitAmountOverridden(false);
-        item.setTotalMealAllowanceAmount(BigDecimal.ZERO);
 
-        item.setTransportAllowanceDays(0);
-        item.setTransportAllowanceUnitAmount(transportRate);
-        item.setTotalTransportAllowanceAmountSystem(BigDecimal.ZERO);
-        item.setTotalTransportAllowanceAmount(BigDecimal.ZERO);
-        item.setTotalTransportAllowanceAmountOverridden(false);
 
         item.setBaseBonusAmountSystem(BigDecimal.ZERO);
         item.setBaseBonusAmount(BigDecimal.ZERO);

@@ -83,4 +83,29 @@ public class PayrollAdjustmentCategory {
 
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
+
+    // ── Phase 3: edit policy ─────────────────────────────────────────────────
+
+    /**
+     * The ONE input a user may change; the formula still runs afterwards.
+     * NONE, AMOUNT, UNIT_AMOUNT, QUANTITY or CORRECTION.
+     *
+     * <p>Distinct from {@link #allowTotalOverride}, which bypasses the formula.
+     * Collapsing the two is what made {@code allowOverride} unable to express
+     * "the count is the system's, the price is yours" — the meal allowance.
+     */
+    @Column(name = "editable_input", nullable = false)
+    private String editableInput = "NONE";
+
+    /** Whether the final amount may be typed in directly, bypassing the formula. */
+    @Column(name = "allow_total_override", nullable = false)
+    private Boolean allowTotalOverride = false;
+
+    /** Show the line even at 0 — how "commercial sees a zero bonus" is expressed. */
+    @Column(name = "show_when_zero", nullable = false)
+    private Boolean showWhenZero = true;
+
+    /** A manual line that must be filled in before the item can be locked. */
+    @Column(name = "required_manual_input", nullable = false)
+    private Boolean requiredManualInput = false;
 }

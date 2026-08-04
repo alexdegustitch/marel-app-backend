@@ -1,10 +1,22 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item;
 
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.common.i18n.AppLocales;
 import com.aleksandarparipovic.marel_app.common.jpa.EntityReferenceProvider;
 import com.aleksandarparipovic.marel_app.employee.Employee;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueCodes;
+import com.aleksandarparipovic.marel_app.payroll_calculation.CalculationKeys;
+import com.aleksandarparipovic.marel_app.payroll_calculation.calculators.MonthlyBonusCalculator;
+import com.aleksandarparipovic.marel_app.payroll_calculation.ComponentContext;
+import com.aleksandarparipovic.marel_app.payroll_calculation.ComponentResult;
+import com.aleksandarparipovic.marel_app.payroll_calculation.PayrollCalculatorRegistry;
+import com.aleksandarparipovic.marel_app.payroll_calculation.calculators.MealAllowanceCalculator;
+import com.aleksandarparipovic.marel_app.payroll_calculation.calculators.TransportAllowanceCalculator;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueService;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategoryNameResolver;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategoryRepository;
+import com.aleksandarparipovic.marel_app.work_category_resolution.EffectiveComponentConfig;
+import com.aleksandarparipovic.marel_app.work_category_resolution.IncompletePayrollConfigurationException;
 import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScope;
 import com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategoryNameResolver;
@@ -15,6 +27,10 @@ import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCa
 import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCategoryRepository;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustment;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentRepository;
+import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustment;
+import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentCategory;
+import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentCategoryRepository;
+import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentRepository;
 import com.aleksandarparipovic.marel_app.payroll_run.PayrollRun;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollAdjustmentDetailDto;
@@ -41,6 +57,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.data.domain.PageRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
@@ -58,6 +75,7 @@ public class PayrollRunItemService {
 
     // impact codes
     private static final String DEDUCTION_MINUS = "DEDUCTION_MINUS";
+    private static final String IMPACT_GROSS_PLUS = "GROSS_PLUS";
 
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
@@ -67,10 +85,15 @@ public class PayrollRunItemService {
     private final AppSettingService appSettingService;
     private final EntityReferenceProvider referenceProvider;
     private final CurrentUserService currentUserService;
+    private final com.aleksandarparipovic.marel_app.employee_payroll_run_item_update.EmployeePayrollRunItemUpdateService payrollRunItemUpdateService;
     private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
     private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
     private final PayrollAdjustmentCategoryRepository payrollAdjustmentCategoryRepository;
+    private final PayrollTimeAdjustmentRepository timeAdjustmentRepository;
+    private final PayrollTimeAdjustmentCategoryRepository timeAdjustmentCategoryRepository;
     private final PayrollSchemeScopeService payrollSchemeScopeService;
+    private final EmployeePayrollValueService employeePayrollValueService;
+    private final PayrollCalculatorRegistry calculatorRegistry;
     private final com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository workCodeCategoryRepository;
 
     // ─── Standard CRUD ──────────────────────────────────────────────────────
@@ -147,6 +170,17 @@ public class PayrollRunItemService {
      *   <li>Version mismatch → recalculate, persist, return fresh item.</li>
      * </ul>
      */
+    /** Mark every unlocked, unarchived item stale. Its own transaction, on purpose. */
+    @Transactional
+    public int flagAllForRecalculation() {
+        return payrollRunItemRepository.flagAllForRecalculation();
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> recalculableItemIds() {
+        return payrollRunItemRepository.findAllRecalculableIds();
+    }
+
     @Transactional
     public PayrollRunItem getForPayrollAccess(Long id) {
         PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
@@ -170,7 +204,12 @@ public class PayrollRunItemService {
         // changing that does not touch the monthly report — so an item refreshed
         // before a scheme change would look up to date forever and never grow the
         // row its work now lands on.
-        boolean addedRowWithActivity = reconcileItemCategories(item, mr);
+        // Resolved ONCE here and handed to both steps. Both need it, and both used
+        // to resolve it for themselves — four queries where two do, multiplied by
+        // every row of a payroll run.
+        PayrollSchemeScope scope = scopeFor(item);
+
+        boolean addedRowWithActivity = reconcileItemCategories(item, mr, scope);
 
         Integer latestVersion = mr.getVersion();
         Integer usedVersion   = item.getBasedOnVersion();
@@ -188,7 +227,7 @@ public class PayrollRunItemService {
             log.info("PayrollRunItem {} is stale (based_on_version={}, monthly_report.version={}) – recalculating",
                     id, usedVersion, latestVersion);
         }
-        return recalculateFromMonthlyReport(item, mr);
+        return recalculateFromMonthlyReport(item, mr, scope);
     }
 
     /**
@@ -197,9 +236,161 @@ public class PayrollRunItemService {
      */
     @Transactional
     public List<PayrollRunItem> getForPayrollRun(Long payrollRunId) {
-        return payrollRunItemRepository.findByPayrollRun_Id(payrollRunId).stream()
-                .map(item -> STATUS_LOCKED.equals(item.getStatus()) ? item : refreshIfStale(item))
+        List<PayrollRunItem> items = payrollRunItemRepository.findByPayrollRun_Id(payrollRunId);
+        if (items.isEmpty()) {
+            return items;
+        }
+        ScopeSource scopes = scopeSourceFor(items);
+        return items.stream()
+                .map(item -> STATUS_LOCKED.equals(item.getStatus()) ? item : refreshIfStale(item, scopes))
                 .toList();
+    }
+
+    /**
+     * Where a scope comes from for one item.
+     *
+     * <p>Two implementations, one meaning. A payroll run resolves the whole batch
+     * up front; anything else resolves per item. Kept as an interface rather than
+     * a nullable map so that "no batch was possible" degrades to the old
+     * per-item resolution instead of to the very different "unrestricted".
+     */
+    private interface ScopeSource {
+        PayrollSchemeScope scopeOf(PayrollRunItem item);
+    }
+
+    /**
+     * One scheme resolution for a whole payroll run.
+     *
+     * <p>Every item in a run belongs to the same month, and a factory has a
+     * handful of schemes against hundreds of employees, so this is a fixed number
+     * of queries instead of four per row. Same reasoning as
+     * {@link PayrollSchemeScopeService#scopesFor}, which is built for it.
+     */
+    private ScopeSource scopeSourceFor(List<PayrollRunItem> items) {
+        LocalDate anyPeriod = items.stream()
+                .map(PayrollRunItem::getPeriod)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+
+        if (anyPeriod == null) {
+            // Nothing to batch on. Fall back to exactly what happened before.
+            return this::scopeFor;
+        }
+
+        LocalDate start = anyPeriod.withDayOfMonth(1);
+        LocalDate end = start.withDayOfMonth(start.lengthOfMonth());
+
+        List<Long> employeeIds = items.stream()
+                .map(PayrollRunItem::getEmployee)
+                .filter(java.util.Objects::nonNull)
+                .map(Employee::getId)
+                .distinct()
+                .toList();
+
+        Map<Long, PayrollSchemeScope> byEmployee = payrollSchemeScopeService.scopesFor(
+                employeeIds, start, end,
+                workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc(),
+                payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull());
+
+        // Absent from the map means no scheme period covers the month, which
+        // callers read as unrestricted — the same answer scopeFor gives.
+        return item -> item.getEmployee() == null ? null : byEmployee.get(item.getEmployee().getId());
+    }
+
+    // ─── Locking ────────────────────────────────────────────────────────────
+
+    /**
+     * Freeze one payroll item so nothing recalculates it again.
+     *
+     * <p>Until now nothing in the codebase ever did this. {@code getForPayrollAccess}
+     * honoured a LOCKED status and the permissions DTO reported {@code canLock},
+     * but no code path set it — so every payroll month back to 2023 stayed exposed
+     * to the next change in the calculation, and D8's "a required manual line
+     * blocks locking" had nothing to block.
+     *
+     * <p>Locking is what makes a calculated month a RECORD rather than a view: from
+     * here on the amounts are what was paid, whatever the rules become later.
+     *
+     * @throws ConflictException when a required manual line has no input, listing
+     *         each one. A month cannot be frozen while somebody still owes it a
+     *         number — the alternative is freezing a zero that was never a decision.
+     */
+    @Transactional
+    public PayrollRunItem lock(Long id) {
+        recordUserActivity(id);
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        if (STATUS_LOCKED.equals(item.getStatus())) {
+            return item;
+        }
+
+        // Recalculate first. Locking a stale item would freeze figures that were
+        // already out of date at the moment they became permanent.
+        item = getForPayrollAccess(id);
+
+        List<String> pending = pendingRequiredInputs(item);
+        if (!pending.isEmpty()) {
+            throw new ConflictException(
+                    "Obračun se ne može zaključati dok se ne unesu obavezne stavke: "
+                            + String.join(", ", pending) + ".");
+        }
+
+        item.setStatus(STATUS_LOCKED);
+        item.setLockedAt(OffsetDateTime.now());
+        item.setLockedBy(currentUserService.getCurrentUserId());
+        item.setUpdatedAt(OffsetDateTime.now());
+
+        log.info("PayrollRunItem {} locked by user {}", id, item.getLockedBy());
+        return payrollRunItemRepository.save(item);
+    }
+
+    /**
+     * Required manual lines nobody has filled in yet.
+     *
+     * <p>"Not entered" and "entered as 0" are different, and only
+     * {@code has_manual_input} can tell them apart — an amount of zero is a
+     * perfectly good answer once somebody has actually given it. Without the flag a
+     * required line would either block forever or never block at all.
+     */
+    @Transactional(readOnly = true)
+    public List<String> pendingRequiredInputs(PayrollRunItem item) {
+        PayrollSchemeScope scope = scopeFor(item);
+
+        return payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId()).stream()
+                .filter(a -> {
+                    EffectiveComponentConfig config =
+                            scope.componentConfig(a.getPayrollAdjustmentCategory().getId());
+                    return config != null && config.allowed() && config.requiredManualInput();
+                })
+                .filter(a -> !Boolean.TRUE.equals(a.getHasManualInput()))
+                .map(a -> a.getPayrollAdjustmentCategory().getCode())
+                .sorted()
+                .toList();
+    }
+
+    /** Undo a lock. Separate operation, separate permission, separate audit entry. */
+    @Transactional
+    public PayrollRunItem unlock(Long id) {
+        recordUserActivity(id);
+        PayrollRunItem item = payrollRunItemRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        if (!STATUS_LOCKED.equals(item.getStatus())) {
+            return item;
+        }
+
+        // needs_recalculation, not a recalculation here: unlocking says the month is
+        // open again, and what it should now say is decided by whoever opens it.
+        item.setStatus(STATUS_DRAFT);
+        item.setLockedAt(null);
+        item.setLockedBy(null);
+        item.setNeedsRecalculation(true);
+        item.setUpdatedAt(OffsetDateTime.now());
+
+        log.info("PayrollRunItem {} unlocked by user {}", id, currentUserService.getCurrentUserId());
+        return payrollRunItemRepository.save(item);
     }
 
     // ─── Details view ───────────────────────────────────────────────────────
@@ -248,18 +439,23 @@ public class PayrollRunItemService {
         List<PayrollRunItemCategoryDetailDto> categories =
                 payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId())
                         .stream()
-                        .filter(c -> scope == null
-                                || scope.allowsWorkCategory(c.getWorkCodeCategory().getId())
+                        .filter(c -> scope.allowsWorkCategory(c.getWorkCodeCategory().getId())
                                 || hasActivity(c))
                         .map(c -> new PayrollRunItemCategoryDetailDto(c, workCodeNames))
                         .toList();
 
+        // Each line carries the SCHEME's resolved answer — visible, editable,
+        // required, forced to zero — so the client renders from data instead of
+        // knowing what a foreign or commercial employee is. Lines the scheme
+        // excludes are dropped here; everything else arrives with its own policy
+        // attached, including the ones that are visible and always zero.
         List<PayrollAdjustmentSectionDto> adjustments =
                 payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId())
                         .stream()
-                        .filter(a -> scope == null
-                                || scope.allowsAdjustmentCategory(a.getPayrollAdjustmentCategory().getId()))
-                        .map(a -> new PayrollAdjustmentDetailDto(a, adjustmentNames))
+                        .filter(a -> scope.allowsAdjustmentCategory(
+                                a.getPayrollAdjustmentCategory().getId()))
+                        .map(a -> new PayrollAdjustmentDetailDto(a, adjustmentNames,
+                                scope.componentConfig(a.getPayrollAdjustmentCategory().getId())))
                         .collect(java.util.stream.Collectors.groupingBy(
                                 dto -> dto.getSectionCode() != null ? dto.getSectionCode() : ""
                         ))
@@ -280,12 +476,50 @@ public class PayrollRunItemService {
 
         PayrollRunItemPermissionsDto permissions = resolvePermissions();
 
+        PayrollRunItemResponse summary = new PayrollRunItemResponse(item);
+        // Resolved at the period's LAST day, matching how MonthlyRecalcService caps
+        // approved_performance_rate. Reading it at now() would draw an old month
+        // against today's ceiling.
+        if (item.getPeriod() != null) {
+            summary.setMaxEfficiencyPercent(appSettingService.getMaxEfficiencyPercentOn(
+                    item.getPeriod().withDayOfMonth(item.getPeriod().lengthOfMonth())));
+        }
+
         return new PayrollRunItemDetailResponse(
-                new PayrollRunItemResponse(item),
+                summary,
                 categories,
                 adjustments,
                 permissions
         );
+    }
+
+    /**
+     * The employee's hourly rate on {@code pricingDate}, or {@code null} when
+     * neither source has one.
+     *
+     * <p>{@code null} means "not configured", and the caller leaves the existing
+     * system rate alone. It deliberately does NOT mean zero: an employee with no
+     * rate is calculated at whatever the item already carries, which for most of
+     * this database is 0 and must stay 0.
+     */
+    private BigDecimal hourlyRateFor(PayrollRunItem item, LocalDate pricingDate) {
+        if (item.getEmployee() == null) {
+            return null;
+        }
+        Long employeeId = item.getEmployee().getId();
+
+        Optional<BigDecimal> fromHistory = employeePayrollValueService.numericValueOn(
+                employeeId, EmployeePayrollValueCodes.HOURLY_RATE, pricingDate);
+        if (fromHistory.isPresent()) {
+            return fromHistory.get();
+        }
+
+        BigDecimal fromEmployee = item.getEmployee().getHourlyRate();
+        if (fromEmployee != null) {
+            log.debug("Employee {} has no HOURLY_RATE in force on {} — falling back to "
+                    + "employees.hourly_rate, which is not period-correct", employeeId, pricingDate);
+        }
+        return fromEmployee;
     }
 
     /** True when a category row carries real work, whatever the scheme says today. */
@@ -344,44 +578,35 @@ public class PayrollRunItemService {
             item.setNote(req.getNote());
         }
         if (req.getCurrentMonthTelephone() != null) {
-            item.setCurrentMonthTelephone(req.getCurrentMonthTelephone().setScale(2, RoundingMode.HALF_UP));
+            BigDecimal phone = req.getCurrentMonthTelephone().setScale(2, RoundingMode.HALF_UP);
+            item.setCurrentMonthTelephone(phone);
+            // The PHONE_CURRENT_MONTH line has sat at zero while the money lived in
+            // the column beside it — the same split that F11 found on meal. The
+            // column is what the frontend writes and what propagates to next month,
+            // so it stays authoritative; syncing the line keeps the payslip honest
+            // now and is what phase 7 inverts when the column goes.
+            updateAdjustmentByCategoryCode(id, "PHONE_CURRENT_MONTH", phone, true);
         }
+        refuseEditsToExcludedCategories(item, req);
+        recordUserActivity(id);
+
         if (req.getManualAdjustedMinutes() != null) {
-            item.setManualAdjustedMinutes(req.getManualAdjustedMinutes());
+            // The correction is a ROW now, not an integer on the item. The column
+            // is kept in step until it is dropped, exactly as the meal and
+            // transport columns are.
+            syncManualTimeCorrection(item, req.getManualAdjustedMinutes(),
+                    req.getManualAdjustedMinutesReason());
             int base = item.getTotalWorkMinutes() != null ? item.getTotalWorkMinutes() : 0;
-            item.setTotalPayrollMinutes(base + req.getManualAdjustedMinutes());
+            item.setTotalPayrollMinutes(base + payableMinuteCorrectionFor(item.getId()));
         }
 
         // ── 2. mealAllowanceUnitAmount → recalc totalMealAllowanceAmount ─────
         // null = reset to system value; value == system = overridden false; value != system = overridden true
-        if (req.isMealAllowanceUnitAmountPresent()) {
-            BigDecimal unitAmt = req.getMealAllowanceUnitAmount() != null
-                    ? req.getMealAllowanceUnitAmount().setScale(2, RoundingMode.HALF_UP)
-                    : item.getMealAllowanceUnitAmountSystem();
-            if (unitAmt == null) unitAmt = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-            item.setMealAllowanceUnitAmount(unitAmt);
-            item.setMealAllowanceUnitAmountOverridden(
-                    item.getMealAllowanceUnitAmountSystem() != null &&
-                    unitAmt.compareTo(item.getMealAllowanceUnitAmountSystem()) != 0);
-            item.setTotalMealAllowanceAmount(
-                    unitAmt.multiply(BigDecimal.valueOf(
-                            item.getMealAllowanceCount() != null ? item.getMealAllowanceCount() : 0))
-                           .setScale(2, RoundingMode.HALF_UP));
-        }
-
+        // The meal price and the transport total are edited ON THEIR LINES now.
+        // These two branches wrote the mirror columns and left the recalculation to
+        // copy them across; with the line as the source that was one write too many
+        // and one more place for the two to disagree. See applyAdjustmentPatch.
         // ── 3. totalTransportAllowanceAmount → sync TRANSPORT adj ─────────────
-        if (req.isTotalTransportAllowanceAmountPresent()) {
-            BigDecimal transport = req.getTotalTransportAllowanceAmount() != null
-                    ? req.getTotalTransportAllowanceAmount().setScale(2, RoundingMode.HALF_UP)
-                    : item.getTotalTransportAllowanceAmountSystem();
-            if (transport == null) transport = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-            item.setTotalTransportAllowanceAmount(transport);
-            item.setTotalTransportAllowanceAmountOverridden(
-                    item.getTotalTransportAllowanceAmountSystem() != null &&
-                    transport.compareTo(item.getTotalTransportAllowanceAmountSystem()) != 0);
-            updateAdjustmentByCategoryCode(id, CAT_CODE_TRANSPORT, transport, true);
-        }
-
         // ── 4. Bonus fields → sync BONUS adj ─────────────────────────────────
         if (req.isBaseBonusAmountPresent()) {
             BigDecimal amt = req.getBaseBonusAmount() != null
@@ -403,6 +628,13 @@ public class PayrollRunItemService {
                     item.getBonusCorrectionAmountSystem() != null &&
                     amt.compareTo(item.getBonusCorrectionAmountSystem()) != 0);
         }
+        // STEP 2: whichever part was sent, the LINE has to carry it — that is what
+        // the recalculation reads. Writing only the item columns left the next
+        // recalculation to put the rules' figures back over a person's.
+        if (req.isBaseBonusAmountPresent() || req.isBonusCorrectionAmountPresent()) {
+            syncBonusParts(id, item);
+        }
+
         if (req.isTotalBonusAmountPresent()) {
             if (req.getTotalBonusAmount() != null) {
                 BigDecimal bonus = req.getTotalBonusAmount().setScale(2, RoundingMode.HALF_UP);
@@ -410,7 +642,10 @@ public class PayrollRunItemService {
                 item.setTotalBonusAmountOverridden(
                         item.getTotalBonusAmountSystem() != null &&
                         bonus.compareTo(item.getTotalBonusAmountSystem()) != 0);
-                updateAdjustmentByCategoryCode(id, CAT_CODE_BONUS, bonus, true);
+                // `true` here re-applied a line the scheme had excluded, putting its
+                // money back into the earnings sum. The scheme decides, not the patch.
+                updateAdjustmentByCategoryCode(id, CAT_CODE_BONUS, bonus,
+                        allowsAdjustmentCode(scopeFor(item), CAT_CODE_BONUS));
             } else {
                 // null sent → reset override, auto-calculate from components
                 item.setTotalBonusAmountOverridden(false);
@@ -432,6 +667,7 @@ public class PayrollRunItemService {
 
         // ── 5. Individual adjustment patches ─────────────────────────────────
         if (req.getAdjustments() != null && !req.getAdjustments().isEmpty()) {
+            PayrollSchemeScope patchScope = scopeFor(item);
             for (AdjustmentPatchDto adjPatch : req.getAdjustments()) {
                 PayrollAdjustment adj = payrollAdjustmentRepository.findByIdWithCategory(adjPatch.getId())
                         .orElseThrow(() -> new IllegalArgumentException("PayrollAdjustment not found: " + adjPatch.getId()));
@@ -441,29 +677,16 @@ public class PayrollRunItemService {
                             "PayrollAdjustment " + adjPatch.getId() + " does not belong to PayrollRunItem " + id);
                 }
 
-                boolean overridden = Boolean.TRUE.equals(adj.getIsOverridden());
-                if (adjPatch.getQuantity() != null) {
-                    adj.setQuantity(adjPatch.getQuantity().setScale(4, RoundingMode.HALF_UP));
-                    if (adj.getSystemQuantity() != null && adjPatch.getQuantity().compareTo(adj.getSystemQuantity()) != 0)
-                        overridden = true;
-                }
-                if (adjPatch.getUnitAmount() != null) {
-                    adj.setUnitAmount(adjPatch.getUnitAmount().setScale(4, RoundingMode.HALF_UP));
-                    if (adj.getSystemUnitAmount() != null && adjPatch.getUnitAmount().compareTo(adj.getSystemUnitAmount()) != 0)
-                        overridden = true;
-                }
-                if (adjPatch.getAmount() != null) {
-                    adj.setAmount(adjPatch.getAmount().setScale(2, RoundingMode.HALF_UP));
-                    if (adj.getSystemAmount() != null && adjPatch.getAmount().compareTo(adj.getSystemAmount()) != 0)
-                        overridden = true;
-                }
-                if (adjPatch.getIsApplied() != null) {
-                    adj.setIsApplied(adjPatch.getIsApplied());
-                }
-                if (adjPatch.getNote() != null) {
-                    adj.setNote(adjPatch.getNote());
-                }
-                adj.setIsOverridden(overridden);
+                // WHAT MAY BE EDITED IS ENFORCED HERE, NOT IN THE UI.
+                //
+                // Until now allow_override was decoration: the flag said FALSE on
+                // meal and transport while both were edited every day, because the
+                // patch went through the item columns where nothing read it. A rule
+                // only the client honours is a rule anybody with the API can ignore.
+                EffectiveComponentConfig config = patchScope.componentConfig(
+                        adj.getPayrollAdjustmentCategory().getId());
+                applyAdjustmentPatch(adj, adjPatch, config);
+
                 adj.setUpdatedAt(OffsetDateTime.now());
                 payrollAdjustmentRepository.save(adj);
             }
@@ -484,18 +707,21 @@ public class PayrollRunItemService {
                     BigDecimal.ZERO.compareTo(item.getHourlyRateSystem()) != 0);
             recalculateCategoriesForHourlyRate(id, BigDecimal.ZERO);
 
-            BigDecimal meal = item.getTotalMealAllowanceAmount() != null ? item.getTotalMealAllowanceAmount() : BigDecimal.ZERO;
-
-            // SUM of all applied ADDITIONS adjustments except FIXED_SALARY itself
-            BigDecimal additionsSum = payrollAdjustmentRepository
-                    .findByItemIdAndSectionCode(id, SECTION_ADDITIONS)
+            // Every applied earning except FIXED_SALARY itself, which is the figure
+            // being solved for. Meal is no longer subtracted separately: it is a
+            // GROSS_PLUS line like any other and is already in this sum. Subtracting
+            // it again — as the old ADDITIONS-based version had to, because meal
+            // sits in section MEAL — would now take it off twice.
+            BigDecimal otherEarnings = payrollAdjustmentRepository
+                    .findByPayrollRunItemIdWithCategory(id)
                     .stream()
                     .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
+                            && IMPACT_GROSS_PLUS.equals(a.getPayrollAdjustmentCategory().getImpactCode())
                             && !CAT_CODE_FIXED_SALARY.equals(a.getPayrollAdjustmentCategory().getCode()))
                     .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-            BigDecimal fixedValue = netEarnings.subtract(meal).subtract(additionsSum)
+            BigDecimal fixedValue = netEarnings.subtract(otherEarnings)
                     .setScale(2, RoundingMode.HALF_UP);
             updateAdjustmentByCategoryCode(id, CAT_CODE_FIXED_SALARY, fixedValue, true);
 
@@ -700,16 +926,431 @@ public class PayrollRunItemService {
     }
 
     /**
+     * Apply one patch entry, refusing anything the scheme does not permit.
+     *
+     * <p>Three different edits, kept apart because they mean different things:
+     *
+     * <ul>
+     *   <li>an INPUT edit — the unit price, the quantity, or a correction. The
+     *       formula still runs, and the line is not overridden.</li>
+     *   <li>a TOTAL override — the amount is typed in and the formula bypassed.
+     *       Needs {@code allowTotalOverride} AND a reason.</li>
+     *   <li>clearing an override — back to the system figure.</li>
+     * </ul>
+     *
+     * <p>A line the scheme forces to zero refuses all three: a commercial bonus is
+     * shown at 0,00 and there is no route, through any client, to put a number in it.
+     */
+    /**
+     * Record that a PERSON did this, on the operations where one did.
+     *
+     * <p>This replaces trg_payroll_run_items_track_activity, which fired on every
+     * update of the row. Recalculation is lazy — opening a payroll recomputes a
+     * stale item inside the reader's own request, with their user id in the
+     * session — so the trigger reported "user X edited this" for every payroll
+     * that user merely opened after a rule change. Only the caller knows the
+     * difference, so only the caller says.
+     *
+     * <p>Silent when nobody is logged in: a background sweep is not activity.
+     */
+    private void recordUserActivity(Long payrollRunItemId) {
+        Long userId = currentUserService.getCurrentUserId();
+        if (userId == null || payrollRunItemId == null) {
+            return;
+        }
+        payrollRunItemUpdateService.upsertActivity(payrollRunItemId, userId);
+    }
+
+    /**
+     * Refuse any edit to a category the employee's scheme excludes — from EITHER
+     * patch route, in one place.
+     *
+     * <p>THE REASON THIS IS ONE METHOD. The check first went into
+     * applyAdjustmentPatch, which handles the {@code adjustments} array. The
+     * parameters panel does not use that route: it sends baseBonusAmount and
+     * bonusCorrectionAmount as ITEM fields, which land in their own branches
+     * below. So a bonus was still accepted for an employee whose scheme forbids
+     * it — the same defect, reported a second time, because the fix covered one of
+     * two doors.
+     *
+     * <p>Everything that can put money on one of these three lines now passes
+     * through here first. A new field on the request cannot quietly reopen it
+     * without being added to this list.
+     */
+    private void refuseEditsToExcludedCategories(PayrollRunItem item, PayrollRunItemPatchRequest req) {
+        // Meal and transport are edited on their lines, and applyAdjustmentPatch
+        // guards those. Only the bonus still arrives as item fields.
+        boolean touchesBonus     = req.isBaseBonusAmountPresent()
+                                || req.isBonusCorrectionAmountPresent()
+                                || req.isTotalBonusAmountPresent();
+
+        if (!touchesBonus) {
+            return;
+        }
+
+        PayrollSchemeScope scope = scopeFor(item);
+        if (touchesBonus && !allowsAdjustmentCode(scope, CAT_CODE_BONUS)) {
+            throw new ConflictException(
+                    "Mesečni bonus ne pripada ovom zaposlenom po njegovom načinu obračuna.");
+        }
+    }
+
+    private void applyAdjustmentPatch(PayrollAdjustment adj, AdjustmentPatchDto patch,
+                                      EffectiveComponentConfig config) {
+        String code = adj.getPayrollAdjustmentCategory().getCode();
+
+        if (config == null) {
+            throw new IncompletePayrollConfigurationException(
+                    "Stavka " + code + " nema pravilo za način obračuna ovog zaposlenog.");
+        }
+        // A CATEGORY THE SCHEME EXCLUDES IS NOT EDITABLE. This was never checked:
+        // config == null and isForcedZero were, config.allowed() was not. A bonus
+        // was entered for an employee whose scheme forbids the category, the patch
+        // re-applied the line, and 8.000 went into total_net_earnings — until the
+        // next recalculation quietly took it out again. Found by verifying a real
+        // month, not by a test.
+        if (!config.allowed() && touchesAValue(patch)) {
+            throw new ConflictException(
+                    "Stavka " + code + " ne pripada ovom zaposlenom po njegovom načinu obračuna.");
+        }
+        if (config.isForcedZero() && touchesAValue(patch)) {
+            throw new ConflictException(
+                    "Stavka " + code + " se po ovom načinu obračuna ne unosi i uvek je nula.");
+        }
+
+        if (Boolean.TRUE.equals(patch.getClearOverride())) {
+            adj.setAmount(adj.getSystemAmount());
+            adj.setIsOverridden(false);
+            adj.setOverrideReason(null);
+        }
+
+        if (patch.getQuantity() != null) {
+            requireEditableInput(config, "QUANTITY", code);
+            adj.setQuantity(patch.getQuantity().setScale(4, RoundingMode.HALF_UP));
+            adj.setHasManualInput(true);
+        }
+        if (patch.getUnitAmount() != null) {
+            requireEditableInput(config, "UNIT_AMOUNT", code);
+            adj.setUnitAmount(patch.getUnitAmount().setScale(4, RoundingMode.HALF_UP));
+            adj.setHasManualInput(true);
+        }
+        if (patch.getCorrectionAmount() != null) {
+            requireEditableInput(config, "CORRECTION", code);
+            adj.setCorrectionAmount(patch.getCorrectionAmount().setScale(2, RoundingMode.HALF_UP));
+            adj.setHasManualInput(true);
+        }
+
+        if (patch.getAmount() != null) {
+            BigDecimal amount = patch.getAmount().setScale(2, RoundingMode.HALF_UP);
+
+            // THE ORDER HERE MATTERS, and getting it wrong made every manual line
+            // uneditable. A MANUAL category has no calculator, so its system_amount
+            // stays 0 — and comparing against 0 said that typing 5.000 into
+            // PAID_PART_2 "bypassed the formula" and demanded allow_total_override.
+            // There is no formula to bypass. When the scheme names AMOUNT as the
+            // editable input, the amount IS the input.
+            boolean amountIsTheInput = "AMOUNT".equals(config.editableInput());
+            boolean differsFromSystem = adj.getSystemAmount() != null
+                    && amount.compareTo(adj.getSystemAmount()) != 0;
+
+            if (amountIsTheInput) {
+                // Nothing to check beyond the policy already allowing it.
+            } else if (differsFromSystem) {
+                // A figure the calculation did not produce. Whether that is allowed
+                // is the scheme's to say, and D7 requires a reason for it either way
+                // — the audit trail records who and when, but only this says what
+                // the decision was.
+                if (!config.allowTotalOverride()) {
+                    throw new ConflictException(
+                            "Ukupan iznos stavke " + code + " se ne može uneti ručno.");
+                }
+                if (patch.getOverrideReason() == null || patch.getOverrideReason().isBlank()) {
+                    throw new ConflictException(
+                            "Razlog je obavezan kada se ručno unosi ukupan iznos stavke " + code + ".");
+                }
+                adj.setIsOverridden(true);
+                adj.setOverrideReason(patch.getOverrideReason());
+            } else if (!config.allowTotalOverride()) {
+                // Not an amount-editable line, and the figure sent is the system's
+                // own — a no-op. Accepted where a total override is permitted, so
+                // that re-saving a form does not fail; refused otherwise.
+                requireEditableInput(config, "AMOUNT", code);
+            }
+
+            adj.setAmount(amount);
+            // Somebody has now answered for this line. Zero counts as an answer;
+            // the flag is what separates it from silence.
+            adj.setHasManualInput(true);
+        }
+
+        // AN INPUT EDIT MUST LEAVE THE LINE ADDING UP. Setting a unit price and
+        // leaving `amount` at the old figure is what the item-column branch used to
+        // recompute on the caller's behalf — with that branch gone, the line has to
+        // apply its own formula, which is the one the recalculation uses:
+        //
+        //     amount = (quantity ?? system_quantity) × (unit_amount ?? system_unit_amount)
+        //            + correction_amount
+        //
+        // Not when the total was typed in: then there is no formula to apply.
+        if (patch.getAmount() == null
+                && (patch.getQuantity() != null || patch.getUnitAmount() != null
+                    || patch.getCorrectionAmount() != null)
+                && !Boolean.TRUE.equals(adj.getIsOverridden())) {
+            BigDecimal qty = adj.getQuantity() != null ? adj.getQuantity() : adj.getSystemQuantity();
+            BigDecimal unit = adj.getUnitAmount() != null ? adj.getUnitAmount() : adj.getSystemUnitAmount();
+            if (qty != null && unit != null) {
+                adj.setAmount(qty.multiply(unit)
+                        .add(adj.getCorrectionAmount() != null ? adj.getCorrectionAmount() : BigDecimal.ZERO)
+                        .setScale(2, RoundingMode.HALF_UP));
+            }
+        }
+
+        if (patch.getIsApplied() != null) {
+            adj.setIsApplied(patch.getIsApplied());
+        }
+        if (patch.getNote() != null) {
+            adj.setNote(patch.getNote());
+        }
+    }
+
+    private static boolean touchesAValue(AdjustmentPatchDto patch) {
+        return patch.getAmount() != null || patch.getQuantity() != null
+                || patch.getUnitAmount() != null || patch.getCorrectionAmount() != null;
+    }
+
+    private void requireEditableInput(EffectiveComponentConfig config, String wanted, String code) {
+        if (!wanted.equals(config.editableInput())) {
+            throw new ConflictException(
+                    "Stavka " + code + " ne dozvoljava izmenu ovog polja"
+                            + ("NONE".equals(config.editableInput())
+                                    ? "." : " — dozvoljeno je: " + config.editableInput() + "."));
+        }
+    }
+
+    /**
+     * The inputs one calculator run is allowed to see, resolved for the period.
+     *
+     * <p>Everything date-effective is read at {@code pricingDate}, so a calculator
+     * cannot reach for {@code now()} even by accident. It is also the shape a
+     * payroll run needs: the two lookups here are the ones phase 4 hoists out of
+     * the loop and does once for the whole batch.
+     */
+    private ComponentContext componentContextFor(PayrollRunItem item, MonthlyReport mr,
+                                                 LocalDate pricingDate) {
+        Long employeeId = item.getEmployee() == null ? null : item.getEmployee().getId();
+
+        Map<String, BigDecimal> employeeValues = employeeId == null
+                ? Map.of()
+                : employeePayrollValueService.numericValuesOn(List.of(employeeId), pricingDate)
+                        .getOrDefault(employeeId, Map.of());
+
+        Map<String, BigDecimal> settings = new java.util.HashMap<>();
+        settings.put(MealAllowanceCalculator.SETTING_MEAL_PER_DAY,
+                appSettingService.getMealAllowancePerDayOn(pricingDate));
+        settings.put(TransportAllowanceCalculator.SETTING_TRANSPORT_PER_DAY,
+                appSettingService.getTransportAllowancePerDayOn(pricingDate));
+
+        return new ComponentContext(item, mr, mr.getStartDate(), mr.getEndDate(),
+                employeeValues, settings);
+    }
+
+    /**
+     * Write a calculated line onto its adjustment row.
+     *
+     * <p>Also records what the calculator was given. A line that comes out at zero
+     * is common and legitimate — no rate configured, no qualifying shift, excluded
+     * by the scheme — and without the reason none of those can be told apart from
+     * a fault when somebody asks why a payslip changed.
+     */
+
+
+
+    /**
+     * Put the bonus's two parts on its line: the tier in correction_amount and the
+     * two of them together in amount.
+     *
+     * <p>amount stays the effective TOTAL — the figure the earnings sum reads —
+     * and the base is recoverable from it as amount minus correction_amount. That
+     * is the whole reason the total was not narrowed to the base alone: doing so
+     * would have required changing the earnings sum in the same breath, and a
+     * mistake there is a bonus paid twice.
+     */
+    private void syncBonusParts(Long itemId, PayrollRunItem item) {
+        BigDecimal base = orZero(item.getBaseBonusAmount());
+        BigDecimal correction = orZero(item.getBonusCorrectionAmount());
+        BigDecimal total = base.add(correction).setScale(2, RoundingMode.HALF_UP);
+
+        payrollAdjustmentRepository.findByItemIdAndCategoryCode(itemId, CAT_CODE_BONUS)
+                .ifPresent(adj -> {
+                    adj.setCorrectionAmount(correction);
+                    adj.setAmount(total);
+                    adj.setHasManualInput(true);
+                    payrollAdjustmentRepository.save(adj);
+                });
+        item.setTotalBonusAmount(total);
+    }
+
+    /** Put a price a person set on the line, where the recalculation reads it. */
+    private void recordHumanUnitAmount(Long itemId, String categoryCode, BigDecimal unitAmount) {
+        payrollAdjustmentRepository.findByItemIdAndCategoryCode(itemId, categoryCode)
+                .ifPresent(adj -> {
+                    adj.setUnitAmount(unitAmount);
+                    adj.setHasManualInput(true);
+                    payrollAdjustmentRepository.save(adj);
+                });
+    }
+
+    /**
+     * Mark a line as carrying a figure a person entered.
+     *
+     * <p>has_manual_input, not is_overridden: this path has no reason to record and
+     * chk_pa_override_reason refuses a flagged row without one. What is known is
+     * that a person entered it, and that is what gets written.
+     */
+    private void recordHumanAmount(Long itemId, String categoryCode) {
+        payrollAdjustmentRepository.findByItemIdAndCategoryCode(itemId, categoryCode)
+                .ifPresent(adj -> {
+                    adj.setHasManualInput(true);
+                    payrollAdjustmentRepository.save(adj);
+                });
+    }
+
+    /**
+     * Whether a figure on the line is a person's rather than the calculation's.
+     *
+     * <p>STEP 2 READS THIS INSTEAD OF payroll_run_items.*_overridden. The five
+     * flags on the item said the same thing about three lines, in columns nothing
+     * else could reach; the line has always been where the figure itself lives.
+     *
+     * <p>The test is a comparison, not a flag, because the line has one
+     * has_manual_input for a row that can carry two independently editable parts —
+     * the bonus base and its tier. Comparing each part against what the rules
+     * produced answers per part.
+     *
+     * <p>The one case it gets "wrong" is somebody typing exactly the figure the
+     * system produced. The recalculation then overwrites it with the same number,
+     * which changes nothing and is why this is safe here — unlike inferring
+     * is_overridden the same way, which mislabelled ordinary recalculations as
+     * human decisions and is what 2026-08-12-01 had to undo.
+     */
+    private static boolean differsFromSystem(BigDecimal effective, BigDecimal system) {
+        if (effective == null) {
+            return false;
+        }
+        return effective.compareTo(system != null ? system : BigDecimal.ZERO) != 0;
+    }
+
+    private static BigDecimal orZero(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    /** The three calculated lines of an item, by category code. */
+    private Map<String, PayrollAdjustment> calculatedLines(Long itemId) {
+        return payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(itemId).stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        a -> a.getPayrollAdjustmentCategory().getCode(), a -> a, (a, b) -> a));
+    }
+
+    /**
+     * Drop an override flag that carries no reason, when the calculation is about
+     * to write over the amount anyway.
+     *
+     * <p>{@code chk_pa_override_reason} arrived NOT VALID (2026-08-25-01) so that
+     * overrides recorded before the rule existed were not given invented
+     * explanations. NOT VALID exempts existing rows from the initial check — it
+     * does NOT exempt them from being checked when something UPDATES them. So the
+     * 24 rows in that state sat quietly until a recalculation touched one, and
+     * then the whole recalculation failed: 12 payroll items could not be
+     * recalculated at all.
+     *
+     * <p>Clearing the flag here states what becomes true in the same write: the
+     * row now holds the figure the calculation produced, so it is not somebody's
+     * typed-in total any more. The alternative — writing "migrated" into a field
+     * meant for a person's explanation — would put words in their mouth, which is
+     * exactly what the NOT VALID was avoiding.
+     *
+     * <p>An override WITH a reason is left untouched. This only reaches rows the
+     * old rule allowed to exist.
+     */
+    private static void clearUnreasonedOverride(PayrollAdjustment adjustment) {
+        if (Boolean.TRUE.equals(adjustment.getIsOverridden())
+                && (adjustment.getOverrideReason() == null
+                    || adjustment.getOverrideReason().isBlank())) {
+            adjustment.setIsOverridden(false);
+        }
+    }
+
+    private void syncAdjustment(Long itemId, String categoryCode, BigDecimal amount,
+                                ComponentResult result, boolean applied) {
+        syncAdjustment(itemId, categoryCode, amount, result, applied, true);
+    }
+
+    /**
+     * @param writeAmount false when a person's figure is being kept.
+     *
+     * <p>THE SYSTEM FIGURES ARE WRITTEN EITHER WAY. Skipping the whole sync when a
+     * human value wins left the line's system_amount, system_quantity,
+     * system_unit_amount, calculation_inputs and calculated_at frozen at whatever
+     * the last automatic run produced — so the line could not say what the
+     * calculation WOULD have paid, which is the entire point of keeping the system
+     * values beside the effective ones. It also made those lines look never
+     * calculated: two of them still read that way in the step-3 report after a
+     * sweep that had in fact visited them.
+     */
+    private void syncAdjustment(Long itemId, String categoryCode, BigDecimal amount,
+                                ComponentResult result, boolean applied, boolean writeAmount) {
+        payrollAdjustmentRepository.findByItemIdAndCategoryCode(itemId, categoryCode)
+                .ifPresent(adjustment -> {
+                    if (writeAmount) {
+                        clearUnreasonedOverride(adjustment);
+                        adjustment.setAmount(amount);
+                    }
+                    adjustment.setSystemAmount(result.systemAmount());
+                    adjustment.setSystemQuantity(result.systemQuantity());
+                    adjustment.setSystemUnitAmount(result.systemUnitAmount());
+                    adjustment.setIsApplied(applied);
+                    adjustment.setCalculationInputs(result.inputs());
+                    adjustment.setCalculatedAt(OffsetDateTime.now());
+                    adjustment.setUpdatedAt(OffsetDateTime.now());
+                    payrollAdjustmentRepository.save(adjustment);
+                });
+    }
+
+    private static int intValue(BigDecimal value) {
+        return value == null ? 0 : value.intValue();
+    }
+
+    /**
      * Finds an adjustment by category code and updates its amount and isApplied flag.
      * Used for categories where calculation_key is NULL (e.g. FIXED_SALARY).
      */
     private void updateAdjustmentByCategoryCode(Long itemId, String categoryCode, BigDecimal amount, boolean isApplied) {
+        updateAdjustmentByCategoryCode(itemId, categoryCode, amount, isApplied, false);
+    }
+
+    /**
+     * @param humanOverride whether this write is a person replacing the final
+     *        amount, as opposed to the system writing what it computed.
+     *
+     * <p>The caller has to say which, because the value alone cannot. This method
+     * used to infer it — {@code isOverridden = amount != systemAmount} — and got it
+     * wrong in the common case: a recalculation writes the system's own figure and
+     * was then marking the line as overridden by a human. It also could not tell a
+     * repriced meal, which is an edit to an INPUT with the formula still running,
+     * from a typed-in total, which bypasses the formula. D7 needs those apart.
+     */
+    private void updateAdjustmentByCategoryCode(Long itemId, String categoryCode, BigDecimal amount,
+                                                boolean isApplied, boolean humanOverride) {
         payrollAdjustmentRepository.findByItemIdAndCategoryCode(itemId, categoryCode)
                 .ifPresent(adj -> {
+                    clearUnreasonedOverride(adj);
                     adj.setAmount(amount);
                     adj.setIsApplied(isApplied);
-                    adj.setIsOverridden(
-                            adj.getSystemAmount() != null && amount.compareTo(adj.getSystemAmount()) != 0);
+                    if (humanOverride) {
+                        adj.setIsOverridden(
+                                adj.getSystemAmount() != null
+                                        && amount.compareTo(adj.getSystemAmount()) != 0);
+                    }
                     adj.setUpdatedAt(OffsetDateTime.now());
                     payrollAdjustmentRepository.save(adj);
                 });
@@ -829,13 +1470,19 @@ public class PayrollRunItemService {
      * recalculates payroll hours and base pay, then recalculates all summary
      * totals from adjustment lines.
      */
-    private PayrollRunItem recalculateFromMonthlyReport(PayrollRunItem item, MonthlyReport mr) {
+    private PayrollRunItem recalculateFromMonthlyReport(PayrollRunItem item, MonthlyReport mr,
+                                                        PayrollSchemeScope scope) {
 
-        // What this employee's compensation scheme allows across this month.
-        // Resolved once here and consulted below; null means unrestricted.
-        PayrollSchemeScope scope = payrollSchemeScopeService.scopeFor(
-                item.getEmployee() == null ? null : item.getEmployee().getId(),
-                mr.getStartDate(), mr.getEndDate());
+        // `scope` is what this employee's compensation scheme allows across this
+        // month, resolved by the caller so that a payroll run resolves it once for
+        // the whole batch. null means unrestricted.
+
+        // EVERY DATE-EFFECTIVE VALUE IN THIS METHOD IS READ AT THIS DATE, never at
+        // now(): the rate, the meal price, the transport price. The monthly
+        // report's start date IS the payroll month and is NOT NULL, so the period
+        // is always known and no fallback is needed. Reading these with now() is
+        // what made recalculating March in July charge July's prices.
+        LocalDate pricingDate = mr.getStartDate();
 
         // ── Operational totals from monthly report ────────────────────────────
         item.setTotalShiftMinutes(safe(mr.getTotalShiftMinutes()));
@@ -859,9 +1506,20 @@ public class PayrollRunItemService {
         item.setApprovedPerformanceRate(mr.getApprovedPerformanceRate());
         item.setPerformanceCoefficient(mr.getPerformanceCoefficient());
 
-        // ── Hourly rate: refresh system rate from employee ────────────────────
-        if (item.getEmployee() != null && item.getEmployee().getHourlyRate() != null) {
-            BigDecimal employeeRate = item.getEmployee().getHourlyRate();
+        // ── Hourly rate: the rate in force FOR THIS PERIOD ────────────────────
+        //
+        // The value history first, because it is the only source that knows what
+        // the rate was in March as opposed to what it is today. employees.hourly_rate
+        // is the fallback for anyone the backfill could not reconstruct — it is
+        // still today's truth, and reading it is exactly what happened before, so
+        // the fallback can only reproduce old behaviour, never make it worse.
+        //
+        // NEITHER source having an answer leaves hourly_rate_system untouched,
+        // which is also what happened before: 923 of 949 items calculate at rate 0
+        // and must keep doing so. Overwriting with zero here would be a change
+        // dressed up as a refactor.
+        BigDecimal employeeRate = hourlyRateFor(item, pricingDate);
+        if (employeeRate != null) {
             item.setHourlyRateSystem(employeeRate);
             if (!Boolean.TRUE.equals(item.getHourlyRateOverridden())) {
                 item.setHourlyRate(employeeRate);
@@ -869,8 +1527,12 @@ public class PayrollRunItemService {
         }
 
         // ── Payroll minutes ───────────────────────────────────────────────────
-        int manualAdj = item.getManualAdjustedMinutes() != null ? item.getManualAdjustedMinutes() : 0;
-        item.setTotalPayrollMinutes(safe(mr.getTotalWorkMinutes()) + manualAdj);
+        // The corrections are rows. Summing them rather than reading the column
+        // means two corrections with different causes add up correctly, and one
+        // can be withdrawn without anybody recomputing the other by hand.
+        int minuteCorrection = payableMinuteCorrectionFor(item.getId());
+        item.setManualAdjustedMinutes(minuteCorrection);   // mirror, dropped in phase 7
+        item.setTotalPayrollMinutes(safe(mr.getTotalWorkMinutes()) + minuteCorrection);
 
         // ── Meal allowance count + recalc total ───────────────────────────────
         //
@@ -878,39 +1540,175 @@ public class PayrollRunItemService {
         // item.totalMealAllowanceAmount DIRECTLY, not through the adjustment
         // line, so suppressing only the adjustment row would remove the line
         // from the payslip while still paying the money.
-        OffsetDateTime now = OffsetDateTime.now();
-        boolean mealAllowed = allowsAdjustmentCode(scope, "MEAL_ALLOWANCE");
-        int mealCount = !mealAllowed ? 0
-                : (mr.getMealAllowanceNum() != null ? mr.getMealAllowanceNum() : 0);
-        item.setMealAllowanceCount(mealCount);
+        // The maths for these two lines now lives in a calculator each. This method
+        // still writes both the item columns AND the adjustment rows — the double
+        // bookkeeping is phase 4's to remove, not phase 3's.
+        ComponentContext calcContext = componentContextFor(item, mr, pricingDate);
 
-        BigDecimal mealSystemRate = appSettingService.getMealAllowancePerDay(now);
-        item.setMealAllowanceUnitAmountSystem(mealSystemRate);
-        if (!Boolean.TRUE.equals(item.getMealAllowanceUnitAmountOverridden())) {
-            item.setMealAllowanceUnitAmount(mealSystemRate);
-        }
-        BigDecimal mealUnitAmt = item.getMealAllowanceUnitAmount() != null
-                ? item.getMealAllowanceUnitAmount() : BigDecimal.ZERO;
+        ComponentResult meal = calculatorRegistry
+                .require(CalculationKeys.MEAL_BY_ELIGIBLE_SHIFTS).calculate(calcContext);
+
+        boolean mealAllowed = allowsAdjustmentCode(scope, "MEAL_ALLOWANCE");
+        int mealCount = !mealAllowed ? 0 : intValue(meal.systemQuantity());
+
+        BigDecimal mealSystemRate = meal.systemUnitAmount() != null
+                ? meal.systemUnitAmount() : BigDecimal.ZERO;
+
+        // STEP 2: the price a person set is read from the LINE, not from
+        // meal_allowance_unit_amount_overridden. The column is still written, from
+        // the line, until phase 7 drops it.
+        Map<String, PayrollAdjustment> lines = calculatedLines(item.getId());
+        PayrollAdjustment mealLine = lines.get("MEAL_ALLOWANCE");
+        boolean mealPriceIsHuman = mealLine != null && mealAllowed
+                && differsFromSystem(mealLine.getUnitAmount(), mealLine.getSystemUnitAmount());
+
+        BigDecimal mealUnitAmt = mealPriceIsHuman ? mealLine.getUnitAmount() : mealSystemRate;
         BigDecimal totalMeal = mealUnitAmt.multiply(BigDecimal.valueOf(mealCount)).setScale(2, RoundingMode.HALF_UP);
-        item.setTotalMealAllowanceAmount(totalMeal);
-        updateAdjustmentByCategoryCode(item.getId(), "MEAL_ALLOWANCE", totalMeal, true);
+        syncAdjustment(item.getId(), "MEAL_ALLOWANCE", totalMeal, meal, mealAllowed);
 
         // ── Transport allowance ───────────────────────────────────────────────
         // Same reasoning as the meal allowance above: the item column feeds the
         // total directly, so it has to be zeroed and not just left unlinked.
+        //
+        // THE UNIT PRICE IS NOW THE EMPLOYEE'S, NOT THE GLOBAL SETTING. Transport
+        // is paid to some people and not others, at rates that differ per person,
+        // so a single app_settings figure could never express it — which is why
+        // transport_allowance_days was never computed and the whole line has been
+        // structurally zero. An employee with no TRANSPORT_FIXED_MONTHLY in force gets 0,
+        // and that is a correct answer rather than a fault.
         boolean transportAllowed = allowsAdjustmentCode(scope, CAT_CODE_TRANSPORT);
-        BigDecimal transportSystemRate = transportAllowed
-                ? appSettingService.getTransportAllowancePerDay(now)
-                : BigDecimal.ZERO;
-        item.setTransportAllowanceUnitAmount(transportSystemRate);
-        int transportDays = !transportAllowed ? 0
-                : (item.getTransportAllowanceDays() != null ? item.getTransportAllowanceDays() : 0);
-        BigDecimal totalTransport = transportSystemRate
-                .multiply(BigDecimal.valueOf(transportDays)).setScale(2, RoundingMode.HALF_UP);
-        item.setTotalTransportAllowanceAmountSystem(totalTransport);
-        if (!Boolean.TRUE.equals(item.getTotalTransportAllowanceAmountOverridden())) {
-            item.setTotalTransportAllowanceAmount(totalTransport);
-            updateAdjustmentByCategoryCode(item.getId(), "TRANSPORT_ALLOWANCE", totalTransport, true);
+        ComponentResult transport = transportAllowed
+                ? calculatorRegistry.require(CalculationKeys.TRANSPORT_BY_QUALIFYING_SHIFTS)
+                        .calculate(calcContext)
+                : ComponentResult.zero("EXCLUDED_BY_SCHEME");
+
+        // The count and the unit price live on the TRANSPORT_ALLOWANCE line as
+        // system_quantity and system_unit_amount — the item columns that used to
+        // mirror them were read by nothing and are gone (2026-08-31-01).
+        BigDecimal totalTransport = transport.systemAmount();
+
+        // STEP 2: was total_transport_allowance_amount_overridden. is_overridden is
+        // the modern record and carries a reason; has_manual_input covers the rows
+        // that predate that rule and were settled without one.
+        // transportAllowed for the same reason as the bonus above: an excluded line
+        // is about to be zeroed, and its leftover amount is not somebody's decision.
+        PayrollAdjustment transportLine = lines.get(CAT_CODE_TRANSPORT);
+        boolean transportIsHuman = transportLine != null && transportAllowed
+                && (Boolean.TRUE.equals(transportLine.getIsOverridden())
+                    || (Boolean.TRUE.equals(transportLine.getHasManualInput())
+                        && differsFromSystem(transportLine.getAmount(), transportLine.getSystemAmount())));
+
+        syncAdjustment(item.getId(), CAT_CODE_TRANSPORT, totalTransport, transport,
+                transportAllowed, !transportIsHuman);
+
+        // ── Monthly bonus ─────────────────────────────────────────────────────
+        // The base bonus and the hours tier are a rule, not a number somebody types
+        // in every month. An override still wins: totalBonusAmountOverridden is
+        // checked exactly as meal and transport are.
+        boolean bonusAllowed = allowsAdjustmentCode(scope, CAT_CODE_BONUS)
+                && (scope == null || scope.allowsPerformanceBonus());
+        ComponentResult bonus = bonusAllowed
+                ? calculatorRegistry.require(CalculationKeys.MONTHLY_BONUS_FROM_RULES)
+                        .calculate(calcContext)
+                : ComponentResult.zero(scope != null && !scope.allowsPerformanceBonus()
+                        ? "SCHEME_PAYS_NO_BONUS" : "EXCLUDED_BY_SCHEME");
+
+        // THE BONUS HAS TWO NAMED PARTS AND THEY GO IN THEIR OWN COLUMNS.
+        //
+        //   base       — the employee's own amount from bonus_categories, resolved
+        //                for the period through employees_bonus_history, granted
+        //                whole or not at all once the month's minimum hours are met
+        //   correction — the hours tier from bonus_eligibility_rules
+        //   total      — the two added together
+        //
+        // This used to write the calculator's WHOLE result into base_bonus_amount
+        // and leave bonus_correction_amount_system at zero, so the panel showed
+        // "Osnovni bonus 7.500" when the employee's category was 5.000 and the
+        // tier 2.500, and "Korekcija" read 0 unless somebody typed one. The money
+        // was right; the two figures it is made of were not.
+        BigDecimal baseSystem = bonus.numericInput(MonthlyBonusCalculator.INPUT_BASE_BONUS)
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal correctionSystem = bonus.numericInput(MonthlyBonusCalculator.INPUT_TIER_BONUS)
+                .setScale(2, RoundingMode.HALF_UP);
+
+        item.setBaseBonusAmountSystem(baseSystem);
+        item.setBonusCorrectionAmountSystem(correctionSystem);
+        item.setTotalBonusAmountSystem(bonus.systemAmount());
+
+        // STEP 2: three flags on the item become three comparisons on the line.
+        //
+        // The line keeps `amount` as the EFFECTIVE TOTAL — what is paid, and what
+        // the earnings sum reads. Narrowing it to the base alone would have meant
+        // changing that sum to amount + correction_amount, and getting the order of
+        // those two changes wrong is a double-counted bonus. The parts stay
+        // recoverable: the effective base is amount minus correction_amount.
+        PayrollAdjustment bonusLine = lines.get(CAT_CODE_BONUS);
+
+        BigDecimal effectiveCorrection = correctionSystem;
+        BigDecimal effectiveBase = baseSystem;
+        boolean totalIsTyped = false;
+
+        // A category the scheme excludes takes NOTHING from the line. Its row is
+        // zeroed and un-applied later by neutraliseExcludedAdjustments, so reading
+        // a leftover figure off it here and calling that a human's decision left
+        // the item columns claiming a 4.000 bonus for an employee whose scheme pays
+        // none — the money was right, because the sums filter on is_applied, and
+        // the screen was wrong, because the panel reads the columns.
+        if (bonusLine != null && bonusAllowed) {
+            totalIsTyped = Boolean.TRUE.equals(bonusLine.getIsOverridden());
+
+            if (differsFromSystem(bonusLine.getCorrectionAmount(), bonusLine.getSystemCorrectionAmount())) {
+                effectiveCorrection = bonusLine.getCorrectionAmount();
+            }
+            BigDecimal lineBase = orZero(bonusLine.getAmount())
+                    .subtract(orZero(bonusLine.getCorrectionAmount()));
+            BigDecimal lineSystemBase = orZero(bonusLine.getSystemAmount())
+                    .subtract(orZero(bonusLine.getSystemCorrectionAmount()));
+            if (differsFromSystem(lineBase, lineSystemBase)) {
+                effectiveBase = lineBase;
+            }
+        }
+
+        item.setBaseBonusAmount(effectiveBase);
+        item.setBonusCorrectionAmount(effectiveCorrection);
+        item.setBaseBonusAmountOverridden(differsFromSystem(effectiveBase, baseSystem));
+        item.setBonusCorrectionAmountOverridden(differsFromSystem(effectiveCorrection, correctionSystem));
+        item.setTotalBonusAmountOverridden(totalIsTyped);
+
+        if (!totalIsTyped) {
+            BigDecimal totalBonus = effectiveBase.add(effectiveCorrection)
+                    .setScale(2, RoundingMode.HALF_UP);
+            item.setTotalBonusAmount(totalBonus);
+            syncAdjustment(item.getId(), CAT_CODE_BONUS, totalBonus, bonus, bonusAllowed);
+            // The parts, recorded on the line beside the total they add up to.
+            if (bonusLine != null) {
+                bonusLine.setSystemCorrectionAmount(correctionSystem);
+                bonusLine.setCorrectionAmount(effectiveCorrection);
+                payrollAdjustmentRepository.save(bonusLine);
+            }
+        } else {
+            // The rules' own figures still belong on the line, even though the
+            // total is somebody's: that is how the panel can show what would
+            // otherwise have been paid.
+            syncAdjustment(item.getId(), CAT_CODE_BONUS, bonus.systemAmount(), bonus,
+                    bonusAllowed, false);
+
+            // A TYPED TOTAL HAS NO PARTS — that is what overriding a total means.
+            //
+            // Left alone, the parts kept whatever split preceded the override: one
+            // real item read "base 0 + additional 2.000" beside a line holding
+            // 2.000 as base. Subtracting the rules' tier from the typed figure is
+            // no better — a total of 2.000 against a 2.500 tier gives a base of
+            // MINUS 500, which is arithmetic nobody typed and nobody means.
+            //
+            // So the whole figure is the base and the additional is nothing. The
+            // panel then reads "2.000 + 0 = 2.000", which is exactly what somebody
+            // decided; the rules' own figures are still on the line as
+            // system_amount and system_correction_amount.
+            BigDecimal typedTotal = orZero(bonusLine.getAmount());
+            item.setTotalBonusAmount(typedTotal);
+            item.setBaseBonusAmount(typedTotal);
+            item.setBonusCorrectionAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         }
 
         // ── previousNetPayableAmount — from previous month's item for this employee ──
@@ -931,7 +1729,6 @@ public class PayrollRunItemService {
         // ── Version stamp ─────────────────────────────────────────────────────
         item.setBasedOnVersion(mr.getVersion());
         item.setNeedsRecalculation(false);
-        item.setLastCalculatedAt(LocalDateTime.now());
         item.setUpdatedAt(OffsetDateTime.now());
 
         log.info("PayrollRunItem {} recalculated from monthly_report id={} version={}",
@@ -1011,25 +1808,26 @@ public class PayrollRunItemService {
                 .map(c -> c.getAmount() != null ? c.getAmount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // Meal and transport are taken directly from item fields (always up-to-date).
-        // Their corresponding adjustments (MEAL_ALLOWANCE, TRANSPORT_ALLOWANCE) are
-        // excluded from additionsSum to avoid double-counting.
-        BigDecimal additionsSum = adjustments.stream()
+        // EVERY EARNING COMES FROM ITS ADJUSTMENT ROW, ONCE.
+        //
+        // Meal and transport used to be added from item columns as well, with their
+        // adjustment rows excluded by code so the money was not counted twice. That
+        // is the double bookkeeping this phase ends: the row is the source, the
+        // columns are a mirror kept for one cycle and dropped in phase 7.
+        //
+        // Summed by IMPACT, not by section. GROSS_PLUS is exactly
+        // {MEAL_ALLOWANCE, TRANSPORT_ALLOWANCE, FIXED_SALARY, MONTHLY_BONUS, OTHER,
+        // POSITIVE_NEGATIVE_CORRECTION} — the same money as before, reached without
+        // the special cases, and without depending on which section a category was
+        // moved into for display.
+        BigDecimal earningsSum = adjustments.stream()
                 .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                        && SECTION_ADDITIONS.equalsIgnoreCase(
-                                a.getPayrollAdjustmentCategory().getSectionCode())
-                        && !"MEAL_ALLOWANCE".equals(a.getPayrollAdjustmentCategory().getCode())
-                        && !"TRANSPORT_ALLOWANCE".equals(a.getPayrollAdjustmentCategory().getCode()))
+                        && IMPACT_GROSS_PLUS.equals(a.getPayrollAdjustmentCategory().getImpactCode()))
                 .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal meal      = item.getTotalMealAllowanceAmount()      != null ? item.getTotalMealAllowanceAmount()      : BigDecimal.ZERO;
-        BigDecimal transport = item.getTotalTransportAllowanceAmount()  != null ? item.getTotalTransportAllowanceAmount()  : BigDecimal.ZERO;
-
         BigDecimal totalNetEarnings = categoriesSum
-                .add(meal)
-                .add(transport)
-                .add(additionsSum)
+                .add(earningsSum)
                 .setScale(2, RoundingMode.HALF_UP);
         item.setTotalNetEarnings(totalNetEarnings);
 
@@ -1042,6 +1840,13 @@ public class PayrollRunItemService {
         item.setTotalDeductionsAmount(deductions.setScale(2, RoundingMode.HALF_UP));
 
         // ── previouslyPaidAmount ──────────────────────────────────────────────
+        //
+        // STILL FILTERED BY SECTION, and deliberately so. Switching this side to
+        // impact codes as well would pull in PHONE_CURRENT_MONTH and
+        // PAID_PREVIOUS_PERIOD, which reach no total today — the current month's
+        // phone is deducted NEXT month as PHONE_PREVIOUS_MONTH, and
+        // PAID_PREVIOUS_PERIOD is a display mirror. Making either start reducing
+        // somebody's pay is a business decision, not a refactor. See OPEN-12.
         BigDecimal previouslyPaid = adjustments.stream()
                 .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
                         && SECTION_SETTLEMENTS.equalsIgnoreCase(
@@ -1059,10 +1864,44 @@ public class PayrollRunItemService {
         BigDecimal prevNetPayable = item.getPreviousNetPayableAmount() != null
                 ? item.getPreviousNetPayableAmount() : BigDecimal.ZERO;
         item.setNetPayableAmount(prevNetPayable.add(currentBalance).setScale(2, RoundingMode.HALF_UP));
+
+        writeDerivedSettlementLines(item);
+    }
+
+    /**
+     * The two lines that SHOW a total rather than contributing to one.
+     *
+     * <p>Written here, at the end of the summary, because they are projections of
+     * numbers this method has just computed — {@code previouslyPaidAmount} and
+     * {@code previousNetPayableAmount}. Computing them anywhere else would let the
+     * payslip disagree with its own total.
+     *
+     * <p>Both sit in sections that reach no balance ({@code SETTLEMENTS_SUM} and
+     * {@code BALANCE}) and that is essential, not incidental:
+     * {@code PAID_PREVIOUS_PERIOD} IS the settlements sum, so counting it among
+     * them would deduct everything twice, and {@code PREVIOUS_BALANCE} is already
+     * inside {@code netPayableAmount}.
+     */
+    private void writeDerivedSettlementLines(PayrollRunItem item) {
+        MonthlyReport mr = item.getMonthlyReport();
+        if (mr == null || mr.getStartDate() == null) {
+            log.debug("PayrollRunItem {} has no period — skipping the derived settlement lines",
+                    item.getId());
+            return;
+        }
+        ComponentContext ctx = componentContextFor(item, mr, mr.getStartDate());
+
+        ComponentResult paid = calculatorRegistry
+                .require(CalculationKeys.PAID_PREVIOUS_PERIOD_SUM).calculate(ctx);
+        syncAdjustment(item.getId(), "PAID_PREVIOUS_PERIOD", paid.systemAmount(), paid, true);
+
+        ComponentResult carried = calculatorRegistry
+                .require(CalculationKeys.PREVIOUS_BALANCE_CARRIED).calculate(ctx);
+        syncAdjustment(item.getId(), "PREVIOUS_BALANCE", carried.systemAmount(), carried, true);
     }
 
     /** Re-fetches with the monthly report joined and recalculates if version is stale or needs_recalculation is set. */
-    private PayrollRunItem refreshIfStale(PayrollRunItem item) {
+    private PayrollRunItem refreshIfStale(PayrollRunItem item, ScopeSource scopes) {
         return payrollRunItemRepository.findByIdWithMonthlyReport(item.getId())
                 .map(fresh -> {
                     MonthlyReport mr = fresh.getMonthlyReport();
@@ -1081,14 +1920,15 @@ public class PayrollRunItemService {
                     // touches an amount. Without it an item that was refreshed
                     // before a scheme change looks up to date forever and simply
                     // never grows the row its work now lands on.
-                    boolean addedRowWithActivity = reconcileItemCategories(fresh, mr);
+                    PayrollSchemeScope scope = scopes.scopeOf(fresh);
+                    boolean addedRowWithActivity = reconcileItemCategories(fresh, mr, scope);
 
                     Integer latest = mr.getVersion();
                     Integer used   = fresh.getBasedOnVersion();
                     boolean versionStale   = latest != null && !latest.equals(used);
                     boolean flaggedForRecalc = Boolean.TRUE.equals(fresh.getNeedsRecalculation());
                     if (!versionStale && !flaggedForRecalc && !addedRowWithActivity) return fresh;
-                    return recalculateFromMonthlyReport(fresh, mr);
+                    return recalculateFromMonthlyReport(fresh, mr, scope);
                 })
                 .orElse(item);
     }
@@ -1112,7 +1952,8 @@ public class PayrollRunItemService {
      * @return true when a row was added that the monthly report has activity for,
      *         meaning the amounts are now out of date and must be recalculated
      */
-    private boolean reconcileItemCategories(PayrollRunItem item, MonthlyReport mr) {
+    private boolean reconcileItemCategories(PayrollRunItem item, MonthlyReport mr,
+                                            PayrollSchemeScope scope) {
         if (STATUS_LOCKED.equals(item.getStatus())) {
             return false;
         }
@@ -1129,7 +1970,6 @@ public class PayrollRunItemService {
                         c -> safe(c.getTotalMinutes()),
                         (a, b) -> a));
 
-        PayrollSchemeScope scope = scopeFor(item);
         java.util.Set<Long> wanted = new java.util.HashSet<>(monthlyMinutes.keySet());
         if (scope != null) {
             wanted.addAll(scope.allowedWorkCategoryIds());
@@ -1154,6 +1994,89 @@ public class PayrollRunItemService {
                 item.getId(), categories.size(),
                 addedWithActivity ? " — recalculating, one of them has activity" : "");
         return addedWithActivity;
+    }
+
+    /** Every applied, unarchived correction for this item, as one signed number. */
+    private int payableMinuteCorrectionFor(Long itemId) {
+        return timeAdjustmentRepository.sumPayableMinutesFor(itemId);
+    }
+
+    /**
+     * Put the item's single manual time correction at {@code minutes}.
+     *
+     * <p>One row, because that is what the one integer on the item could express
+     * and nothing more; a second cause gets its own row through the dedicated
+     * API, not through this patch field. Zero means "there is no correction", so
+     * the row is archived rather than stored as a zero the database would reject
+     * anyway.
+     *
+     * <p>The reason is compulsory when the category says so, which is the whole
+     * reason the table exists. Rejected here with a clear message rather than
+     * left to the trigger, which would surface as a raw SQL error.
+     */
+    private void syncManualTimeCorrection(PayrollRunItem item, int minutes, String reason) {
+        PayrollTimeAdjustmentCategory category = timeAdjustmentCategoryRepository
+                .findByCode(PayrollTimeAdjustmentCategory.CODE_MANUAL_CORRECTION)
+                .orElseThrow(() -> new IncompletePayrollConfigurationException(
+                        "Kategorija korekcije vremena \"MANUAL_CORRECTION\" ne postoji."));
+
+        PayrollTimeAdjustment existing = timeAdjustmentRepository
+                .findByItemIdWithCategory(item.getId()).stream()
+                .filter(t -> t.getCategory().getId().equals(category.getId()))
+                .findFirst().orElse(null);
+
+        if (minutes == 0) {
+            if (existing != null) {
+                existing.setIsApplied(false);
+                existing.setArchivedAt(OffsetDateTime.now());
+                existing.setEditedBy(currentUserService.getCurrentUserId());
+                existing.setEditedAt(OffsetDateTime.now());
+                timeAdjustmentRepository.save(existing);
+            }
+            item.setManualAdjustedMinutes(0);
+            return;
+        }
+
+        if (minutes < 0 && !Boolean.TRUE.equals(category.getAllowNegative())) {
+            throw new ConflictException("Korekcija vremena ne može biti negativna.");
+        }
+        if (minutes > 0 && !Boolean.TRUE.equals(category.getAllowPositive())) {
+            throw new ConflictException("Korekcija vremena ne može biti pozitivna.");
+        }
+
+        boolean changed = existing == null || !Integer.valueOf(minutes).equals(existing.getMinutes());
+        String effectiveReason = reason != null && !reason.isBlank()
+                ? reason
+                : (existing != null ? existing.getReason() : null);
+
+        if (Boolean.TRUE.equals(category.getRequireReason())
+                && changed
+                && (effectiveReason == null || effectiveReason.isBlank())) {
+            throw new ConflictException("Razlog je obavezan za korekciju radnog vremena.");
+        }
+
+        if (existing == null) {
+            timeAdjustmentRepository.save(PayrollTimeAdjustment.builder()
+                    .payrollRunItem(item)
+                    .category(category)
+                    .systemMinutes(0)
+                    .minutes(minutes)
+                    .hasManualInput(true)
+                    .reason(effectiveReason)
+                    .isApplied(true)
+                    .createdBy(currentUserService.getCurrentUserId())
+                    .build());
+        } else {
+            existing.setMinutes(minutes);
+            existing.setReason(effectiveReason);
+            existing.setHasManualInput(true);
+            existing.setIsApplied(true);
+            existing.setArchivedAt(null);
+            existing.setEditedBy(currentUserService.getCurrentUserId());
+            existing.setEditedAt(OffsetDateTime.now());
+            timeAdjustmentRepository.save(existing);
+        }
+        item.setManualAdjustedMinutes(minutes);
     }
 
     private static int safe(Integer v) { return v != null ? v : 0; }

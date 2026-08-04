@@ -38,5 +38,15 @@ public enum AppPermission {
     USER_SESSION_REVOKE,
 
     /** Read or modify another user's preferences. */
-    USER_PREFERENCES_ADMIN
+    USER_PREFERENCES_ADMIN,
+
+    /**
+     * Recalculate every payroll item in one sweep.
+     *
+     * <p>Maintenance, not a feature: it exists so a model change can be rolled
+     * across data that is otherwise only recalculated when somebody opens it. It
+     * writes to every unlocked item, so it belongs to whoever owns the payroll —
+     * RolePermissions grants it to admin and developer and to nobody else.
+     */
+    PAYROLL_MAINTENANCE_RECALCULATE
 }

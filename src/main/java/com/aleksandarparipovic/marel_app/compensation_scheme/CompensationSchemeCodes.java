@@ -23,6 +23,16 @@ public final class CompensationSchemeCodes {
      */
     public static final String FOREIGN_FIXED_COEFFICIENT = "FOREIGN_FIXED_COEFFICIENT";
 
+    /**
+     * Commercial staff: work categories behave as under STANDARD, but no hourly
+     * bonus is earned and the bonus line is shown at zero.
+     *
+     * <p>Named here because the 2026-08-15-02 backfill depends on it. It replaces
+     * {@code employees.works_in_commercial} as the payroll authority — that column
+     * stays as personnel data, and no calculator reads it.
+     */
+    public static final String COMMERCIAL = "COMMERCIAL";
+
     private CompensationSchemeCodes() {
     }
 }

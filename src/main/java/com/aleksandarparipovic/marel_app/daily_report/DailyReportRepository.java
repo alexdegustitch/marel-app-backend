@@ -21,6 +21,35 @@ public interface DailyReportRepository extends JpaRepository<DailyReport, Long>,
 
     List<DailyReport> findByEmployee_IdAndWorkDateBetween(Long employeeId, LocalDate start, LocalDate end);
 
+    /**
+     * How many work-shift records in the period carry actual WORK — the transport
+     * counting rule (D3).
+     *
+     * <p>A plain count is a count of DISTINCT shifts because
+     * {@code uq_daily_reports_employee_shift UNIQUE (employee_id, work_shift_id)}
+     * allows exactly one row per shift. If that constraint ever goes, this silently
+     * starts double-paying; {@code PayrollGoldenSnapshotIT} asserts it still exists.
+     *
+     * <p>{@code total_work_minutes} counts only categories of type WORK — absence
+     * and sick leave are excluded by {@code DailyRecalcService.fillDailyTotals} —
+     * and it is not the planned shift duration, which is
+     * {@code total_shift_minutes}. So a shift somebody was absent for earns nothing.
+     *
+     * <p>A shift that runs past midnight is one row carrying the day it started on,
+     * so it is one arrival rather than two.
+     */
+    @Query(value = """
+        SELECT count(*)
+        FROM daily_reports dr
+        WHERE dr.employee_id = :employeeId
+          AND dr.work_date BETWEEN :periodStart AND :periodEnd
+          AND dr.total_work_minutes > 0
+          AND dr.archived_at IS NULL
+        """, nativeQuery = true)
+    long countQualifyingShifts(@Param("employeeId") Long employeeId,
+                               @Param("periodStart") LocalDate periodStart,
+                               @Param("periodEnd") LocalDate periodEnd);
+
     @Query(value = """
         SELECT
             dr.employee_id                              AS employeeId,

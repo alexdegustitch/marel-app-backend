@@ -170,6 +170,16 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
         """)
     int markNeedsRecalculationByEmployeeId(@Param("employeeId") Long employeeId);
 
+    /**
+     * @deprecated Retroactive repricing — do not use. Writing a rate onto items
+     * this way overwrites months the rate was never in force for, which is the
+     * defect employee_payroll_value_history exists to close. Record the rate with
+     * {@code EmployeePayrollValueService.setValue} and call
+     * {@link #markNeedsRecalculationByEmployeeId} instead: each item then
+     * re-resolves the rate for ITS OWN month. Kept only so an existing caller
+     * outside this repository is not silently removed.
+     */
+    @Deprecated
     @Modifying
     @Query("""
         UPDATE PayrollRunItem pri
@@ -183,4 +193,29 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
         """)
     int updateHourlyRateByEmployeeId(@Param("employeeId") Long employeeId,
                                      @Param("newRate") java.math.BigDecimal newRate);
+
+    /**
+     * Flag every item a maintenance sweep may recalculate.
+     *
+     * <p>LOCKED items are excluded, not skipped later: a locked item is an
+     * immutable snapshot and getForPayrollAccess refuses to recompute it anyway.
+     * Flagging one would leave needs_recalculation set forever on a row nothing
+     * will ever clear.
+     */
+    @Modifying
+    @Query("""
+        UPDATE PayrollRunItem pri
+        SET pri.needsRecalculation = true
+        WHERE pri.archivedAt IS NULL
+          AND pri.status <> 'LOCKED'
+        """)
+    int flagAllForRecalculation();
+
+    @Query("""
+        SELECT pri.id FROM PayrollRunItem pri
+        WHERE pri.archivedAt IS NULL
+          AND pri.status <> 'LOCKED'
+        ORDER BY pri.id
+        """)
+    List<Long> findAllRecalculableIds();
 }

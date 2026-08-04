@@ -47,6 +47,7 @@ public class PayrollAdjustmentService {
         // this endpoint can add one directly. Checked here too, or the exclusion
         // would be a UI convention rather than a rule.
         requireAdjustmentAllowed(request.getPayrollRunItemId(), request.getPayrollAdjustmentCategoryId());
+        requireNoExistingRow(request.getPayrollRunItemId(), request.getPayrollAdjustmentCategoryId());
 
         PayrollAdjustment entity = new PayrollAdjustment();
         entity.setPayrollRunItem(referenceProvider.getRequiredReference(PayrollRunItem.class, request.getPayrollRunItemId(), "payrollRunItemId"));
@@ -89,6 +90,32 @@ public class PayrollAdjustmentService {
             throw new IllegalArgumentException("PayrollAdjustment not found");
         }
         payrollAdjustmentRepository.deleteById(id);
+    }
+
+    /**
+     * Refuse a second row of the same category on one payroll item (D9).
+     *
+     * <p>{@code uq_payroll_adjustment_item_category} is the real guarantee — two
+     * concurrent requests can each pass this check and then both insert. This
+     * exists so the ordinary case fails with a sentence somebody can act on rather
+     * than a constraint violation.
+     *
+     * <p>A category is a labelled slot on the payslip, not a ledger: there is one
+     * "Ostalo" line and it holds one number. Several entries that need to stay
+     * apart belong in separate categories, which is configuration.
+     */
+    private void requireNoExistingRow(Long payrollRunItemId, Long adjustmentCategoryId) {
+        if (payrollRunItemId == null || adjustmentCategoryId == null) {
+            return;
+        }
+        boolean exists = payrollAdjustmentRepository
+                .findByPayrollRunItemIdWithCategory(payrollRunItemId).stream()
+                .anyMatch(a -> a.getPayrollAdjustmentCategory().getId().equals(adjustmentCategoryId));
+
+        if (exists) {
+            throw new ConflictException(
+                    "Ova stavka već postoji na ovom obračunu. Izmenite postojeću umesto dodavanja nove.");
+        }
     }
 
     /**

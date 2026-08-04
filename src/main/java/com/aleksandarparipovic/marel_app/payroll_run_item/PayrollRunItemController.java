@@ -9,6 +9,7 @@ import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActi
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -100,6 +101,26 @@ public class PayrollRunItemController {
             @PathVariable Long id,
             @RequestBody PayrollRunItemPatchRequest request) {
         return ResponseEntity.ok(payrollRunItemService.patch(id, request));
+    }
+
+    /**
+     * Freeze the item: no recalculation touches it again.
+     *
+     * <p>POST rather than PATCH because it is an event, not a field. Refused with a
+     * list of the lines still waiting for input — a month must not be frozen with a
+     * zero nobody decided on.
+     */
+    @PostMapping("/{id}/lock")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<PayrollRunItemResponse> lock(@PathVariable Long id) {
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.lock(id)));
+    }
+
+    /** Reopen a frozen item. Separate permission, separate audit entry. */
+    @PostMapping("/{id}/unlock")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<PayrollRunItemResponse> unlock(@PathVariable Long id) {
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.unlock(id)));
     }
 
     @PutMapping("/{id}")

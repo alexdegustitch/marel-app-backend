@@ -17,16 +17,19 @@ import com.aleksandarparipovic.marel_app.employee.specification.EmployeeSpecific
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonusRepository;
+import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.CompensationSchemeInitializer;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueCodes;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueService;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
-import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategoryRepository;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -44,6 +47,7 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class EmployeeService {
 
     private final EmployeeRepository repository;
@@ -55,8 +59,9 @@ public class EmployeeService {
     private final PasswordEncoder passwordEncoder;
     private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final PayrollRunItemRepository payrollRunItemRepository;
-    private final PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
     private final CompensationSchemeInitializer compensationSchemeInitializer;
+    private final EmployeePayrollValueService employeePayrollValueService;
+    private final CurrentUserService currentUserService;
 
 
     public EmployeeBasicInfoDto getEmployeeById(Long employeeId){
@@ -161,9 +166,58 @@ public class EmployeeService {
         updateDepartmentIfChanged(employee, request);
         updateEmployeeBonus(employee, request);
 
+        // This form has no effective-date field, so the rate applies from the first
+        // of the current month. Recorded here for the same reason as in
+        // patchEmployee: until phase 7 drops employees.hourly_rate, both write paths
+        // have to reach the history, or whichever one skipped it would be silently
+        // overruled by the other on the next recalculation.
+        recordHourlyRate(id, employee.getHourlyRate(), null);
+
         return repository.findEmployeeWithBonusById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Employee projection not found"));
 
+    }
+
+    /**
+     * Write a rate change where payroll actually reads it: the value history.
+     *
+     * <p>{@code employees.hourly_rate} is no longer what prices a payroll item.
+     * {@code PayrollRunItemService.hourlyRateFor} resolves HOURLY_RATE in force on
+     * the payroll month's START DATE and only falls back to the column when the
+     * employee has no history at all. Writing the column alone therefore looked
+     * like it worked and was then reverted by the next recalculation, for exactly
+     * those employees who had a history row.
+     *
+     * <p>The old code also rewrote {@code payroll_run_items.hourly_rate} directly
+     * for every open month. That is what the history exists to prevent: it
+     * repriced months the rate was never in force for. Marking the items for
+     * recalculation gets the correct outcome instead — each one re-resolves the
+     * rate for ITS OWN month, so an earlier month keeps the earlier rate. It also
+     * repairs items that the old behaviour had already overwritten.
+     *
+     * <p>Items are marked whatever the effective date, deliberately: a backdated
+     * correction changes older months too, and only the recalculation itself can
+     * tell which. Locked items are excluded by the query.
+     */
+    private void recordHourlyRate(Long employeeId, BigDecimal rate, LocalDate effectiveFrom) {
+        if (rate == null) {
+            return;
+        }
+        LocalDate from = effectiveFrom != null
+                ? effectiveFrom
+                : LocalDate.now().withDayOfMonth(1);
+
+        boolean recorded = employeePayrollValueService.setValue(
+                employeeId, EmployeePayrollValueCodes.HOURLY_RATE, rate, from,
+                null, currentUserService.getCurrentUserId()).isPresent();
+
+        if (!recorded) {
+            return; // The rate in force from that date was already this one.
+        }
+
+        int marked = payrollRunItemRepository.markNeedsRecalculationByEmployeeId(employeeId);
+        log.info("Employee {} hourly rate set to {} from {}; {} unlocked payroll item(s) "
+                + "marked for recalculation", employeeId, rate, from, marked);
     }
 
     private void updateDepartmentIfChanged(Employee employee, EmployeeEditRequest request) {
@@ -296,11 +350,7 @@ public class EmployeeService {
             employee.setPreferredLocale(req.getPreferredLocale());
         }
 
-        boolean hourlyRateChanged = false;
         if (req.getHourlyRate() != null) {
-            if (employee.getHourlyRate() == null || employee.getHourlyRate().compareTo(req.getHourlyRate()) != 0) {
-                hourlyRateChanged = true;
-            }
             employee.setHourlyRate(req.getHourlyRate());
         }
 
@@ -331,10 +381,7 @@ public class EmployeeService {
 
         repository.save(employee);
 
-        if (hourlyRateChanged) {
-            payrollRunItemRepository.updateHourlyRateByEmployeeId(id, req.getHourlyRate());
-            payrollRunItemCategoryRepository.updateHourlyRateByEmployeeId(id, req.getHourlyRate());
-        }
+        recordHourlyRate(id, req.getHourlyRate(), req.getHourlyRateEffectiveFrom());
 
         return repository.findEmployeeWithBonusById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));

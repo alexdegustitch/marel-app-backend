@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -82,6 +83,8 @@ public class EmployeeCompensationSchemeService {
         // Locks this employee's periods for the rest of the transaction.
         List<EmployeeCompensationSchemeHistory> periods = historyRepository.lockHistoryFor(employeeId);
 
+        requireMonthBoundary(effectiveFrom, periods);
+
         EmployeeCompensationSchemeHistory covering = periods.stream()
                 .filter(p -> p.coversInclusive(effectiveFrom))
                 .findFirst()
@@ -113,7 +116,14 @@ public class EmployeeCompensationSchemeService {
             // end date, so the two periods touch without overlapping and the
             // transition day itself already belongs to the new scheme.
             covering.setValidUntil(effectiveFrom.minusDays(1));
-            historyRepository.save(covering);
+
+            // saveAndFlush, NOT save. Hibernate orders INSERTs before UPDATEs inside
+            // a flush, and IDENTITY generation forces the INSERT out the moment the
+            // new period is saved — so a plain save() here left the old period still
+            // open in the database when the new one arrived, and ex_ecsh_no_overlap
+            // rejected every scheme change for an employee who already had one.
+            // Which is every employee. The close has to reach the database first.
+            historyRepository.saveAndFlush(covering);
         }
 
         EmployeeCompensationSchemeHistory created = historyRepository.save(
@@ -131,6 +141,93 @@ public class EmployeeCompensationSchemeService {
                 employeeId, scheme.getCode(), effectiveFrom, created.getId());
 
         return created;
+    }
+
+    /**
+     * A scheme change takes effect on the first day of a month, and not this one (D1).
+     *
+     * <p>An employee must have exactly ONE scheme in any payroll month. A change
+     * dated mid-month would split the month in two, and
+     * {@link com.aleksandarparipovic.marel_app.work_category_resolution.PayrollSchemeScopeService}
+     * refuses to calculate that rather than merge the two policies — so the rule
+     * has to hold here, where somebody can still be told about it.
+     *
+     * <p>Refused rather than snapped forward: "from 15 September" and "from 1
+     * October" are different requests, and quietly turning one into the other means
+     * the confirmation screen shows a date the system did not use.
+     *
+     * <p>The FIRST assignment is exempt. A new employee starts on their hire date,
+     * whatever day of the month that is — that is not a change, it is the beginning
+     * of the history, and there is no earlier month for it to split.
+     */
+    private void requireMonthBoundary(LocalDate effectiveFrom,
+                                      List<EmployeeCompensationSchemeHistory> periods) {
+        if (periods.isEmpty()) {
+            return;
+        }
+        if (effectiveFrom.getDayOfMonth() != 1) {
+            throw new ConflictException(
+                    "Promena načina obračuna mora početi prvog dana u mesecu, a ne "
+                            + effectiveFrom + ". Obračunski mesec ne sme imati dva načina obračuna.");
+        }
+        LocalDate firstOfNextMonth = LocalDate.now().withDayOfMonth(1).plusMonths(1);
+        if (effectiveFrom.isBefore(firstOfNextMonth)) {
+            throw new ConflictException(
+                    "Promena načina obračuna može važiti najranije od " + firstOfNextMonth
+                            + ". Tekući mesec se već obračunava po postojećem načinu.");
+        }
+    }
+
+    /**
+     * Replace a scheme change that was scheduled but has not taken effect yet.
+     *
+     * <p>Separate from {@link #changeScheme}, which refuses when a later period
+     * exists. That refusal is right for the ordinary path — a future decision the
+     * user cannot see on this screen must not disappear because of an edit to the
+     * present — but somebody has to be able to correct a mistake, and doing it by
+     * hand in the database is worse.
+     *
+     * <p>The superseded period is ARCHIVED, not deleted: what was scheduled, and
+     * that somebody changed their mind, are both part of the record.
+     */
+    @Transactional
+    public EmployeeCompensationSchemeHistory replaceScheduledChange(Long employeeId,
+                                                                    Long schemeId,
+                                                                    LocalDate effectiveFrom,
+                                                                    String note) {
+        requireEmployee(employeeId);
+        LocalDate today = LocalDate.now();
+
+        List<EmployeeCompensationSchemeHistory> scheduled =
+                historyRepository.lockHistoryFor(employeeId).stream()
+                        .filter(p -> p.getValidFrom().isAfter(today))
+                        .toList();
+
+        if (scheduled.isEmpty()) {
+            throw new ConflictException(
+                    "Nema zakazane promene načina obračuna koja bi se zamenila.");
+        }
+
+        for (EmployeeCompensationSchemeHistory period : scheduled) {
+            period.setArchivedAt(OffsetDateTime.now());
+            historyRepository.save(period);
+            log.info("Archived scheduled scheme period {} for employee {} (superseded)",
+                    period.getId(), employeeId);
+        }
+        historyRepository.flush();
+
+        // Whatever was closed to make room for the archived period is open again:
+        // its valid_until pointed at a change that no longer happens.
+        historyRepository.lockHistoryFor(employeeId).stream()
+                .filter(p -> p.getArchivedAt() == null)
+                .filter(p -> p.getValidUntil() != null && !p.getValidUntil().isBefore(today))
+                .forEach(p -> {
+                    p.setValidUntil(null);
+                    historyRepository.save(p);
+                });
+        historyRepository.flush();
+
+        return changeScheme(employeeId, schemeId, effectiveFrom, note);
     }
 
     /**

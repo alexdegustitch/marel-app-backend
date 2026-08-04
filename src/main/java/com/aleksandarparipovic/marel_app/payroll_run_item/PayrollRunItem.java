@@ -107,8 +107,6 @@ public class PayrollRunItem {
 
     // ── Rate & base pay ─────────────────────────────────────────────────────
 
-    @Column(name = "adjustment_amount", nullable = false)
-    private BigDecimal adjustmentAmount;
 
     /** Gross earnings minus deductions (net before payment deductions) */
     @Column(name = "total_net_earnings")
@@ -125,37 +123,17 @@ public class PayrollRunItem {
 
     // ── Meal allowance ──────────────────────────────────────────────────────
 
-    @Column(name = "meal_allowance_count", nullable = false)
-    private Integer mealAllowanceCount;
 
-    @Column(name = "meal_allowance_unit_amount_system", nullable = false)
-    private BigDecimal mealAllowanceUnitAmountSystem;
 
-    @Column(name = "meal_allowance_unit_amount", nullable = false)
-    private BigDecimal mealAllowanceUnitAmount;
 
-    @Column(name = "meal_allowance_unit_amount_overridden", nullable = false)
-    private Boolean mealAllowanceUnitAmountOverridden;
 
-    @Column(name = "total_meal_allowance_amount", nullable = false)
-    private BigDecimal totalMealAllowanceAmount;
 
     // ── Transport allowance ─────────────────────────────────────────────────
 
-    @Column(name = "transport_allowance_days", nullable = false)
-    private Integer transportAllowanceDays;
 
-    @Column(name = "transport_allowance_unit_amount", nullable = false)
-    private BigDecimal transportAllowanceUnitAmount;
 
-    @Column(name = "total_transport_allowance_amount_system", nullable = false)
-    private BigDecimal totalTransportAllowanceAmountSystem;
 
-    @Column(name = "total_transport_allowance_amount", nullable = false)
-    private BigDecimal totalTransportAllowanceAmount;
 
-    @Column(name = "total_transport_allowance_amount_overridden", nullable = false)
-    private Boolean totalTransportAllowanceAmountOverridden;
 
     // ── Bonus components ────────────────────────────────────────────────────
 
@@ -208,11 +186,23 @@ public class PayrollRunItem {
     @Column(name = "previous_net_payable_amount")
     private BigDecimal previousNetPayableAmount;
 
-    /** total_gross_earnings - total_deductions_amount - previously_paid_amount */
+    /**
+     * total_net_earnings - previously_paid_amount.
+     *
+     * <p>NOT what the old comment here claimed. It named total_gross_earnings,
+     * which no code path ever computes and which is 0.00 in every row, and
+     * total_deductions_amount, which this does not subtract — deductions already
+     * reach the figure through the adjustment rows.
+     */
     @Column(name = "current_balance_amount", nullable = false)
     private BigDecimal currentBalanceAmount;
 
-    /** = current_balance_amount */
+    /**
+     * previous_net_payable_amount + current_balance_amount — NOT just the current
+     * balance, as the old comment said. This is the link between months: it
+     * becomes the next period's previous_net_payable_amount, so an unpaid balance
+     * carries forward instead of being forgotten.
+     */
     @Column(name = "net_payable_amount", nullable = false)
     private BigDecimal netPayableAmount;
 
@@ -251,8 +241,6 @@ public class PayrollRunItem {
     @Column(name = "needs_recalculation", nullable = false)
     private Boolean needsRecalculation = false;
 
-    @Column(name = "last_calculated_at")
-    private LocalDateTime lastCalculatedAt;
 
     @Column(name = "locked_at")
     private OffsetDateTime lockedAt;

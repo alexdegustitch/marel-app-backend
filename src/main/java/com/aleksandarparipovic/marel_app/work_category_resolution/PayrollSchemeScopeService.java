@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -27,9 +28,14 @@ import java.util.Set;
  *
  * <p>Answers the payroll-period question, as opposed to
  * {@link WorkCategoryResolutionService}, which answers the work-date question.
- * Both read the same tables; they differ in that a payroll month is a range an
- * employee can change scheme inside. See {@link PayrollSchemeScope} for why
- * every answer here is a union.
+ * Both read the same tables; they differ in that this one answers for a whole
+ * month rather than for a date.
+ *
+ * <p><b>Exactly one scheme per month, or an error.</b> This used to union every
+ * scheme overlapping the month, because a mid-month change could otherwise leave
+ * recorded work with no payroll row. Mid-month changes are now forbidden at the
+ * source, so the union is gone and with it the leak it caused — a restricted
+ * employee inheriting a permission from the scheme they left.
  *
  * <p><b>Batched by design.</b> A payroll run initialises every employee at once,
  * so this resolves a whole batch with a fixed number of queries rather than a
@@ -49,11 +55,16 @@ public class PayrollSchemeScopeService {
     /**
      * Resolve the scope for many employees over one payroll period.
      *
-     * <p>An employee with no scheme period covering any part of the month is
-     * omitted from the result. Callers treat that as "no restriction known" and
-     * fall back to the full list — payroll initialisation is not the place to
-     * refuse an employee, and the work-date resolver will have already rejected
-     * any work they tried to record.
+     * <p><b>Exactly one scheme per employee per month (D1).</b> Zero is an error
+     * and so is more than one — neither is defaulted, because every plausible
+     * default is wrong in a way nobody notices. Guessing "unrestricted" pays money
+     * the policy may forbid; guessing "the first one we found" is arbitrary; and
+     * merging two schemes, which is what this method used to do, lets a restricted
+     * employee inherit a permission from the scheme they left.
+     *
+     * <p>A scheme change now takes effect on the first day of the following month,
+     * so a month spanning two schemes cannot be created through the application at
+     * all. If one exists, it predates that rule and needs a person to look at it.
      */
     @Transactional(readOnly = true)
     public Map<Long, PayrollSchemeScope> scopesFor(Collection<Long> employeeIds,
@@ -79,33 +90,40 @@ public class PayrollSchemeScopeService {
         // One resolution per distinct scheme, not per employee: a factory has a
         // handful of schemes and hundreds of employees.
         Map<Long, PayrollSchemeScope> scopeByScheme = new HashMap<>();
-        for (Set<CompensationScheme> schemes : schemesByEmployee.values()) {
-            for (CompensationScheme scheme : schemes) {
-                scopeByScheme.computeIfAbsent(scheme.getId(), id ->
-                        scopeForScheme(scheme, periodStart, periodEnd,
-                                allWorkCategories, allAdjustmentCategories));
-            }
-        }
-
         Map<Long, PayrollSchemeScope> result = new HashMap<>();
-        schemesByEmployee.forEach((employeeId, schemes) -> {
-            PayrollSchemeScope merged = null;
-            for (CompensationScheme scheme : schemes) {
-                PayrollSchemeScope scope = scopeByScheme.get(scheme.getId());
-                merged = merged == null ? scope : union(merged, scope);
+
+        for (Long employeeId : employeeIds) {
+            Set<CompensationScheme> schemes = schemesByEmployee.get(employeeId);
+
+            if (schemes == null || schemes.isEmpty()) {
+                throw new IncompletePayrollConfigurationException(
+                        "Zaposleni " + employeeId + " nema način obračuna za period "
+                                + periodStart + " – " + periodEnd
+                                + ". Dodelite mu način obračuna pre obračuna plate.");
             }
-            if (merged != null) {
-                result.put(employeeId, merged);
+            if (schemes.size() > 1) {
+                throw new IncompletePayrollConfigurationException(
+                        "Zaposleni " + employeeId + " ima " + schemes.size()
+                                + " načina obračuna u periodu " + periodStart + " – " + periodEnd
+                                + " (" + schemes.stream().map(CompensationScheme::getCode).sorted().toList()
+                                + "). Obračunski mesec mora imati tačno jedan.");
             }
-        });
+
+            CompensationScheme scheme = schemes.iterator().next();
+            result.put(employeeId, scopeByScheme.computeIfAbsent(scheme.getId(), id ->
+                    scopeForScheme(scheme, periodStart, periodEnd,
+                            allWorkCategories, allAdjustmentCategories)));
+        }
         return result;
     }
 
     /**
      * The scope for one employee over one period.
      *
-     * <p>{@code null} when the employee has no scheme period covering any part
-     * of it — callers read that as unrestricted.
+     * <p>Never {@code null}: it either resolves one scheme or throws
+     * {@link IncompletePayrollConfigurationException}. It used to return
+     * {@code null} for "no scheme", which callers read as unrestricted — the
+     * quietest possible way to pay somebody under a policy nobody chose.
      *
      * <p>For a single item; the payroll run initialiser uses the batched
      * {@link #scopesFor} instead.
@@ -113,7 +131,8 @@ public class PayrollSchemeScopeService {
     @Transactional(readOnly = true)
     public PayrollSchemeScope scopeFor(Long employeeId, LocalDate periodStart, LocalDate periodEnd) {
         if (employeeId == null || periodStart == null || periodEnd == null) {
-            return null;
+            throw new IncompletePayrollConfigurationException(
+                    "Ne mogu da odredim način obračuna bez zaposlenog i obračunskog perioda.");
         }
         return scopesFor(List.of(employeeId), periodStart, periodEnd,
                 workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc(),
@@ -169,35 +188,73 @@ public class PayrollSchemeScopeService {
             }
         }
 
-        // ── Adjustment categories: OPEN by default, always ───────────────────
-        // A row exists to deny. See PayrollAdjustmentCategorySchemeRule for why
-        // this default is the opposite of the one above.
+        // ── Adjustment lines: EVERY category needs an explicit rule (D6) ─────
+        // The old default was ALLOW, chosen because a payslip line that silently
+        // disappears is harder to notice than an extra one. It also meant most of
+        // what the system does was written down nowhere: 21 of 26 pairs had no row.
+        //
+        // A missing rule is now an incomplete configuration rather than a third
+        // silent default. Migration 2026-08-15-03 fills the matrix, reproducing
+        // exactly what ALLOW produced, so nothing changes except that it is stated.
         List<PayrollAdjustmentCategorySchemeRule> adjustmentRules =
                 adjustmentRuleRepository.findInForceForSchemeBetween(scheme.getId(), periodStart, periodEnd);
 
-        Map<Long, Boolean> adjustmentAllowedByRule = new HashMap<>();
+        Map<Long, PayrollAdjustmentCategorySchemeRule> ruleByCategory = new HashMap<>();
         for (PayrollAdjustmentCategorySchemeRule rule : adjustmentRules) {
-            adjustmentAllowedByRule.merge(rule.getPayrollAdjustmentCategory().getId(),
-                    Boolean.TRUE.equals(rule.getIsAllowed()), (a, b) -> a || b);
+            ruleByCategory.put(rule.getPayrollAdjustmentCategory().getId(), rule);
         }
 
-        Set<Long> allowedAdjustments = new HashSet<>();
+        Map<Long, EffectiveComponentConfig> components = new HashMap<>();
+        List<String> withoutRule = new ArrayList<>();
+
         for (PayrollAdjustmentCategory category : allAdjustmentCategories) {
-            if (adjustmentAllowedByRule.getOrDefault(category.getId(), true)) {
-                allowedAdjustments.add(category.getId());
+            PayrollAdjustmentCategorySchemeRule rule = ruleByCategory.get(category.getId());
+            if (rule == null) {
+                withoutRule.add(category.getCode());
+                continue;
             }
+            components.put(category.getId(), merge(category, rule));
         }
 
-        return new PayrollSchemeScope(allowedWork, allowedAdjustments,
+        if (!withoutRule.isEmpty()) {
+            withoutRule.sort(String::compareTo);
+            throw new IncompletePayrollConfigurationException(
+                    "Način obračuna \"" + scheme.getCode() + "\" nema pravilo za stavke: "
+                            + withoutRule + " u periodu " + periodStart + " – " + periodEnd
+                            + ". Svaka stavka mora imati eksplicitno pravilo.");
+        }
+
+        return new PayrollSchemeScope(scheme.getId(), scheme.getCode(), allowedWork, components,
                 Boolean.TRUE.equals(scheme.getAllowsPerformanceBonus()));
     }
 
-    private PayrollSchemeScope union(PayrollSchemeScope a, PayrollSchemeScope b) {
-        Set<Long> work = new HashSet<>(a.allowedWorkCategoryIds());
-        work.addAll(b.allowedWorkCategoryIds());
-        Set<Long> adjustments = new HashSet<>(a.allowedAdjustmentCategoryIds());
-        adjustments.addAll(b.allowedAdjustmentCategoryIds());
-        return new PayrollSchemeScope(work, adjustments,
-                a.allowsPerformanceBonus() || b.allowsPerformanceBonus());
+    /**
+     * The rule over the category: every nullable field on the rule means "inherit".
+     *
+     * <p>Resolved once, here, where both are in hand — rather than at each of the
+     * places that ask, which is how two of them end up disagreeing.
+     */
+    private EffectiveComponentConfig merge(PayrollAdjustmentCategory category,
+                                           PayrollAdjustmentCategorySchemeRule rule) {
+        return new EffectiveComponentConfig(
+                category.getId(),
+                category.getCode(),
+                Boolean.TRUE.equals(rule.getIsAllowed()),
+                rule.getCalculationMode(),
+                category.getCalculationKey(),
+                firstNonNull(rule.getVisibleInUi(), category.getVisibleInUi(), true),
+                firstNonNull(rule.getVisibleInPdf(), category.getVisibleInPdf(), true),
+                firstNonNull(rule.getShowWhenZero(), category.getShowWhenZero(), true),
+                rule.getEditableInput() != null ? rule.getEditableInput()
+                        : (category.getEditableInput() != null ? category.getEditableInput() : "NONE"),
+                firstNonNull(rule.getAllowTotalOverride(), category.getAllowTotalOverride(), false),
+                firstNonNull(rule.getRequiredManualInput(), category.getRequiredManualInput(), false));
+    }
+
+    private static boolean firstNonNull(Boolean fromRule, Boolean fromCategory, boolean fallback) {
+        if (fromRule != null) {
+            return fromRule;
+        }
+        return fromCategory != null ? fromCategory : fallback;
     }
 }

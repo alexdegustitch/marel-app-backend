@@ -1,44 +1,56 @@
 package com.aleksandarparipovic.marel_app.work_category_resolution;
 
+import java.util.Map;
 import java.util.Set;
 
 /**
  * What one employee's compensation scheme allows across one payroll period.
  *
- * <p>A payroll month is a RANGE, and an employee can move between schemes inside
- * it. Everything here is therefore the **union over every period that overlaps
- * the month**, not the answer for a single date:
+ * <p><b>One scheme, fully resolved — no union.</b> A scheme change now takes
+ * effect on the first day of the following month (D1), so an employee has exactly
+ * one scheme in any payroll month and there is nothing to merge. Two schemes in a
+ * month is a configuration error, not a case to average over.
  *
- * <ul>
- *   <li>a work category allowed under any part of the month is included — if it
- *       were excluded, minutes already recorded against it would have no payroll
- *       row to land in and would silently vanish from the payslip;</li>
- *   <li>an adjustment line allowed under any part of the month is included;</li>
- *   <li>{@link #allowsPerformanceBonus()} is true if any part of the month
- *       allows it.</li>
- * </ul>
+ * <p>This replaces the old union-across-the-month behaviour. That union existed to
+ * stop a mid-month change from making recorded work vanish from the payslip, and
+ * it was the right answer while mid-month changes were possible. It also meant a
+ * restricted employee could inherit a permission from the scheme they left, which
+ * is not something anyone would configure on purpose. Forbidding the mid-month
+ * change removes the need for the union and the leak with it.
  *
- * <p>Union rather than intersection throughout, because the failure mode of
- * being too generous is a visible zero row, and the failure mode of being too
- * strict is money quietly disappearing.
- *
- * <p>The seeded cutover falls on a month boundary, so in practice one scheme
- * governs a whole month and these unions are exact.
- *
- * @param allowedWorkCategoryIds       work categories that may appear on the payslip
- * @param allowedAdjustmentCategoryIds adjustment lines that may appear on it
- * @param allowsPerformanceBonus       whether category bonus amounts are paid
+ * @param allowedWorkCategoryIds work categories that may appear on the payslip
+ * @param componentsByCategoryId every adjustment line's fully resolved
+ *                               configuration, keyed by category id. A category
+ *                               missing from this map has no rule, which is an
+ *                               incomplete configuration rather than a default
+ * @param allowsPerformanceBonus whether category bonus amounts are paid
  */
 public record PayrollSchemeScope(
+        Long compensationSchemeId,
+        String compensationSchemeCode,
         Set<Long> allowedWorkCategoryIds,
-        Set<Long> allowedAdjustmentCategoryIds,
+        Map<Long, EffectiveComponentConfig> componentsByCategoryId,
         boolean allowsPerformanceBonus
 ) {
     public boolean allowsWorkCategory(Long categoryId) {
         return categoryId != null && allowedWorkCategoryIds.contains(categoryId);
     }
 
+    /**
+     * Whether an adjustment line exists for this employee.
+     *
+     * <p>A category with no rule answers {@code false}. It is not silently allowed:
+     * {@link PayrollSchemeScopeService} completes the map for every active category
+     * and refuses to build a scope with a gap in it, so reaching this method with
+     * an unknown id means the category was created after the scope was resolved.
+     */
     public boolean allowsAdjustmentCategory(Long categoryId) {
-        return categoryId != null && allowedAdjustmentCategoryIds.contains(categoryId);
+        EffectiveComponentConfig config = componentsByCategoryId.get(categoryId);
+        return config != null && config.allowed();
+    }
+
+    /** The resolved configuration for one line, or {@code null} if it has no rule. */
+    public EffectiveComponentConfig componentConfig(Long categoryId) {
+        return categoryId == null ? null : componentsByCategoryId.get(categoryId);
     }
 }
