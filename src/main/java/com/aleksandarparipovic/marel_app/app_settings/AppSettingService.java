@@ -10,7 +10,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -46,9 +48,54 @@ public class AppSettingService {
                 .orElse(DEFAULT_TRANSPORT_ALLOWANCE_PER_DAY);
     }
 
+    /**
+     * The meal allowance that applied ON {@code periodStart}.
+     *
+     * <p>For payroll, always this — never the {@link OffsetDateTime} overload with
+     * {@code now()}. A rate is a historical fact: recalculating March in July has
+     * to price March at March's rate, or reopening an old month quietly changes
+     * what somebody was paid.
+     */
+    public BigDecimal getMealAllowancePerDayOn(LocalDate periodStart) {
+        return getMealAllowancePerDay(startOfDay(periodStart));
+    }
+
+    /** @see #getMealAllowancePerDayOn(LocalDate) */
+    public BigDecimal getTransportAllowancePerDayOn(LocalDate periodStart) {
+        return getTransportAllowancePerDay(startOfDay(periodStart));
+    }
+
+    /**
+     * The efficiency ceiling that applied on {@code date}.
+     *
+     * <p>The monthly report passes the LAST day of its period, not the first. A
+     * month's efficiency is the whole month's, so the limit in force when the
+     * month ended is the one it was measured against — and raising the ceiling in
+     * March must not retroactively lift February's approved figure.
+     */
+    public BigDecimal getMaxEfficiencyPercentOn(LocalDate date) {
+        return getMaxEfficiencyPercentAt(startOfDay(date));
+    }
+
     public BigDecimal getSettingAt(String key, OffsetDateTime at) {
         return appSettingRepository.findNumericSettingAt(key, at)
                 .orElse(null);
+    }
+
+    /**
+     * The instant a payroll period begins, in the zone the settings were written in.
+     *
+     * <p>{@code valid_from} is a {@code timestamptz} stamped with {@code now()}
+     * when an administrator saves a rate, so the system zone is the one that makes
+     * "in force on the first of the month" mean what a person means by it.
+     *
+     * <p><b>A rate saved mid-month does not apply to that month.</b> A rate
+     * created on 15 July is not in force on 1 July, so July keeps the old value
+     * and August gets the new one. That is the deliberate reading: a payroll month
+     * is priced by what was true when it started.
+     */
+    private static OffsetDateTime startOfDay(LocalDate date) {
+        return date.atStartOfDay(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
     public List<AppSettingResponse> getAllCurrentlyValid() {

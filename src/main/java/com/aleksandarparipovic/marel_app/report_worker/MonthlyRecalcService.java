@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.report_worker;
 
+import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
 import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategory;
@@ -36,6 +37,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MonthlyRecalcService {
 
+    private final AppSettingService appSettingService;
     private final MonthlyRecalcQueueRepository queueRepo;
     private final MonthlyReportRepository reportRepo;
     private final MonthlyReportCategoryRepository categoryRepo;
@@ -283,10 +285,31 @@ public class MonthlyRecalcService {
         report.setTotalScrap(totalScrap);
         report.setTotalWeightedNormMinutes(totalWeightedNormMinutes);
         report.setMealAllowanceNum(mealAllowanceNum);
+        // THE MONTHLY FIGURE WAS NEVER CAPPED. approved_performance_rate was set to
+        // exactly performance_rate, so "approved" meant nothing here — while
+        // DailySummaryService has capped the daily figure at max_efficiency_percent
+        // all along. A month could therefore show an approved efficiency the daily
+        // reports it is built from could not.
+        //
+        // Resolved at the LAST day of the period, not the first: the month's
+        // efficiency is the whole month's, so the ceiling in force when it ended is
+        // the one it was measured against. Reading it at now() would let a change
+        // made in March silently lift February's approved figure the next time
+        // February is recalculated.
+        LocalDate periodEnd = periodStart.withDayOfMonth(periodStart.lengthOfMonth());
+        BigDecimal maxEfficiencyPercent = appSettingService.getMaxEfficiencyPercentOn(periodEnd);
+
+        BigDecimal performanceRate = performanceCoefficient
+                .multiply(BigDecimal.valueOf(100)).setScale(4, RoundingMode.HALF_UP);
+        BigDecimal approvedRate = performanceRate.min(maxEfficiencyPercent);
+
         report.setPerformanceCoefficient(performanceCoefficient);
-        report.setApprovedPerformanceCoefficient(performanceCoefficient);
-        report.setPerformanceRate(performanceCoefficient.multiply(BigDecimal.valueOf(100)).setScale(4, RoundingMode.HALF_UP));
-        report.setApprovedPerformanceRate(performanceCoefficient.multiply(BigDecimal.valueOf(100)).setScale(4, RoundingMode.HALF_UP));
+        // Kept in step with the rate. Leaving the coefficient uncapped while the
+        // rate is capped would make the two disagree about the same quantity.
+        report.setApprovedPerformanceCoefficient(
+                approvedRate.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP));
+        report.setPerformanceRate(performanceRate);
+        report.setApprovedPerformanceRate(approvedRate);
         report.setCalcVersion((report.getCalcVersion() != null ? report.getCalcVersion() : 0) + 1);
         report.setLastRecalculatedAt(OffsetDateTime.now());
         if (report.getStatus() == null) {
