@@ -150,9 +150,6 @@ public class PayrollRunItem {
 
     /** SUM(adjustments.amount where impact_code = GROSS_PLUS and is_applied = true) */
 
-    /** SUM(adjustments.amount where impact_code = DEDUCTION_MINUS and is_applied = true) */
-    @Column(name = "total_deductions_amount")
-    private BigDecimal totalDeductionsAmount;
 
     /** Telefon za tekući mesec — snapshot za prikaz u obračunu */
     @Column(name = "current_month_telephone")

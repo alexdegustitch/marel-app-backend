@@ -299,7 +299,6 @@ public class PayrollRunInitializationTxService {
 
 
 
-        item.setTotalDeductionsAmount(BigDecimal.ZERO);
         item.setCurrentMonthTelephone(BigDecimal.ZERO);
         item.setPreviouslyPaidAmount(BigDecimal.ZERO);
         item.setPreviousNetPayableAmount(BigDecimal.ZERO);

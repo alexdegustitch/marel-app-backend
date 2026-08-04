@@ -297,7 +297,6 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         // Summary: categories + meal + transport + applied ADDITIONS.
         assertThat(item.getTotalNetEarnings()).isEqualByComparingTo("79920.00");
-        assertThat(item.getTotalDeductionsAmount()).isEqualByComparingTo("0.00");
         assertThat(item.getPreviouslyPaidAmount()).isEqualByComparingTo("0.00");
         assertThat(item.getCurrentBalanceAmount()).isEqualByComparingTo("79920.00");
         assertThat(item.getNetPayableAmount()).isEqualByComparingTo("79920.00");
@@ -344,11 +343,15 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // section filter with impact codes and MUST keep them out of the sum.
         assertThat(item.getPreviouslyPaidAmount()).isEqualByComparingTo("52700.00");
 
-        // DEDUCTION_MINUS: 2000 + 800 + 700 + 20000 = 23500. This is the only
-        // place impact_code is read today, and it feeds a display field that no
-        // other total consumes — PHONE_CURRENT_MONTH is counted here yet reaches
-        // no balance at all.
-        assertThat(item.getTotalDeductionsAmount()).isEqualByComparingTo("23500.00");
+        // THE CURRENT MONTH'S PHONE REACHES NO TOTAL, and that is the fact worth
+        // pinning. total_deductions_amount used to sum every DEDUCTION_MINUS line
+        // — 2000 + 800 + 700 + 20000 = 23500 — which put this 800 phone, charged
+        // next month rather than this one, and PAID_PART_2's 20 000, money already
+        // paid OUT, beside the two real deductions. The column is dropped; what it
+        // was hiding is asserted directly instead. The phone sits on the item and
+        // moves neither balance below; it is charged next month as
+        // PHONE_PREVIOUS_MONTH (OPEN-12).
+        assertThat(lineAmount(item, "PHONE_CURRENT_MONTH")).isEqualByComparingTo("800.00");
 
         assertThat(item.getCurrentBalanceAmount()).isEqualByComparingTo("37720.00");
         assertThat(item.getNetPayableAmount()).isEqualByComparingTo("37720.00");

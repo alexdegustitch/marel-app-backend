@@ -74,7 +74,6 @@ public class PayrollRunItemService {
     private static final int DEFAULT_CALC_VERSION = 1;
 
     // impact codes
-    private static final String DEDUCTION_MINUS = "DEDUCTION_MINUS";
     private static final String IMPACT_GROSS_PLUS = "GROSS_PLUS";
 
     private final PayrollRunItemRepository payrollRunItemRepository;
@@ -1709,7 +1708,6 @@ public class PayrollRunItemService {
      * Recalculates all financial summary fields from scratch:
      * <ul>
      *   <li>totalNetEarnings = SUM(categories.amount) + SUM(applied ADDITIONS adj)</li>
-     *   <li>totalDeductionsAmount = SUM(applied DEDUCTION_MINUS adj)  [display only]</li>
      *   <li>previouslyPaidAmount  = SUM(applied SETTLEMENTS adj)</li>
      *   <li>currentBalanceAmount  = totalNetEarnings - previouslyPaidAmount</li>
      *   <li>previousNetPayableAmount — must already be set on the item (set at init / month-recalc)</li>
@@ -1751,13 +1749,12 @@ public class PayrollRunItemService {
                 .setScale(2, RoundingMode.HALF_UP);
         item.setTotalNetEarnings(totalNetEarnings);
 
-        // ── totalDeductionsAmount (kept for display) ──────────────────────────
-        BigDecimal deductions = adjustments.stream()
-                .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                        && DEDUCTION_MINUS.equals(a.getPayrollAdjustmentCategory().getImpactCode()))
-                .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        item.setTotalDeductionsAmount(deductions.setScale(2, RoundingMode.HALF_UP));
+        // total_deductions_amount is gone. It summed every DEDUCTION_MINUS line,
+        // which put PAID_PART_2 — money already paid OUT to the employee — and
+        // PHONE_CURRENT_MONTH — which is charged next month, not this one — beside
+        // the two real deductions. Displayed nowhere, which is why it was never
+        // questioned. "Ukupna odbijanja" is a figure the business defines, and then
+        // it is one sum over the lines, computed where it is shown.
 
         // ── previouslyPaidAmount ──────────────────────────────────────────────
         //
@@ -2026,7 +2023,6 @@ public class PayrollRunItemService {
         if (item.getHourlyRateOverridden() == null)     item.setHourlyRateOverridden(false);
 
 
-        if (item.getTotalDeductionsAmount() == null)    item.setTotalDeductionsAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getCurrentMonthTelephone() == null)    item.setCurrentMonthTelephone(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getPreviouslyPaidAmount() == null)     item.setPreviouslyPaidAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         // previousNetPayableAmount is populated from the previous period — leave null on creation
