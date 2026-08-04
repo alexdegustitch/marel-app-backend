@@ -439,7 +439,6 @@ public class PayrollScenarioFixture {
             item.setTotalBonusAmountSystem(BigDecimal.ZERO);
             item.setTotalBonusAmount(BigDecimal.ZERO);
             item.setTotalBonusAmountOverridden(false);
-            item.setTotalGrossEarnings(BigDecimal.ZERO);
             item.setTotalDeductionsAmount(BigDecimal.ZERO);
             item.setCurrentMonthTelephone(BigDecimal.ZERO);
             item.setPreviouslyPaidAmount(BigDecimal.ZERO);

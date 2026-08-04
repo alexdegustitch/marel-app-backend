@@ -76,7 +76,6 @@ public class PayrollRunItemResponse {
     private final Boolean totalBonusAmountOverridden;
 
     // ── Calculated summary totals ─────────────────────────────────────────────
-    private final BigDecimal totalGrossEarnings;
     private final BigDecimal totalDeductionsAmount;
     private final BigDecimal currentMonthTelephone;
     private final BigDecimal previouslyPaidAmount;
@@ -141,7 +140,6 @@ public class PayrollRunItemResponse {
         this.totalBonusAmount = item.getTotalBonusAmount();
         this.totalBonusAmountOverridden = item.getTotalBonusAmountOverridden();
 
-        this.totalGrossEarnings = item.getTotalGrossEarnings();
         this.totalDeductionsAmount = item.getTotalDeductionsAmount();
         this.currentMonthTelephone = item.getCurrentMonthTelephone();
         this.previouslyPaidAmount = item.getPreviouslyPaidAmount();

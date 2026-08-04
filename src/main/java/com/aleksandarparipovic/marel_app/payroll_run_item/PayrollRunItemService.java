@@ -2115,7 +2115,6 @@ public class PayrollRunItemService {
         if (item.getTotalBonusAmount() == null)         item.setTotalBonusAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getTotalBonusAmountOverridden() == null) item.setTotalBonusAmountOverridden(false);
 
-        if (item.getTotalGrossEarnings() == null)       item.setTotalGrossEarnings(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getTotalDeductionsAmount() == null)    item.setTotalDeductionsAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getCurrentMonthTelephone() == null)    item.setCurrentMonthTelephone(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getPreviouslyPaidAmount() == null)     item.setPreviouslyPaidAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));

@@ -167,8 +167,6 @@ public class PayrollRunItem {
     // ── Calculated summary totals ───────────────────────────────────────────
 
     /** SUM(adjustments.amount where impact_code = GROSS_PLUS and is_applied = true) */
-    @Column(name = "total_gross_earnings")
-    private BigDecimal totalGrossEarnings;
 
     /** SUM(adjustments.amount where impact_code = DEDUCTION_MINUS and is_applied = true) */
     @Column(name = "total_deductions_amount")

@@ -259,7 +259,6 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // total_gross_earnings is never computed by any code path — it stays 0.
         // Phase 7 either computes it or drops it; a column that always reads 0 is
         // recorded here so the decision is not forgotten.
-        assertThat(item.getTotalGrossEarnings()).isEqualByComparingTo("0.00");
     }
 
     @Test
