@@ -44,19 +44,39 @@ public class EmployeePayrollValueController {
      * <p>POST, not PUT: this appends a period. It never overwrites the current
      * value in place, because doing so would silently reprice months already
      * calculated.
+     *
+     * <p>Takes either a numeric value or a boolean one, and the definition's own
+     * type decides which is legal — sending the wrong one is refused by the
+     * service, not silently coerced. The boolean half exists because
+     * TRANSPORT_PER_DAY decides whether an employee is paid transport at all: a
+     * value nobody can grant or withdraw through the application would be a rule
+     * only a database client could administer.
      */
     @PostMapping
     public ResponseEntity<EmployeePayrollValueDto> change(
             @PathVariable Long employeeId,
             @Valid @RequestBody ChangeEmployeePayrollValueRequest request
     ) {
-        EmployeePayrollValueHistory created = valueService.changeValue(
-                employeeId,
-                request.getCode(),
-                request.getNumericValue(),
-                request.getEffectiveFrom(),
-                request.getNote(),
-                currentUserService.getCurrentUserId());
+        if ((request.getNumericValue() == null) == (request.getBooleanValue() == null)) {
+            throw new IllegalArgumentException(
+                    "Unesite tačno jednu vrednost — brojčanu ili logičku.");
+        }
+
+        EmployeePayrollValueHistory created = request.getBooleanValue() != null
+                ? valueService.changeFlag(
+                        employeeId,
+                        request.getCode(),
+                        request.getBooleanValue(),
+                        request.getEffectiveFrom(),
+                        request.getNote(),
+                        currentUserService.getCurrentUserId())
+                : valueService.changeValue(
+                        employeeId,
+                        request.getCode(),
+                        request.getNumericValue(),
+                        request.getEffectiveFrom(),
+                        request.getNote(),
+                        currentUserService.getCurrentUserId());
 
         return ResponseEntity.ok(new EmployeePayrollValueDto(created));
     }

@@ -47,6 +47,18 @@ class EmployeePayrollValueIT extends AbstractIntegrationTest {
         return fixture.scenario().build().employee();
     }
 
+    /**
+     * An employee with no transport entitlement of any kind.
+     *
+     * <p>The ordinary scenario grants TRANSPORT_PER_DAY from 2020, because that is
+     * what every employee effectively had before OPEN-15 gave the mode a start
+     * date. The tests below are about granting and withdrawing it, so they need
+     * somebody who has not been given it already.
+     */
+    private Employee anEmployeeWithNoTransport() {
+        return fixture.scenario().withoutTransportEntitlement().build().employee();
+    }
+
     private EmployeePayrollValueDefinition definition(String code) {
         return definitionRepository.findByCode(code).orElseThrow();
     }
@@ -379,6 +391,71 @@ class EmployeePayrollValueIT extends AbstractIntegrationTest {
         // Absent, not present-and-empty: the caller must decide what "no value"
         // means for its own calculation.
         assertThat(values).doesNotContainKey(withoutAValue.getId());
+    }
+
+    // ── BOOLEAN values: an entitlement with a start date ────────────────────
+
+    @Test
+    @DisplayName("a flag granted from a date is not in force the day before")
+    void aFlagStartsOnItsDate() {
+        Employee employee = anEmployeeWithNoTransport();
+
+        valueService.changeFlag(employee.getId(), EmployeePayrollValueCodes.TRANSPORT_PER_DAY,
+                true, LocalDate.of(2026, 9, 1), null, null);
+
+        assertThat(valueService.trueFlagsOn(List.of(employee.getId()), LocalDate.of(2026, 9, 1)))
+                .containsEntry(employee.getId(),
+                        java.util.Set.of(EmployeePayrollValueCodes.TRANSPORT_PER_DAY));
+
+        // The whole reason this value exists: the month before it pays nothing.
+        assertThat(valueService.trueFlagsOn(List.of(employee.getId()), LocalDate.of(2026, 8, 31)))
+                .doesNotContainKey(employee.getId());
+    }
+
+    @Test
+    @DisplayName("withdrawing it is a FALSE period, not a deletion — the earlier months keep it")
+    void withdrawingAFlagLeavesTheEarlierPeriodIntact() {
+        Employee employee = anEmployeeWithNoTransport();
+        valueService.changeFlag(employee.getId(), EmployeePayrollValueCodes.TRANSPORT_PER_DAY,
+                true, LocalDate.of(2026, 1, 1), null, null);
+
+        valueService.changeFlag(employee.getId(), EmployeePayrollValueCodes.TRANSPORT_PER_DAY,
+                false, LocalDate.of(2026, 9, 1), "Prešao na fiksni", null);
+
+        assertThat(valueService.trueFlagsOn(List.of(employee.getId()), LocalDate.of(2026, 8, 1)))
+                .as("a month already calculated must not lose its transport")
+                .containsKey(employee.getId());
+        assertThat(valueService.trueFlagsOn(List.of(employee.getId()), LocalDate.of(2026, 9, 1)))
+                .doesNotContainKey(employee.getId());
+    }
+
+    @Test
+    @DisplayName("a boolean value cannot be written to a numeric definition, or the reverse")
+    void theDeclaredTypeIsEnforced() {
+        Employee employee = anEmployee();
+
+        assertThatThrownBy(() -> valueService.changeFlag(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, true, LocalDate.of(2026, 1, 1), null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThatThrownBy(() -> valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.TRANSPORT_PER_DAY, new BigDecimal("1.00"),
+                LocalDate.of(2026, 1, 1), null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("a flag never appears among the numeric values")
+    void flagsStayOutOfTheNumericMap() {
+        Employee employee = anEmployeeWithNoTransport();
+        valueService.changeFlag(employee.getId(), EmployeePayrollValueCodes.TRANSPORT_PER_DAY,
+                true, LocalDate.of(2026, 1, 1), null, null);
+
+        // "Absent means not configured" is the contract every calculator reads the
+        // numeric map by. A boolean row landing in it mapped the code to null and,
+        // worse, made an employee with no numeric value at all appear present.
+        assertThat(valueService.numericValuesOn(List.of(employee.getId()), LocalDate.of(2026, 9, 1)))
+                .doesNotContainKey(employee.getId());
     }
 
     private BigDecimal transportRate(Employee employee, LocalDate on) {
