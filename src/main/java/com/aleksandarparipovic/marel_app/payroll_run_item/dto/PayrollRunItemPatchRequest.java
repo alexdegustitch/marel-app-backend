@@ -32,14 +32,8 @@ public class PayrollRunItemPatchRequest {
 
 
 
-    private BigDecimal baseBonusAmount;
-    private boolean baseBonusAmountPresent;
 
-    private BigDecimal bonusCorrectionAmount;
-    private boolean bonusCorrectionAmountPresent;
 
-    private BigDecimal totalBonusAmount;
-    private boolean totalBonusAmountPresent;
 
     private BigDecimal hourlyRate;
     private boolean hourlyRatePresent;
@@ -67,23 +61,8 @@ public class PayrollRunItemPatchRequest {
     // two are edited on their lines, through the `adjustments` array, which is
     // where the calculation reads them from.
 
-    @JsonSetter(value = "baseBonusAmount", nulls = Nulls.AS_EMPTY)
-    public void setBaseBonusAmount(BigDecimal v) {
-        this.baseBonusAmount = v;
-        this.baseBonusAmountPresent = true;
-    }
 
-    @JsonSetter(value = "bonusCorrectionAmount", nulls = Nulls.AS_EMPTY)
-    public void setBonusCorrectionAmount(BigDecimal v) {
-        this.bonusCorrectionAmount = v;
-        this.bonusCorrectionAmountPresent = true;
-    }
 
-    @JsonSetter(value = "totalBonusAmount", nulls = Nulls.AS_EMPTY)
-    public void setTotalBonusAmount(BigDecimal v) {
-        this.totalBonusAmount = v;
-        this.totalBonusAmountPresent = true;
-    }
 
     @JsonSetter(value = "hourlyRate", nulls = Nulls.AS_EMPTY)
     public void setHourlyRate(BigDecimal v) {

@@ -38,6 +38,22 @@ public class AdjustmentPatchDto {
     private BigDecimal correctionAmount;
 
     /**
+     * The part of the line that is NOT the correction — for the monthly bonus,
+     * the employee's own amount from their bonus category.
+     *
+     * <p>The line keeps `amount` as the effective total and `correction_amount`
+     * as the tier, so the base is the difference and has no slot of its own.
+     * Sending it as `amount` would be a typed total, and a typed total has no
+     * parts — the next recalculation would collapse the split the panel shows.
+     * This says "change the base, leave the correction where it is", and the
+     * server adds them back together.
+     *
+     * <p>Not a second way to type a total: is_overridden stays off and no reason
+     * is required, because the formula still runs.
+     */
+    private BigDecimal baseAmount;
+
+    /**
      * Why the final amount was typed in, bypassing the formula.
      *
      * <p>Required whenever {@link #amount} sets a figure the calculation did not

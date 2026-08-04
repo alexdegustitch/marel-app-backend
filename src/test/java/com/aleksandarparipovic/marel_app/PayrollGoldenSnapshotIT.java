@@ -124,6 +124,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
      * reads.
      */
     private static final String CAT_TRANSPORT = "TRANSPORT_ALLOWANCE";
+    private static final String CAT_BONUS = "MONTHLY_BONUS";
 
     private void patchLine(Long itemId, String code, java.util.function.Consumer<AdjustmentPatchDto> fill) {
         AdjustmentPatchDto dto = new AdjustmentPatchDto();
@@ -194,6 +195,51 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     private java.math.BigDecimal lineQuantity(PayrollRunItem item, String code) {
         return adjustmentRepository.findByItemIdAndCategoryCode(item.getId(), code)
                 .map(a -> a.getSystemQuantity()).orElse(java.math.BigDecimal.ZERO);
+    }
+
+    // ── The bonus's two parts, off the line ─────────────────────────────────
+    //
+    // The line keeps `amount` as the effective TOTAL and `correction_amount` as
+    // the tier, so the base is the difference. Nine item columns used to mirror
+    // this and these assertions used to read them; the columns are gone.
+
+    private java.math.BigDecimal bonusTotal(PayrollRunItem item) {
+        return lineAmount(item, CAT_BONUS);
+    }
+
+    private java.math.BigDecimal bonusBase(PayrollRunItem item) {
+        return adjustmentRepository.findByItemIdAndCategoryCode(item.getId(), CAT_BONUS)
+                .map(a -> zeroIfNull(a.getAmount()).subtract(zeroIfNull(a.getCorrectionAmount())))
+                .orElse(java.math.BigDecimal.ZERO);
+    }
+
+    private java.math.BigDecimal bonusSystemBase(PayrollRunItem item) {
+        return adjustmentRepository.findByItemIdAndCategoryCode(item.getId(), CAT_BONUS)
+                .map(a -> zeroIfNull(a.getSystemAmount()).subtract(zeroIfNull(a.getSystemCorrectionAmount())))
+                .orElse(java.math.BigDecimal.ZERO);
+    }
+
+    private java.math.BigDecimal bonusAdditional(PayrollRunItem item) {
+        return adjustmentRepository.findByItemIdAndCategoryCode(item.getId(), CAT_BONUS)
+                .map(a -> zeroIfNull(a.getCorrectionAmount())).orElse(java.math.BigDecimal.ZERO);
+    }
+
+    private java.math.BigDecimal bonusSystemAdditional(PayrollRunItem item) {
+        return adjustmentRepository.findByItemIdAndCategoryCode(item.getId(), CAT_BONUS)
+                .map(a -> zeroIfNull(a.getSystemCorrectionAmount())).orElse(java.math.BigDecimal.ZERO);
+    }
+
+    private static java.math.BigDecimal zeroIfNull(java.math.BigDecimal value) {
+        return value == null ? java.math.BigDecimal.ZERO : value;
+    }
+
+    /** Edit one part of the bonus the way the parameters panel does. */
+    private void patchBonusBase(Long itemId, String amount) {
+        patchLine(itemId, CAT_BONUS, d -> d.setBaseAmount(new BigDecimal(amount)));
+    }
+
+    private void patchBonusAdditional(Long itemId, String amount) {
+        patchLine(itemId, CAT_BONUS, d -> d.setCorrectionAmount(new BigDecimal(amount)));
     }
 
     @Test
@@ -1089,14 +1135,14 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         // 5000 base + 2500 for the highest tier reached. Not 4000: 176 hours does
         // not reach 200. Not 3500: the tiers do not accumulate.
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("7500.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("7500.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS")
                 .orElseThrow().getAmount()).isEqualByComparingTo("7500.00");
     }
 
     @Test
-    @DisplayName("17g. base and correction land in their own columns, not folded together")
+    @DisplayName("17g. base and correction stay separate on the line, not folded together")
     void baseAndCorrectionAreSeparate() {
         var scenario = fixture.scenario().build();          // 176 h
         fixture.bonusCategory(scenario.employee(), "5000.00");
@@ -1105,14 +1151,14 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         PayrollRunItem item = calculate(scenario);
 
-        // base_bonus_amount used to hold the WHOLE 7 500 and the correction column
-        // sat at zero, so the panel said "Osnovni bonus 7.500" for an employee
-        // whose category is 5.000. The total was right; its two parts were not.
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("5000.00");
-        assertThat(item.getBaseBonusAmountSystem()).isEqualByComparingTo("5000.00");
-        assertThat(item.getBonusCorrectionAmount()).isEqualByComparingTo("2500.00");
-        assertThat(item.getBonusCorrectionAmountSystem()).isEqualByComparingTo("2500.00");
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("7500.00");
+        // The base used to hold the WHOLE 7 500 and the correction sat at zero, so
+        // the panel said "Osnovni bonus 7.500" for an employee whose category is
+        // 5.000. The total was right; its two parts were not.
+        assertThat(bonusBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(bonusSystemBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("2500.00");
+        assertThat(bonusSystemAdditional(item)).isEqualByComparingTo("2500.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("7500.00");
     }
 
     @Test
@@ -1124,17 +1170,20 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         fixture.bonusTier(YearMonth.of(2026, 9), 170, "2500.00");
         calculate(scenario);
 
-        PayrollRunItemPatchRequest patch = new PayrollRunItemPatchRequest();
-        patch.setBaseBonusAmount(new BigDecimal("6000.00"));
-        payrollRunItemService.patch(scenario.item().getId(), patch);
+        patchBonusBase(scenario.item().getId(), "6000.00");
 
         PayrollRunItem item = calculate(scenario);
 
         // The override survives the recalculation; the tier is still the rules'.
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("6000.00");
-        assertThat(item.getBaseBonusAmountOverridden()).isTrue();
-        assertThat(item.getBonusCorrectionAmount()).isEqualByComparingTo("2500.00");
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("8500.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("6000.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("2500.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("8500.00");
+        // The rules' own figure stays readable beside it — that is what the panel
+        // strikes through — and the line is NOT marked as a typed total, because
+        // the formula still ran for the tier.
+        assertThat(bonusSystemBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(adjustmentRepository.findByItemIdAndCategoryCode(item.getId(), CAT_BONUS)
+                .orElseThrow().getIsOverridden()).isFalse();
     }
 
     @Test
@@ -1223,9 +1272,9 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         assertThat(bonus.getSystemCorrectionAmount()).isNotNull();
 
         // Step 1 changes no arithmetic: the money is still what it was.
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("7500.00");
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("5000.00");
-        assertThat(item.getBonusCorrectionAmount()).isEqualByComparingTo("2500.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("7500.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("2500.00");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1280,27 +1329,23 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("18e. an overridden base survives with the item flag wiped")
-    void theLineRemembersTheBonusBase() {
+    @DisplayName("18e. both parts are edited independently and both survive a recalculation")
+    void theLineCarriesBothEditedParts() {
         var scenario = fixture.scenario().build();
         fixture.bonusCategory(scenario.employee(), "5000.00");
         fixture.bonusMinHours(YearMonth.of(2026, 9), 160);
         fixture.bonusTier(YearMonth.of(2026, 9), 170, "2500.00");
         calculate(scenario);
 
-        PayrollRunItemPatchRequest patch = new PayrollRunItemPatchRequest();
-        patch.setBaseBonusAmount(new BigDecimal("6000.00"));
-        payrollRunItemService.patch(scenario.item().getId(), patch);
+        // THE SHAPE THIS GUARDS. The two parts share one line — amount is the
+        // total, correction_amount the tier — so an edit to either has to leave
+        // the other where it was. Sending the base as a typed `amount` was the
+        // obvious route and the wrong one: a typed total has no parts, so the
+        // next recalculation collapsed the split into "base = everything,
+        // additional = 0". baseAmount exists so the split survives.
+        patchBonusBase(scenario.item().getId(), "6000.00");
+        patchBonusAdditional(scenario.item().getId(), "1000.00");
 
-        entityManager.createNativeQuery("""
-                UPDATE payroll_run_items SET base_bonus_amount_overridden = FALSE,
-                                             base_bonus_amount = 5000.00
-                WHERE id = :id""")
-                .setParameter("id", scenario.item().getId())
-                .executeUpdate();
-        // Force the recalculation: getForPayrollAccess only recomputes a STALE item,
-        // and without this the assertion would be reading the row back rather than
-        // watching it be rebuilt from the line.
         entityManager.createNativeQuery(
                 "UPDATE payroll_run_items SET needs_recalculation = TRUE WHERE id = :id")
                 .setParameter("id", scenario.item().getId())
@@ -1310,9 +1355,69 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         PayrollRunItem item = calculate(scenario);
 
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("6000.00");
-        assertThat(item.getBonusCorrectionAmount()).isEqualByComparingTo("2500.00");
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("8500.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("6000.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("1000.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("7000.00");
+        // The rules' own figures are still there, so the panel can show what
+        // would otherwise have been paid.
+        assertThat(bonusSystemBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(bonusSystemAdditional(item)).isEqualByComparingTo("2500.00");
+    }
+
+    @Test
+    @DisplayName("18e2. editing the tier moves the total, it does not eat the base")
+    void editingTheTierKeepsTheBase() {
+        var scenario = fixture.scenario().build();
+        fixture.bonusCategory(scenario.employee(), "5000.00");
+        fixture.bonusMinHours(YearMonth.of(2026, 9), 160);
+        fixture.bonusTier(YearMonth.of(2026, 9), 170, "2500.00");
+        calculate(scenario);
+
+        // The regression: correction_amount was set on its own and amount left
+        // alone, so raising the tier by 500 silently took 500 off the base and
+        // the employee was paid exactly what they were before.
+        patchBonusAdditional(scenario.item().getId(), "3000.00");
+
+        PayrollRunItem item = calculate(scenario);
+
+        assertThat(bonusBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("3000.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("8000.00");
+    }
+
+    @Test
+    @DisplayName("18e3. re-sending the rules' figure is a reset, and leaves the other part alone")
+    void resendingTheSystemFigureResetsOnePart() {
+        var scenario = fixture.scenario().build();
+        fixture.bonusCategory(scenario.employee(), "5000.00");
+        fixture.bonusMinHours(YearMonth.of(2026, 9), 160);
+        fixture.bonusTier(YearMonth.of(2026, 9), 170, "2500.00");
+        calculate(scenario);
+
+        patchBonusBase(scenario.item().getId(), "6000.00");
+        patchBonusAdditional(scenario.item().getId(), "1000.00");
+
+        // WHY THE PANEL DOES NOT SEND clearOverride. Both parts live on one line,
+        // so clearing it would throw the other away — undoing the base edit would
+        // silently drop the correction somebody typed. Re-sending the rules'
+        // figure is a real reset, because the recalculation keeps a part only
+        // while it differs from the system's.
+        patchBonusBase(scenario.item().getId(), "5000.00");
+
+        entityManager.createNativeQuery(
+                "UPDATE payroll_run_items SET needs_recalculation = TRUE WHERE id = :id")
+                .setParameter("id", scenario.item().getId())
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        PayrollRunItem item = calculate(scenario);
+
+        assertThat(bonusBase(item)).isEqualByComparingTo("5000.00");
+        assertThat(bonusAdditional(item))
+                .as("the edited tier is untouched by a reset of the base")
+                .isEqualByComparingTo("1000.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("6000.00");
     }
 
     @Test
@@ -1344,9 +1449,9 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         PayrollRunItem item = calculate(scenario);
 
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("0.00");
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("0.00");
-        assertThat(item.getBonusCorrectionAmount()).isEqualByComparingTo("0.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("0.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("0.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("0.00");
 
         PayrollAdjustment line = adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS").orElseThrow();
@@ -1386,9 +1491,9 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         // The parts used to keep whatever split preceded the override — one real
         // item read "base 0 + additional 2.000" beside a line holding 2.000 as base.
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("2000.00");
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("2000.00");
-        assertThat(item.getBonusCorrectionAmount()).isEqualByComparingTo("0.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("2000.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("2000.00");
+        assertThat(bonusAdditional(item)).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -1502,34 +1607,33 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         PayrollAdjustment line = adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS").orElseThrow();
         assertThat(line.getIsApplied()).isFalse();
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("0.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("0.00");
     }
 
     @Test
-    @DisplayName("18k. the PARAMETERS route is refused too — the one the panel actually uses")
-    void theItemLevelBonusRouteIsRefusedAsWell() {
+    @DisplayName("18k. every way of editing the bonus is refused, not just the first one found")
+    void everyBonusEditRouteIsRefused() {
         // Reported twice. The first fix covered applyAdjustmentPatch, which handles
-        // the `adjustments` array; the parameters panel sends baseBonusAmount as an
-        // ITEM field and went through a different branch entirely. Same defect,
-        // other door.
+        // the `adjustments` array; the panel sent baseBonusAmount as an ITEM field
+        // and went through a different branch entirely. Same defect, other door.
+        //
+        // There is one door now — the item fields are gone — but the bonus has
+        // three ways through it, and each is asserted. A part is not a smaller
+        // kind of edit that can slip past the check on totals.
         var scenario = fixture.scenario().build();
         denyBonusForThisEmployee(scenario);
 
-        PayrollRunItemPatchRequest base = new PayrollRunItemPatchRequest();
-        base.setBaseBonusAmount(new BigDecimal("3000.00"));
-        assertThatThrownBy(() -> payrollRunItemService.patch(scenario.item().getId(), base))
+        assertThatThrownBy(() -> patchBonusBase(scenario.item().getId(), "3000.00"))
                 .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("bonus");
+                .hasMessageContaining(CAT_BONUS);
 
-        PayrollRunItemPatchRequest additional = new PayrollRunItemPatchRequest();
-        additional.setBonusCorrectionAmount(new BigDecimal("5000.00"));
-        assertThatThrownBy(() -> payrollRunItemService.patch(scenario.item().getId(), additional))
+        assertThatThrownBy(() -> patchBonusAdditional(scenario.item().getId(), "5000.00"))
                 .isInstanceOf(ConflictException.class);
 
-        PayrollRunItemPatchRequest total = new PayrollRunItemPatchRequest();
-        total.setTotalBonusAmount(new BigDecimal("8000.00"));
-        assertThatThrownBy(() -> payrollRunItemService.patch(scenario.item().getId(), total))
-                .isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> patchLine(scenario.item().getId(), CAT_BONUS, d -> {
+            d.setAmount(new BigDecimal("8000.00"));
+            d.setOverrideReason("Dogovoreno");
+        })).isInstanceOf(ConflictException.class);
     }
 
     @Test
@@ -1540,16 +1644,14 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         PayrollRunItem before = calculate(scenario);
         BigDecimal earningsBefore = before.getTotalNetEarnings();
 
-        PayrollRunItemPatchRequest patch = new PayrollRunItemPatchRequest();
-        patch.setBaseBonusAmount(new BigDecimal("3000.00"));
-        assertThatThrownBy(() -> payrollRunItemService.patch(scenario.item().getId(), patch))
+        assertThatThrownBy(() -> patchBonusBase(scenario.item().getId(), "3000.00"))
                 .isInstanceOf(ConflictException.class);
 
         // The real complaint was not the missing message — it was that the figure
         // was counted. 2.660 became 5.660 on a refused category.
         PayrollRunItem after = payrollRunItemService.findById(scenario.item().getId());
         assertThat(after.getTotalNetEarnings()).isEqualByComparingTo(earningsBefore);
-        assertThat(after.getTotalBonusAmount()).isEqualByComparingTo("0.00");
+        assertThat(bonusTotal(after)).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -1564,7 +1666,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         // The tier is still earned — it has its own threshold. Only the base is
         // withheld, and withheld entirely: a threshold, not a pro rata.
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("1000.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("1000.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS")
                 .orElseThrow().getCalculationInputs())
@@ -1592,7 +1694,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // total_work_minutes and ignore the correction, so the hours moved on
         // screen and the bonus did not.
         assertThat(item.getTotalPayrollMinutes()).isEqualTo(10_560 + 480);
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("5000.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("5000.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS")
                 .orElseThrow().getCalculationInputs())
@@ -1616,7 +1718,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         // 176 - 8 = 168 h, under 170. The threshold has to cut both ways or the
         // correction would only ever be able to add money.
-        assertThat(item.getBaseBonusAmount()).isEqualByComparingTo("0.00");
+        assertThat(bonusBase(item)).isEqualByComparingTo("0.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS")
                 .orElseThrow().getCalculationInputs())
@@ -1633,7 +1735,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         PayrollRunItem item = calculate(scenario);
 
-        assertThat(item.getTotalBonusAmount()).isEqualByComparingTo("0.00");
+        assertThat(bonusTotal(item)).isEqualByComparingTo("0.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS")
                 .orElseThrow().getCalculationInputs())

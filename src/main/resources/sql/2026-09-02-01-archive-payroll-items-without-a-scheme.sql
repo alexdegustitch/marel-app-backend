@@ -61,15 +61,24 @@ BEGIN
     FROM payroll_run_items i JOIN candidates c ON c.id = i.id
     WHERE COALESCE(i.total_work_minutes, 0) <> 0;
 
+    -- THE MONEY CHECK IS ASSEMBLED FROM THE COLUMNS THAT STILL EXIST.
+    --
+    -- Named directly, this broke re-runnability the moment a later migration
+    -- dropped one of them: total_meal_allowance_amount, total_transport_-
+    -- allowance_amount and total_bonus_amount are all gone by 2026-09-06, and a
+    -- plain reference to a dropped column fails at execution even inside a
+    -- branch that would not have mattered. The item's own money lines are
+    -- checked below either way, so nothing is skipped when a column has gone —
+    -- an amount on a line is what "carries money" actually means.
     SELECT count(*) INTO v_money
     FROM payroll_run_items i JOIN candidates c ON c.id = i.id
     WHERE COALESCE(i.total_net_earnings, 0) <> 0
        OR COALESCE(i.net_payable_amount, 0) <> 0
-       OR COALESCE(i.total_bonus_amount, 0) <> 0
-       OR COALESCE(i.total_meal_allowance_amount, 0) <> 0
-       OR COALESCE(i.total_transport_allowance_amount, 0) <> 0
        OR COALESCE(i.previously_paid_amount, 0) <> 0
-       OR COALESCE(i.current_balance_amount, 0) <> 0;
+       OR COALESCE(i.current_balance_amount, 0) <> 0
+       OR EXISTS (SELECT 1 FROM payroll_adjustments a
+                  WHERE a.payroll_run_item_id = i.id
+                    AND COALESCE(a.amount, 0) <> 0);
 
     IF v_locked > 0 OR v_minutes > 0 OR v_money > 0 THEN
         RAISE EXCEPTION 'Refusing to archive: % locked, % with worked minutes, % carrying money. '

@@ -10,16 +10,21 @@
 -- WHY THIS EXISTS. The step-3 sweep recalculated every item and proved the READ
 -- path: the calculation takes the override state off payroll_adjustments. It
 -- proves nothing about the WRITE path — that an edit made on the screen reaches
--- the line rather than only the item column it used to go to. Only real editing
--- does that, and only per employee.
+-- the line. Only real editing does that, and only per employee.
+--
+-- THE COLUMN-AGAINST-LINE VERDICT IS GONE FROM HERE, because the columns are.
+-- The mirror on payroll_run_items was dropped once the two had been shown to
+-- agree — meal and transport in 2026-09-04, the nine bonus columns in
+-- 2026-09-06 — so there is no second figure left to disagree with. What remains
+-- is what the line says and whether a person put it there.
 --
 -- WHAT TO DO BEFORE RUNNING IT, on the month you are checking:
---   1. change the meal price
---   2. type a transport total
---   3. change the base bonus, and the additional bonus
---   4. open the payslip and read the figures
--- Each one is a separate path that step 2 moved. Doing three of the four proves
--- three of the four.
+--   1. change the meal price          → MEAL_ALLOWANCE.unit_amount
+--   2. type a transport total          → TRANSPORT_ALLOWANCE.amount, is_overridden
+--   3. change the base bonus           → MONTHLY_BONUS.amount moves, correction does not
+--   4. change the additional bonus     → correction_amount moves and the total with it
+--   5. open the payslip and read the figures
+-- Each one is a separate path. Doing four of the five proves four of the five.
 -- =============================================================================
 
 \echo '=== Who and when'
@@ -64,62 +69,6 @@ WHERE a.payroll_run_item_id = (SELECT id FROM payroll_run_items
                                WHERE employee_id = :emp AND period = :period AND archived_at IS NULL)
   AND c.code IN ('MEAL_ALLOWANCE', 'TRANSPORT_ALLOWANCE', 'MONTHLY_BONUS')
 ORDER BY c.code;
-
-
-\echo ''
-\echo '=== THE VERDICT — column against line, for this one month'
--- Every row must read OK. A MISMATCH means the edit went to one of them and not
--- the other, which is exactly what must not survive into the column being dropped.
-WITH i AS (
-    SELECT * FROM payroll_run_items
-    WHERE employee_id = :emp AND period = :period AND archived_at IS NULL
-), line AS (
-    SELECT c.code, a.*
-    FROM payroll_adjustments a
-    JOIN payroll_adjustment_categories c ON c.id = a.payroll_adjustment_category_id
-    WHERE a.payroll_run_item_id = (SELECT id FROM i)
-)
-SELECT 'meal price'      AS figure,
-       (SELECT meal_allowance_unit_amount FROM i)::text AS column_says,
-       COALESCE((SELECT COALESCE(unit_amount, system_unit_amount, 0) FROM line WHERE code = 'MEAL_ALLOWANCE'), 0)::text AS line_says,
-       CASE WHEN COALESCE((SELECT meal_allowance_unit_amount FROM i), 0)
-                 = COALESCE((SELECT COALESCE(unit_amount, system_unit_amount, 0) FROM line WHERE code = 'MEAL_ALLOWANCE'), 0)
-            THEN 'OK' ELSE '>>> MISMATCH' END AS verdict
-UNION ALL
-SELECT 'meal total',
-       (SELECT total_meal_allowance_amount FROM i)::text,
-       COALESCE((SELECT amount FROM line WHERE code = 'MEAL_ALLOWANCE'), 0)::text,
-       CASE WHEN COALESCE((SELECT total_meal_allowance_amount FROM i), 0)
-                 = COALESCE((SELECT amount FROM line WHERE code = 'MEAL_ALLOWANCE'), 0)
-            THEN 'OK' ELSE '>>> MISMATCH' END
-UNION ALL
-SELECT 'transport total',
-       (SELECT total_transport_allowance_amount FROM i)::text,
-       COALESCE((SELECT amount FROM line WHERE code = 'TRANSPORT_ALLOWANCE'), 0)::text,
-       CASE WHEN COALESCE((SELECT total_transport_allowance_amount FROM i), 0)
-                 = COALESCE((SELECT amount FROM line WHERE code = 'TRANSPORT_ALLOWANCE'), 0)
-            THEN 'OK' ELSE '>>> MISMATCH' END
-UNION ALL
-SELECT 'bonus base',
-       (SELECT base_bonus_amount FROM i)::text,
-       COALESCE((SELECT amount - correction_amount FROM line WHERE code = 'MONTHLY_BONUS'), 0)::text,
-       CASE WHEN COALESCE((SELECT base_bonus_amount FROM i), 0)
-                 = COALESCE((SELECT amount - correction_amount FROM line WHERE code = 'MONTHLY_BONUS'), 0)
-            THEN 'OK' ELSE '>>> MISMATCH' END
-UNION ALL
-SELECT 'bonus additional',
-       (SELECT bonus_correction_amount FROM i)::text,
-       COALESCE((SELECT correction_amount FROM line WHERE code = 'MONTHLY_BONUS'), 0)::text,
-       CASE WHEN COALESCE((SELECT bonus_correction_amount FROM i), 0)
-                 = COALESCE((SELECT correction_amount FROM line WHERE code = 'MONTHLY_BONUS'), 0)
-            THEN 'OK' ELSE '>>> MISMATCH' END
-UNION ALL
-SELECT 'bonus total',
-       (SELECT total_bonus_amount FROM i)::text,
-       COALESCE((SELECT amount FROM line WHERE code = 'MONTHLY_BONUS'), 0)::text,
-       CASE WHEN COALESCE((SELECT total_bonus_amount FROM i), 0)
-                 = COALESCE((SELECT amount FROM line WHERE code = 'MONTHLY_BONUS'), 0)
-            THEN 'OK' ELSE '>>> MISMATCH' END;
 
 
 \echo ''

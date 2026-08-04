@@ -65,15 +65,6 @@ public class PayrollRunItemResponse {
     // ── Transport allowance ──────────────────────────────────────────────────
 
     // ── Bonus components ─────────────────────────────────────────────────────
-    private final BigDecimal baseBonusAmountSystem;
-    private final BigDecimal baseBonusAmount;
-    private final Boolean baseBonusAmountOverridden;
-    private final BigDecimal bonusCorrectionAmountSystem;
-    private final BigDecimal bonusCorrectionAmount;
-    private final Boolean bonusCorrectionAmountOverridden;
-    private final BigDecimal totalBonusAmountSystem;
-    private final BigDecimal totalBonusAmount;
-    private final Boolean totalBonusAmountOverridden;
 
     // ── Calculated summary totals ─────────────────────────────────────────────
     private final BigDecimal totalDeductionsAmount;
@@ -130,15 +121,6 @@ public class PayrollRunItemResponse {
 
 
 
-        this.baseBonusAmountSystem = item.getBaseBonusAmountSystem();
-        this.baseBonusAmount = item.getBaseBonusAmount();
-        this.baseBonusAmountOverridden = item.getBaseBonusAmountOverridden();
-        this.bonusCorrectionAmountSystem = item.getBonusCorrectionAmountSystem();
-        this.bonusCorrectionAmount = item.getBonusCorrectionAmount();
-        this.bonusCorrectionAmountOverridden = item.getBonusCorrectionAmountOverridden();
-        this.totalBonusAmountSystem = item.getTotalBonusAmountSystem();
-        this.totalBonusAmount = item.getTotalBonusAmount();
-        this.totalBonusAmountOverridden = item.getTotalBonusAmountOverridden();
 
         this.totalDeductionsAmount = item.getTotalDeductionsAmount();
         this.currentMonthTelephone = item.getCurrentMonthTelephone();

@@ -137,32 +137,14 @@ public class PayrollRunItem {
 
     // ── Bonus components ────────────────────────────────────────────────────
 
-    @Column(name = "base_bonus_amount_system", nullable = false)
-    private BigDecimal baseBonusAmountSystem;
 
-    @Column(name = "base_bonus_amount", nullable = false)
-    private BigDecimal baseBonusAmount;
 
-    @Column(name = "base_bonus_amount_overridden", nullable = false)
-    private Boolean baseBonusAmountOverridden;
 
-    @Column(name = "bonus_correction_amount_system", nullable = false)
-    private BigDecimal bonusCorrectionAmountSystem;
 
-    @Column(name = "bonus_correction_amount", nullable = false)
-    private BigDecimal bonusCorrectionAmount;
 
-    @Column(name = "bonus_correction_amount_overridden", nullable = false)
-    private Boolean bonusCorrectionAmountOverridden;
 
-    @Column(name = "total_bonus_amount_system", nullable = false)
-    private BigDecimal totalBonusAmountSystem;
 
-    @Column(name = "total_bonus_amount", nullable = false)
-    private BigDecimal totalBonusAmount;
 
-    @Column(name = "total_bonus_amount_overridden", nullable = false)
-    private Boolean totalBonusAmountOverridden;
 
     // ── Calculated summary totals ───────────────────────────────────────────
 

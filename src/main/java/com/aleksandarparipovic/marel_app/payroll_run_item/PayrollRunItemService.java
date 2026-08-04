@@ -607,64 +607,9 @@ public class PayrollRunItemService {
         // copy them across; with the line as the source that was one write too many
         // and one more place for the two to disagree. See applyAdjustmentPatch.
         // ── 3. totalTransportAllowanceAmount → sync TRANSPORT adj ─────────────
-        // ── 4. Bonus fields → sync BONUS adj ─────────────────────────────────
-        if (req.isBaseBonusAmountPresent()) {
-            BigDecimal amt = req.getBaseBonusAmount() != null
-                    ? req.getBaseBonusAmount().setScale(2, RoundingMode.HALF_UP)
-                    : item.getBaseBonusAmountSystem();
-            if (amt == null) amt = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-            item.setBaseBonusAmount(amt);
-            item.setBaseBonusAmountOverridden(
-                    item.getBaseBonusAmountSystem() != null &&
-                    amt.compareTo(item.getBaseBonusAmountSystem()) != 0);
-        }
-        if (req.isBonusCorrectionAmountPresent()) {
-            BigDecimal amt = req.getBonusCorrectionAmount() != null
-                    ? req.getBonusCorrectionAmount().setScale(2, RoundingMode.HALF_UP)
-                    : item.getBonusCorrectionAmountSystem();
-            if (amt == null) amt = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-            item.setBonusCorrectionAmount(amt);
-            item.setBonusCorrectionAmountOverridden(
-                    item.getBonusCorrectionAmountSystem() != null &&
-                    amt.compareTo(item.getBonusCorrectionAmountSystem()) != 0);
-        }
-        // STEP 2: whichever part was sent, the LINE has to carry it — that is what
-        // the recalculation reads. Writing only the item columns left the next
-        // recalculation to put the rules' figures back over a person's.
-        if (req.isBaseBonusAmountPresent() || req.isBonusCorrectionAmountPresent()) {
-            syncBonusParts(id, item);
-        }
-
-        if (req.isTotalBonusAmountPresent()) {
-            if (req.getTotalBonusAmount() != null) {
-                BigDecimal bonus = req.getTotalBonusAmount().setScale(2, RoundingMode.HALF_UP);
-                item.setTotalBonusAmount(bonus);
-                item.setTotalBonusAmountOverridden(
-                        item.getTotalBonusAmountSystem() != null &&
-                        bonus.compareTo(item.getTotalBonusAmountSystem()) != 0);
-                // `true` here re-applied a line the scheme had excluded, putting its
-                // money back into the earnings sum. The scheme decides, not the patch.
-                updateAdjustmentByCategoryCode(id, CAT_CODE_BONUS, bonus,
-                        allowsAdjustmentCode(scopeFor(item), CAT_CODE_BONUS));
-            } else {
-                // null sent → reset override, auto-calculate from components
-                item.setTotalBonusAmountOverridden(false);
-                BigDecimal base       = item.getBaseBonusAmount()       != null ? item.getBaseBonusAmount()       : BigDecimal.ZERO;
-                BigDecimal correction = item.getBonusCorrectionAmount() != null ? item.getBonusCorrectionAmount() : BigDecimal.ZERO;
-                BigDecimal total      = base.add(correction).setScale(2, RoundingMode.HALF_UP);
-                item.setTotalBonusAmount(total);
-                updateAdjustmentByCategoryCode(id, CAT_CODE_BONUS, total, true);
-            }
-        } else if (req.isBaseBonusAmountPresent() || req.isBonusCorrectionAmountPresent()) {
-            if (!Boolean.TRUE.equals(item.getTotalBonusAmountOverridden())) {
-                BigDecimal base       = item.getBaseBonusAmount()       != null ? item.getBaseBonusAmount()       : BigDecimal.ZERO;
-                BigDecimal correction = item.getBonusCorrectionAmount() != null ? item.getBonusCorrectionAmount() : BigDecimal.ZERO;
-                BigDecimal total      = base.add(correction).setScale(2, RoundingMode.HALF_UP);
-                item.setTotalBonusAmount(total);
-                updateAdjustmentByCategoryCode(id, CAT_CODE_BONUS, total, true);
-            }
-        }
-
+        // The bonus is edited ON ITS LINE now, both parts of it: baseAmount and
+        // correctionAmount in the adjustments array. These branches wrote the item
+        // columns and left the recalculation to copy them across.
         // ── 5. Individual adjustment patches ─────────────────────────────────
         if (req.getAdjustments() != null && !req.getAdjustments().isEmpty()) {
             PayrollSchemeScope patchScope = scopeFor(item);
@@ -978,21 +923,10 @@ public class PayrollRunItemService {
      * without being added to this list.
      */
     private void refuseEditsToExcludedCategories(PayrollRunItem item, PayrollRunItemPatchRequest req) {
-        // Meal and transport are edited on their lines, and applyAdjustmentPatch
-        // guards those. Only the bonus still arrives as item fields.
-        boolean touchesBonus     = req.isBaseBonusAmountPresent()
-                                || req.isBonusCorrectionAmountPresent()
-                                || req.isTotalBonusAmountPresent();
-
-        if (!touchesBonus) {
-            return;
-        }
-
-        PayrollSchemeScope scope = scopeFor(item);
-        if (touchesBonus && !allowsAdjustmentCode(scope, CAT_CODE_BONUS)) {
-            throw new ConflictException(
-                    "Mesečni bonus ne pripada ovom zaposlenom po njegovom načinu obračuna.");
-        }
+        // Nothing left: meal, transport and the bonus are all edited on their
+        // lines, and applyAdjustmentPatch refuses a category the scheme excludes
+        // for every one of them. Kept as the place that answer belongs, so a new
+        // item-level money field cannot quietly reopen the hole this closed.
     }
 
     private void applyAdjustmentPatch(PayrollAdjustment adj, AdjustmentPatchDto patch,
@@ -1034,9 +968,23 @@ public class PayrollRunItemService {
             adj.setUnitAmount(patch.getUnitAmount().setScale(4, RoundingMode.HALF_UP));
             adj.setHasManualInput(true);
         }
+        if (patch.getBaseAmount() != null) {
+            // Only where a correction is what the scheme lets a person edit — that
+            // is the shape this exists for, and permitting it everywhere would be a
+            // second route to a total on lines that allow no such thing.
+            requireEditableInput(config, "CORRECTION", code);
+            adj.setAmount(patch.getBaseAmount()
+                    .add(orZero(adj.getCorrectionAmount()))
+                    .setScale(2, RoundingMode.HALF_UP));
+            adj.setHasManualInput(true);
+        }
         if (patch.getCorrectionAmount() != null) {
             requireEditableInput(config, "CORRECTION", code);
+            // The base is amount minus the OLD correction; keep it and put the new
+            // correction on top, or changing the tier would silently move the base.
+            BigDecimal keptBase = orZero(adj.getAmount()).subtract(orZero(adj.getCorrectionAmount()));
             adj.setCorrectionAmount(patch.getCorrectionAmount().setScale(2, RoundingMode.HALF_UP));
+            adj.setAmount(keptBase.add(adj.getCorrectionAmount()).setScale(2, RoundingMode.HALF_UP));
             adj.setHasManualInput(true);
         }
 
@@ -1093,8 +1041,8 @@ public class PayrollRunItemService {
         //
         // Not when the total was typed in: then there is no formula to apply.
         if (patch.getAmount() == null
-                && (patch.getQuantity() != null || patch.getUnitAmount() != null
-                    || patch.getCorrectionAmount() != null)
+                && patch.getBaseAmount() == null && patch.getCorrectionAmount() == null
+                && (patch.getQuantity() != null || patch.getUnitAmount() != null)
                 && !Boolean.TRUE.equals(adj.getIsOverridden())) {
             BigDecimal qty = adj.getQuantity() != null ? adj.getQuantity() : adj.getSystemQuantity();
             BigDecimal unit = adj.getUnitAmount() != null ? adj.getUnitAmount() : adj.getSystemUnitAmount();
@@ -1113,9 +1061,18 @@ public class PayrollRunItemService {
         }
     }
 
+    /**
+     * Does this patch put a figure on the line?
+     *
+     * <p>EVERY money-bearing field has to be listed. baseAmount was added and this
+     * was not, so a bonus base sailed past the excluded-category check while a
+     * total and a correction were both refused — the same defect the user reported
+     * twice, reopened by a new field. The tests caught it; the review did not.
+     */
     private static boolean touchesAValue(AdjustmentPatchDto patch) {
         return patch.getAmount() != null || patch.getQuantity() != null
-                || patch.getUnitAmount() != null || patch.getCorrectionAmount() != null;
+                || patch.getUnitAmount() != null || patch.getCorrectionAmount() != null
+                || patch.getBaseAmount() != null;
     }
 
     private void requireEditableInput(EffectiveComponentConfig config, String wanted, String code) {
@@ -1165,30 +1122,6 @@ public class PayrollRunItemService {
 
 
 
-    /**
-     * Put the bonus's two parts on its line: the tier in correction_amount and the
-     * two of them together in amount.
-     *
-     * <p>amount stays the effective TOTAL — the figure the earnings sum reads —
-     * and the base is recoverable from it as amount minus correction_amount. That
-     * is the whole reason the total was not narrowed to the base alone: doing so
-     * would have required changing the earnings sum in the same breath, and a
-     * mistake there is a bonus paid twice.
-     */
-    private void syncBonusParts(Long itemId, PayrollRunItem item) {
-        BigDecimal base = orZero(item.getBaseBonusAmount());
-        BigDecimal correction = orZero(item.getBonusCorrectionAmount());
-        BigDecimal total = base.add(correction).setScale(2, RoundingMode.HALF_UP);
-
-        payrollAdjustmentRepository.findByItemIdAndCategoryCode(itemId, CAT_CODE_BONUS)
-                .ifPresent(adj -> {
-                    adj.setCorrectionAmount(correction);
-                    adj.setAmount(total);
-                    adj.setHasManualInput(true);
-                    payrollAdjustmentRepository.save(adj);
-                });
-        item.setTotalBonusAmount(total);
-    }
 
     /** Put a price a person set on the line, where the recalculation reads it. */
     private void recordHumanUnitAmount(Long itemId, String categoryCode, BigDecimal unitAmount) {
@@ -1613,7 +1546,7 @@ public class PayrollRunItemService {
                 : ComponentResult.zero(scope != null && !scope.allowsPerformanceBonus()
                         ? "SCHEME_PAYS_NO_BONUS" : "EXCLUDED_BY_SCHEME");
 
-        // THE BONUS HAS TWO NAMED PARTS AND THEY GO IN THEIR OWN COLUMNS.
+        // THE BONUS HAS TWO NAMED PARTS AND THE LINE CARRIES BOTH.
         //
         //   base       — the employee's own amount from bonus_categories, resolved
         //                for the period through employees_bonus_history, granted
@@ -1621,27 +1554,21 @@ public class PayrollRunItemService {
         //   correction — the hours tier from bonus_eligibility_rules
         //   total      — the two added together
         //
-        // This used to write the calculator's WHOLE result into base_bonus_amount
-        // and leave bonus_correction_amount_system at zero, so the panel showed
-        // "Osnovni bonus 7.500" when the employee's category was 5.000 and the
-        // tier 2.500, and "Korekcija" read 0 unless somebody typed one. The money
-        // was right; the two figures it is made of were not.
+        // The line keeps `amount` as the EFFECTIVE TOTAL — what is paid, and what
+        // the earnings sum reads — and `correction_amount` as the tier, so the
+        // effective base is the difference. Narrowing amount to the base alone
+        // would have meant changing that sum to amount + correction_amount in the
+        // same breath, and getting the order of those two wrong is a bonus paid
+        // twice.
+        //
+        // Nine item columns used to mirror this and are gone. They were written
+        // from these same figures and read by nothing that had not already been
+        // moved to the line.
         BigDecimal baseSystem = bonus.numericInput(MonthlyBonusCalculator.INPUT_BASE_BONUS)
                 .setScale(2, RoundingMode.HALF_UP);
         BigDecimal correctionSystem = bonus.numericInput(MonthlyBonusCalculator.INPUT_TIER_BONUS)
                 .setScale(2, RoundingMode.HALF_UP);
 
-        item.setBaseBonusAmountSystem(baseSystem);
-        item.setBonusCorrectionAmountSystem(correctionSystem);
-        item.setTotalBonusAmountSystem(bonus.systemAmount());
-
-        // STEP 2: three flags on the item become three comparisons on the line.
-        //
-        // The line keeps `amount` as the EFFECTIVE TOTAL — what is paid, and what
-        // the earnings sum reads. Narrowing it to the base alone would have meant
-        // changing that sum to amount + correction_amount, and getting the order of
-        // those two changes wrong is a double-counted bonus. The parts stay
-        // recoverable: the effective base is amount minus correction_amount.
         PayrollAdjustment bonusLine = lines.get(CAT_CODE_BONUS);
 
         BigDecimal effectiveCorrection = correctionSystem;
@@ -1650,10 +1577,8 @@ public class PayrollRunItemService {
 
         // A category the scheme excludes takes NOTHING from the line. Its row is
         // zeroed and un-applied later by neutraliseExcludedAdjustments, so reading
-        // a leftover figure off it here and calling that a human's decision left
-        // the item columns claiming a 4.000 bonus for an employee whose scheme pays
-        // none — the money was right, because the sums filter on is_applied, and
-        // the screen was wrong, because the panel reads the columns.
+        // a leftover figure off it here and calling that a human's decision showed
+        // a 4.000 bonus for an employee whose scheme pays none.
         if (bonusLine != null && bonusAllowed) {
             totalIsTyped = Boolean.TRUE.equals(bonusLine.getIsOverridden());
 
@@ -1669,18 +1594,11 @@ public class PayrollRunItemService {
             }
         }
 
-        item.setBaseBonusAmount(effectiveBase);
-        item.setBonusCorrectionAmount(effectiveCorrection);
-        item.setBaseBonusAmountOverridden(differsFromSystem(effectiveBase, baseSystem));
-        item.setBonusCorrectionAmountOverridden(differsFromSystem(effectiveCorrection, correctionSystem));
-        item.setTotalBonusAmountOverridden(totalIsTyped);
-
         if (!totalIsTyped) {
             BigDecimal totalBonus = effectiveBase.add(effectiveCorrection)
                     .setScale(2, RoundingMode.HALF_UP);
-            item.setTotalBonusAmount(totalBonus);
             syncAdjustment(item.getId(), CAT_CODE_BONUS, totalBonus, bonus, bonusAllowed);
-            // The parts, recorded on the line beside the total they add up to.
+            // The tier, recorded on the line beside the total it is part of.
             if (bonusLine != null) {
                 bonusLine.setSystemCorrectionAmount(correctionSystem);
                 bonusLine.setCorrectionAmount(effectiveCorrection);
@@ -1688,7 +1606,7 @@ public class PayrollRunItemService {
             }
         } else {
             // The rules' own figures still belong on the line, even though the
-            // total is somebody's: that is how the panel can show what would
+            // total is somebody's: that is how the panel shows what would
             // otherwise have been paid.
             syncAdjustment(item.getId(), CAT_CODE_BONUS, bonus.systemAmount(), bonus,
                     bonusAllowed, false);
@@ -1701,14 +1619,16 @@ public class PayrollRunItemService {
             // no better — a total of 2.000 against a 2.500 tier gives a base of
             // MINUS 500, which is arithmetic nobody typed and nobody means.
             //
-            // So the whole figure is the base and the additional is nothing. The
-            // panel then reads "2.000 + 0 = 2.000", which is exactly what somebody
-            // decided; the rules' own figures are still on the line as
-            // system_amount and system_correction_amount.
-            BigDecimal typedTotal = orZero(bonusLine.getAmount());
-            item.setTotalBonusAmount(typedTotal);
-            item.setBaseBonusAmount(typedTotal);
-            item.setBonusCorrectionAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+            // So the whole figure is the base and the additional is nothing: the
+            // correction goes to zero and the total stays where it was put. The
+            // panel then reads "2.000 + 0 = 2.000", which is what somebody decided;
+            // the rules' figures are still there as system_amount and
+            // system_correction_amount.
+            if (bonusLine != null) {
+                bonusLine.setSystemCorrectionAmount(correctionSystem);
+                bonusLine.setCorrectionAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+                payrollAdjustmentRepository.save(bonusLine);
+            }
         }
 
         // ── previousNetPayableAmount — from previous month's item for this employee ──
@@ -2105,15 +2025,6 @@ public class PayrollRunItemService {
         if (item.getHourlyRateSystem() == null)         item.setHourlyRateSystem(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getHourlyRateOverridden() == null)     item.setHourlyRateOverridden(false);
 
-        if (item.getBaseBonusAmountSystem() == null)    item.setBaseBonusAmountSystem(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        if (item.getBaseBonusAmount() == null)          item.setBaseBonusAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        if (item.getBaseBonusAmountOverridden() == null) item.setBaseBonusAmountOverridden(false);
-        if (item.getBonusCorrectionAmountSystem() == null) item.setBonusCorrectionAmountSystem(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        if (item.getBonusCorrectionAmount() == null)    item.setBonusCorrectionAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        if (item.getBonusCorrectionAmountOverridden() == null) item.setBonusCorrectionAmountOverridden(false);
-        if (item.getTotalBonusAmountSystem() == null)   item.setTotalBonusAmountSystem(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        if (item.getTotalBonusAmount() == null)         item.setTotalBonusAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        if (item.getTotalBonusAmountOverridden() == null) item.setTotalBonusAmountOverridden(false);
 
         if (item.getTotalDeductionsAmount() == null)    item.setTotalDeductionsAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getCurrentMonthTelephone() == null)    item.setCurrentMonthTelephone(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
