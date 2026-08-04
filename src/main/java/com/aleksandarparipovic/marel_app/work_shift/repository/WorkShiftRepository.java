@@ -225,4 +225,28 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             """)
     List<WorkShift> findActiveByEmployeeFromDate(@Param("employeeId") Long employeeId,
                                                  @Param("fromDate") LocalDate fromDate);
+
+    /**
+     * Every active shift of this employee whose time overlaps [start, end).
+     *
+     * <p>Asked BEFORE the insert so the user gets a question instead of
+     * {@code ex_work_shifts_no_overlap} arriving as a raw SQL error. The
+     * constraint stays the guarantee — this is only what lets the application
+     * explain the collision and offer a way out.
+     *
+     * <p>Half-open on purpose, matching the tstzrange the constraint builds:
+     * a shift that ends exactly when another begins does not overlap it.
+     */
+    @Query("""
+        SELECT ws FROM WorkShift ws
+        JOIN FETCH ws.shift
+        WHERE ws.employee.id = :employeeId
+          AND ws.isActive = true
+          AND ws.startAt < :end
+          AND ws.endAt   > :start
+        ORDER BY ws.startAt
+        """)
+    List<WorkShift> findOverlapping(@Param("employeeId") Long employeeId,
+                                    @Param("start") OffsetDateTime start,
+                                    @Param("end") OffsetDateTime end);
 }

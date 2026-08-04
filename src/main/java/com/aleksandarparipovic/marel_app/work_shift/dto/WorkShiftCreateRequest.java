@@ -18,6 +18,16 @@ public class WorkShiftCreateRequest {
     @NotBlank
     private String workDate;
 
+    /**
+     * What to do when the shift collides with one the employee already has.
+     *
+     * <p>Null on the first attempt: the server answers with the collision and the
+     * ways out, and the client asks. TRIM shortens the new shift to stop where
+     * the existing one starts; MERGE stretches the EXISTING shift over both and
+     * creates nothing.
+     */
+    private String overlapResolution;
+
     /** ID of the Shift definition (shift type). */
     @NotNull
     @Positive

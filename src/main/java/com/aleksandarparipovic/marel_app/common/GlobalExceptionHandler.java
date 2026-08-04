@@ -8,6 +8,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.LinkedHashMap;
+import com.aleksandarparipovic.marel_app.work_shift.WorkShiftOverlapException;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -88,6 +90,26 @@ public class GlobalExceptionHandler {
                         // is deliberately not echoed back.
                         "error", "Neispravan format zahteva."
                 ));
+    }
+
+    /**
+     * A shift collides with one the employee already has.
+     *
+     * <p>409 like any other conflict, but with the collision and the ways out in
+     * the body: the client is meant to ASK the user, not report a failure. Before
+     * this, ex_work_shifts_no_overlap reached the screen as a raw SQL error naming
+     * a tstzrange.
+     */
+    @ExceptionHandler(WorkShiftOverlapException.class)
+    public ResponseEntity<?> handleWorkShiftOverlap(WorkShiftOverlapException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", LocalDateTime.now());
+        body.put("error", ex.getMessage());
+        body.put("code", "WORK_SHIFT_OVERLAP");
+        body.put("details", Map.of(
+                "conflicts", ex.getConflicts(),
+                "options", ex.getOptions()));
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler(ConflictException.class)

@@ -26,8 +26,12 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.aleksandarparipovic.marel_app.common.ConflictException;
+
 import java.time.*;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -168,6 +172,248 @@ public class WorkShiftService {
     }
 
     @Transactional
+
+
+    /** The interval a trimmed shift would occupy. */
+    private record Interval(OffsetDateTime start, OffsetDateTime end) {}
+
+    /**
+     * The new shift with the collision cut off it, or empty when nothing is left.
+     *
+     * <p>THE COLLISION HAS TWO SIDES and the first version only handled one. A
+     * third shift 22:00–06:00 running into a first shift that starts at 05:00 is
+     * cut at the END. A second shift 14:00–22:00 running into that same first
+     * shift, which ends at 14:40, has to be cut at the START — and was offered
+     * nothing but a merge, because the existing shift did not begin after it.
+     *
+     * <p>Neither cut is possible when the existing shift swallows the new one
+     * whole; merging is then the only thing left that means anything.
+     */
+    private static Optional<Interval> trimmedAround(OffsetDateTime startAt,
+                                                    OffsetDateTime endAt,
+                                                    WorkShift other) {
+        // The other one starts inside ours: keep the part before it.
+        if (other.getStartAt().isAfter(startAt)) {
+            return Optional.of(new Interval(startAt, other.getStartAt()));
+        }
+        // The other one covers our start: begin where it ends, if that leaves time.
+        if (other.getEndAt().isBefore(endAt)) {
+            return Optional.of(new Interval(other.getEndAt(), endAt));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Turn a collision into a question: what is in the way, and what could be done.
+     *
+     * <p>Both ways out are offered only when exactly ONE shift is in the way.
+     * With several, trimming would have to choose a neighbour and merging would
+     * have to swallow somebody else's record — guesses whose cost is measured in
+     * somebody's pay.
+     */
+    private WorkShiftOverlapException overlapQuestion(List<WorkShift> overlapping,
+                                                      OffsetDateTime startAt,
+                                                      OffsetDateTime endAt) {
+        List<WorkShiftOverlapException.Conflict> conflicts = overlapping.stream()
+                .map(ws -> new WorkShiftOverlapException.Conflict(
+                        ws.getId(), ws.getShift().getName(), ws.getStartAt(), ws.getEndAt()))
+                .toList();
+
+        if (overlapping.size() == 2) {
+            return betweenTwo(overlapping, startAt, endAt, conflicts);
+        }
+        if (overlapping.size() > 1) {
+            return new WorkShiftOverlapException(
+                    "Smena se preklapa sa više postojećih smena. Ispravite ih pojedinačno.",
+                    conflicts, List.of());
+        }
+
+        WorkShift other = overlapping.getFirst();
+        List<WorkShiftOverlapException.Option> options = new ArrayList<>();
+
+        trimmedAround(startAt, endAt, other).ifPresent(trimmed -> options.add(
+                new WorkShiftOverlapException.Option(
+                        WorkShiftOverlapException.Resolution.TRIM,
+                        trimmed.start(), trimmed.end(),
+                        trimmed.start().isEqual(startAt)
+                                ? "Skrati novu smenu do početka postojeće"
+                                : "Pomeri početak nove smene na kraj postojeće")));
+
+        // Merge: the existing shift stretched over both. It keeps its id, its type
+        // and its work logs — it is the one that already has them.
+        OffsetDateTime mergedStart = startAt.isBefore(other.getStartAt()) ? startAt : other.getStartAt();
+        OffsetDateTime mergedEnd   = endAt.isAfter(other.getEndAt())      ? endAt   : other.getEndAt();
+        options.add(new WorkShiftOverlapException.Option(
+                WorkShiftOverlapException.Resolution.MERGE,
+                mergedStart, mergedEnd,
+                "Spoji u jednu smenu"));
+
+        return new WorkShiftOverlapException(
+                "Smena se preklapa sa postojećom smenom \"" + other.getShift().getName() + "\".",
+                conflicts, options);
+    }
+
+
+    /** The shift covering the new one's start, and the one beginning inside it. */
+    private static WorkShift previousOf(List<WorkShift> overlapping, OffsetDateTime startAt) {
+        return overlapping.stream()
+                .filter(ws -> !ws.getStartAt().isAfter(startAt))
+                .findFirst().orElse(null);
+    }
+
+    private static WorkShift nextOf(List<WorkShift> overlapping, OffsetDateTime startAt) {
+        return overlapping.stream()
+                .filter(ws -> ws.getStartAt().isAfter(startAt))
+                .findFirst().orElse(null);
+    }
+
+    /**
+     * The new shift runs into one on EACH side.
+     *
+     * <p>Three ways out, and every one of them is collision-free by construction:
+     * a merge stops exactly where the shift on the other side begins, so absorbing
+     * the new shift never pushes the result into its neighbour.
+     *
+     * <ul>
+     *   <li>MERGE_PREVIOUS — the earlier shift stretches forward to where the later
+     *       one starts.</li>
+     *   <li>MERGE_NEXT — the later shift stretches back to where the earlier one
+     *       ends.</li>
+     *   <li>FIT_BETWEEN — a new shift filling exactly the gap. Offered only when
+     *       there IS a gap; when the two already touch, there is nothing to fill.</li>
+     * </ul>
+     *
+     * <p>Two conflicts that are not one-before-one-after — both beginning inside
+     * the new shift, say — get nothing. There is no "previous and next" to speak
+     * of, and choosing for the user there would be guessing with their pay.
+     */
+    private WorkShiftOverlapException betweenTwo(List<WorkShift> overlapping,
+                                                 OffsetDateTime startAt,
+                                                 OffsetDateTime endAt,
+                                                 List<WorkShiftOverlapException.Conflict> conflicts) {
+        WorkShift previous = previousOf(overlapping, startAt);
+        WorkShift next = nextOf(overlapping, startAt);
+
+        if (previous == null || next == null) {
+            return new WorkShiftOverlapException(
+                    "Smena se preklapa sa više postojećih smena. Ispravite ih pojedinačno.",
+                    conflicts, List.of());
+        }
+
+        List<WorkShiftOverlapException.Option> options = new ArrayList<>();
+
+        options.add(new WorkShiftOverlapException.Option(
+                WorkShiftOverlapException.Resolution.MERGE_PREVIOUS,
+                previous.getStartAt(), next.getStartAt(),
+                "Spoji sa prethodnom smenom (" + previous.getShift().getName() + ")"));
+
+        options.add(new WorkShiftOverlapException.Option(
+                WorkShiftOverlapException.Resolution.MERGE_NEXT,
+                previous.getEndAt(), next.getEndAt(),
+                "Spoji sa sledećom smenom (" + next.getShift().getName() + ")"));
+
+        if (previous.getEndAt().isBefore(next.getStartAt())) {
+            options.add(new WorkShiftOverlapException.Option(
+                    WorkShiftOverlapException.Resolution.FIT_BETWEEN,
+                    previous.getEndAt(), next.getStartAt(),
+                    "Neka traje između njih"));
+        }
+
+        return new WorkShiftOverlapException(
+                "Smena se preklapa sa smenama \"" + previous.getShift().getName()
+                        + "\" i \"" + next.getShift().getName() + "\".",
+                conflicts, options);
+    }
+
+
+    /**
+     * Apply one of the three answers for a shift caught between two others.
+     *
+     * <p>Each result is bounded by the neighbour on the far side, so none of them
+     * can trade one collision for another.
+     */
+    private WorkShiftBasicInfoDto resolveBetweenTwo(WorkShiftCreateRequest request,
+                                                    List<WorkShift> overlapping,
+                                                    OffsetDateTime startAt,
+                                                    OffsetDateTime endAt,
+                                                    String choice) {
+        WorkShift previous = previousOf(overlapping, startAt);
+        WorkShift next = nextOf(overlapping, startAt);
+        if (previous == null || next == null) {
+            throw overlapQuestion(overlapping, startAt, endAt);
+        }
+
+        return switch (choice) {
+            case "MERGE_PREVIOUS" -> {
+                // Forward only as far as the later shift begins.
+                previous.setEndAt(next.getStartAt());
+                yield workShiftMapper.toBasicInfoDto(repository.save(previous));
+            }
+            case "MERGE_NEXT" -> {
+                // Back only as far as the earlier shift ends.
+                next.setStartAt(previous.getEndAt());
+                yield workShiftMapper.toBasicInfoDto(repository.save(next));
+            }
+            case "FIT_BETWEEN" -> {
+                if (!previous.getEndAt().isBefore(next.getStartAt())) {
+                    throw new ConflictException(
+                            "Između postojećih smena nema slobodnog vremena.");
+                }
+                yield persistShift(request, previous.getEndAt(), next.getStartAt());
+            }
+            default -> throw new ConflictException(
+                    "Nepoznat način rešavanja preklapanja: " + choice);
+        };
+    }
+
+    /**
+     * Apply the resolution the user picked, or return null when they have not
+     * picked one yet.
+     */
+    private WorkShiftBasicInfoDto resolveOverlap(WorkShiftCreateRequest request,
+                                                 List<WorkShift> overlapping,
+                                                 OffsetDateTime startAt,
+                                                 OffsetDateTime endAt) {
+        String choice = request.getOverlapResolution();
+        if (choice == null || choice.isBlank()) {
+            return null;
+        }
+        if (overlapping.size() == 2) {
+            return resolveBetweenTwo(request, overlapping, startAt, endAt, choice);
+        }
+        if (overlapping.size() > 1) {
+            throw overlapQuestion(overlapping, startAt, endAt);
+        }
+
+        WorkShift other = overlapping.getFirst();
+        WorkShiftOverlapException.Resolution resolution;
+        try {
+            resolution = WorkShiftOverlapException.Resolution.valueOf(choice);
+        } catch (IllegalArgumentException ex) {
+            throw new ConflictException("Nepoznat način rešavanja preklapanja: " + choice);
+        }
+
+        if (resolution == WorkShiftOverlapException.Resolution.MERGE) {
+            // Stretch the EXISTING shift. Not a new row replacing it: this one
+            // already carries the work logs, and creating a replacement would
+            // orphan or destroy them.
+            if (startAt.isBefore(other.getStartAt())) {
+                other.setStartAt(startAt);
+            }
+            if (endAt.isAfter(other.getEndAt())) {
+                other.setEndAt(endAt);
+            }
+            return workShiftMapper.toBasicInfoDto(repository.save(other));
+        }
+
+        // TRIM — exactly the interval the option advertised, computed by the same
+        // method, so what the user was shown and what is saved cannot disagree.
+        Interval trimmed = trimmedAround(startAt, endAt, other)
+                .orElseThrow(() -> new ConflictException(
+                        "Nova smena ne može da se skrati: postojeća smena je pokriva u celosti."));
+        return persistShift(request, trimmed.start(), trimmed.end());
+    }
+
     public WorkShiftBasicInfoDto createShift(WorkShiftCreateRequest request) {
         LocalDate workDate = LocalDate.parse(request.getWorkDate());
 
@@ -183,6 +429,36 @@ public class WorkShiftService {
         if (endAt.isBefore(startAt) || endAt.isEqual(startAt)) {
             endAt = endAt.plusDays(1);
         }
+
+        // Ask before inserting. The exclusion constraint is the guarantee, but it
+        // can only refuse — it cannot say which shift is in the way or offer a way
+        // round it, and what reaches the user from it is a raw SQL error.
+        List<WorkShift> overlapping = repository.findOverlapping(request.getEmployeeId(), startAt, endAt);
+        if (!overlapping.isEmpty()) {
+            WorkShiftBasicInfoDto resolved = resolveOverlap(request, overlapping, startAt, endAt);
+            if (resolved != null) {
+                return resolved;
+            }
+            // No resolution chosen yet — hand back the collision and the options.
+            throw overlapQuestion(overlapping, startAt, endAt);
+        }
+
+        return persistShift(request, startAt, endAt);
+    }
+
+    /**
+     * The row itself, with the interval given rather than derived.
+     *
+     * <p>Separate so a TRIMMED shift is built by exactly the same code as a whole
+     * one — only its end differs. Everything else about it is the shift the user
+     * asked for.
+     */
+    private WorkShiftBasicInfoDto persistShift(WorkShiftCreateRequest request,
+                                               OffsetDateTime startAt,
+                                               OffsetDateTime endAt) {
+        LocalDate workDate = LocalDate.parse(request.getWorkDate());
+        Shift shift = shiftRepository.findById(request.getShiftType())
+                .orElseThrow(() -> new EntityNotFoundException("Shift not found: " + request.getShiftType()));
 
         EmployeeRecord employeeRecord = employeeRecordService.getOrCreateMonthlyRecord(request.getEmployeeId(), workDate);
 
