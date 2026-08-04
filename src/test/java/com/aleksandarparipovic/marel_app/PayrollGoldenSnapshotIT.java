@@ -1772,22 +1772,23 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("17d2. the phone line follows the column, and still reaches no total")
-    void phoneCurrentMonthLineFollowsTheColumn() {
+    @DisplayName("17d2. the phone is edited on its line, and still reaches no total")
+    void phoneCurrentMonthIsEditedOnItsLine() {
         var scenario = fixture.scenario().build();
         calculate(scenario);
 
-        PayrollRunItemPatchRequest patch = new PayrollRunItemPatchRequest();
-        patch.setCurrentMonthTelephone(new BigDecimal("1200.00"));
-        payrollRunItemService.patch(scenario.item().getId(), patch);
+        // Through the adjustments array: PHONE_CURRENT_MONTH is a MANUAL category
+        // whose editable input IS the amount. current_month_telephone used to be
+        // the authoritative store with the line kept in step beside it, and the
+        // line sat at zero for every phone entered before the component backfill.
+        patchLine(scenario.item().getId(), "PHONE_CURRENT_MONTH",
+                d -> d.setAmount(new BigDecimal("1200.00")));
 
         PayrollRunItem item = payrollRunItemService.findById(scenario.item().getId());
 
-        assertThat(item.getCurrentMonthTelephone()).isEqualByComparingTo("1200.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "PHONE_CURRENT_MONTH")
                 .orElseThrow().getAmount())
-                .as("the line used to sit at zero while the money lived in the column")
                 .isEqualByComparingTo("1200.00");
 
         // And it STILL reaches no balance. This month's phone is deducted NEXT

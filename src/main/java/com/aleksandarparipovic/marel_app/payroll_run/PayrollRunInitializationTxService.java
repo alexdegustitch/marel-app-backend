@@ -36,6 +36,7 @@ import java.util.stream.Collectors;
 public class PayrollRunInitializationTxService {
 
     private static final String CODE_PHONE_PREVIOUS_MONTH = "PHONE_PREVIOUS_MONTH";
+    private static final String CODE_PHONE_CURRENT_MONTH = "PHONE_CURRENT_MONTH";
 
     private final EmployeeRecordRepository employeeRecordRepository;
     private final MonthlyReportRepository monthlyReportRepository;
@@ -218,9 +219,16 @@ public class PayrollRunInitializationTxService {
                 payrollRunItemRepository.save(item);
             }
 
-            if (prev.getCurrentMonthTelephone() != null
-                    && prev.getCurrentMonthTelephone().compareTo(BigDecimal.ZERO) != 0) {
-                final BigDecimal phoneAmt = prev.getCurrentMonthTelephone();
+            // FROM THE PREVIOUS MONTH'S LINE, not a column beside it. The phone
+            // was written to both and only the column was read here, so a figure
+            // entered on the line alone would never have been charged.
+            BigDecimal prevPhone = payrollAdjustmentRepository
+                    .findByItemIdAndCategoryCode(prev.getId(), CODE_PHONE_CURRENT_MONTH)
+                    .map(PayrollAdjustment::getAmount)
+                    .orElse(null);
+
+            if (prevPhone != null && prevPhone.compareTo(BigDecimal.ZERO) != 0) {
+                final BigDecimal phoneAmt = prevPhone;
                 payrollAdjustmentRepository
                         .findByItemIdAndCategoryCode(item.getId(), CODE_PHONE_PREVIOUS_MONTH)
                         .ifPresent(adj -> {
@@ -299,7 +307,6 @@ public class PayrollRunInitializationTxService {
 
 
 
-        item.setCurrentMonthTelephone(BigDecimal.ZERO);
         item.setPreviouslyPaidAmount(BigDecimal.ZERO);
         item.setPreviousNetPayableAmount(BigDecimal.ZERO);
         item.setCurrentBalanceAmount(BigDecimal.ZERO);

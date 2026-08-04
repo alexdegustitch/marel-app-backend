@@ -152,8 +152,6 @@ public class PayrollRunItem {
 
 
     /** Telefon za tekući mesec — snapshot za prikaz u obračunu */
-    @Column(name = "current_month_telephone")
-    private BigDecimal currentMonthTelephone;
 
     /** SUM(adjustments.amount where impact_code = PAYMENT_MINUS and is_applied = true) */
     @Column(name = "previously_paid_amount", nullable = false)

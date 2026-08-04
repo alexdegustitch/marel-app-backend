@@ -67,7 +67,6 @@ public class PayrollRunItemResponse {
     // ── Bonus components ─────────────────────────────────────────────────────
 
     // ── Calculated summary totals ─────────────────────────────────────────────
-    private final BigDecimal currentMonthTelephone;
     private final BigDecimal previouslyPaidAmount;
     private final BigDecimal previousNetPayableAmount;
     private final BigDecimal currentBalanceAmount;
@@ -121,7 +120,6 @@ public class PayrollRunItemResponse {
 
 
 
-        this.currentMonthTelephone = item.getCurrentMonthTelephone();
         this.previouslyPaidAmount = item.getPreviouslyPaidAmount();
         this.previousNetPayableAmount = item.getPreviousNetPayableAmount();
         this.currentBalanceAmount = item.getCurrentBalanceAmount();

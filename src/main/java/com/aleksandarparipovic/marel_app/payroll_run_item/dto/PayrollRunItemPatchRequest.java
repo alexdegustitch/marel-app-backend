@@ -24,7 +24,6 @@ public class PayrollRunItemPatchRequest {
     private String manualAdjustedMinutesReason;
     private String note;
     private BigDecimal totalNetEarnings;
-    private BigDecimal currentMonthTelephone;
 
     // ── Overridable fields (null = reset to system value) ────────────────────
     // Each field has a companion "present" flag so the service can distinguish
@@ -50,16 +49,12 @@ public class PayrollRunItemPatchRequest {
         this.adjustments = adjustments;
     }
 
-    /** Plain setter: null means "no change", so no presence flag is needed. */
-    public void setCurrentMonthTelephone(BigDecimal currentMonthTelephone) {
-        this.currentMonthTelephone = currentMonthTelephone;
-    }
-
     // ── JsonSetters to mark presence ─────────────────────────────────────────
 
-    // mealAllowanceUnitAmount and totalTransportAllowanceAmount are gone: those
-    // two are edited on their lines, through the `adjustments` array, which is
-    // where the calculation reads them from.
+    // mealAllowanceUnitAmount, totalTransportAllowanceAmount, the three bonus
+    // fields and currentMonthTelephone are all gone: every one of them is edited
+    // on its line, through the `adjustments` array, which is where the
+    // calculation reads them from.
 
 
 

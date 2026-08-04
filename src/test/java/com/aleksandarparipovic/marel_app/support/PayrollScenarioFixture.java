@@ -430,7 +430,6 @@ public class PayrollScenarioFixture {
             item.setHourlyRate(hourlyRate);
             item.setHourlyRateSystem(hourlyRate);
             item.setHourlyRateOverridden(false);
-            item.setCurrentMonthTelephone(BigDecimal.ZERO);
             item.setPreviouslyPaidAmount(BigDecimal.ZERO);
             item.setPreviousNetPayableAmount(BigDecimal.ZERO);
             item.setCurrentBalanceAmount(BigDecimal.ZERO);

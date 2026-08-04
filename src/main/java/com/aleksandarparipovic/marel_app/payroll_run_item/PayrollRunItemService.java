@@ -576,16 +576,15 @@ public class PayrollRunItemService {
         if (req.getNote() != null) {
             item.setNote(req.getNote());
         }
-        if (req.getCurrentMonthTelephone() != null) {
-            BigDecimal phone = req.getCurrentMonthTelephone().setScale(2, RoundingMode.HALF_UP);
-            item.setCurrentMonthTelephone(phone);
-            // The PHONE_CURRENT_MONTH line has sat at zero while the money lived in
-            // the column beside it — the same split that F11 found on meal. The
-            // column is what the frontend writes and what propagates to next month,
-            // so it stays authoritative; syncing the line keeps the payslip honest
-            // now and is what phase 7 inverts when the column goes.
-            updateAdjustmentByCategoryCode(id, "PHONE_CURRENT_MONTH", phone, true);
-        }
+        // The current month's phone is edited on its LINE, through the adjustments
+        // array — PHONE_CURRENT_MONTH is a MANUAL category whose editable input IS
+        // the amount. The column beside it is gone; the line is what next month's
+        // initialisation reads to raise PHONE_PREVIOUS_MONTH.
+        //
+        // WHETHER IT REDUCES PAY IS STILL UNANSWERED (OPEN-12) and nothing here
+        // changes it: PHONE_CURRENT_MONTH reaches no total today, exactly as
+        // before. Where the figure is stored and what it does to the balance are
+        // two different questions.
         refuseEditsToExcludedCategories(item, req);
         recordUserActivity(id);
 
@@ -1675,10 +1674,13 @@ public class PayrollRunItemService {
                 .ifPresent(next -> {
                     boolean nextDirty = false;
 
-                    // Update PHONE_PREVIOUS_MONTH adjustment
-                    BigDecimal phone = item.getCurrentMonthTelephone() != null
-                            ? item.getCurrentMonthTelephone() : BigDecimal.ZERO;
-                    final BigDecimal phoneFinal = phone;
+                    // Update PHONE_PREVIOUS_MONTH from THIS month's phone LINE.
+                    // It used to come from the column beside it, which meant a
+                    // phone entered on the line alone was never charged on.
+                    final BigDecimal phoneFinal = payrollAdjustmentRepository
+                            .findByItemIdAndCategoryCode(item.getId(), "PHONE_CURRENT_MONTH")
+                            .map(PayrollAdjustment::getAmount)
+                            .orElse(BigDecimal.ZERO);
                     payrollAdjustmentRepository
                             .findByItemIdAndCategoryCode(next.getId(), "PHONE_PREVIOUS_MONTH")
                             .ifPresent(adj -> {
@@ -2023,7 +2025,6 @@ public class PayrollRunItemService {
         if (item.getHourlyRateOverridden() == null)     item.setHourlyRateOverridden(false);
 
 
-        if (item.getCurrentMonthTelephone() == null)    item.setCurrentMonthTelephone(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getPreviouslyPaidAmount() == null)     item.setPreviouslyPaidAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         // previousNetPayableAmount is populated from the previous period — leave null on creation
         if (item.getCurrentBalanceAmount() == null)     item.setCurrentBalanceAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
