@@ -1108,10 +1108,37 @@ period is archived rather than erased
 `PayrollSchemeScopeBatchingIT` — an employee with no scheme stops the whole run
 rather than being paid unrestricted
 
-Still owed: `PayrollConfigurationValidationService` and the category/scheme
-activation gates. The migration raises on an incomplete matrix and the resolver
-throws at calculation time, so the rule is enforced; what is missing is the
-admin-facing report that finds the gap before somebody runs payroll.
+~~Still owed: `PayrollConfigurationValidationService`~~ — built, with
+`GET /api/payroll-maintenance/configuration-report` and a startup flag
+(`app.payroll.report-configuration-on-startup`) for reading it without an
+operator's password. It REPORTS, it does not refuse: the calculation is what must
+be strict, and it is.
+
+Checks: missing scheme × category rules · unknown calculation keys and modes ·
+unknown or contradictory edit policies · inactive schemes still assigned ·
+employees with no scheme in force.
+
+First run against the production configuration: **0 blocking, 5 warnings** —
+every one true. `FOREIGN_FIXED_COEFFICIENT` excludes MEAL_ALLOWANCE,
+TRANSPORT_ALLOWANCE, MONTHLY_BONUS and both phone lines, and the rules still
+carry an `editable_input`, so the panel offers a field the server refuses.
+
+TWO CHECKS FROM THE SPEC ARE DELIBERATELY ABSENT:
+
+* *overlapping scheme assignments* — `ex_ecsh_no_overlap` is an EXCLUDE
+  constraint, so two periods covering one day cannot be stored. A report that
+  looked for them would be telling its reader they can happen. Replaced by the
+  reachable half: an employee with NO scheme in force, which is what archived 235
+  items.
+* *incomplete manual components* — the first draft flagged 33 correctly
+  configured pairs, because a rule's `editable_input` is NULL when it inherits
+  the category's, and because MANUAL means "no calculator", not "no value"
+  (`PAID_PREVIOUS_PERIOD` and `PREVIOUS_BALANCE` are filled by
+  `writeDerivedSettlementLines`). Nothing distinguishes those from a line nobody
+  can fill, so the check cannot be made honest. A report whose first run shows 33
+  blockers on a correct configuration teaches its reader to close it.
+
+Still owed: the category/scheme activation gates.
 
 ### Phase 6 ✅ (backend)
 `PayrollGoldenSnapshotIT` 18–18g
