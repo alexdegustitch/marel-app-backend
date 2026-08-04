@@ -25,6 +25,18 @@ public final class EmployeePayrollValueCodes {
      */
     public static final String TRANSPORT_FIXED_MONTHLY = "TRANSPORT_FIXED_MONTHLY";
 
+    /**
+     * BOOLEAN. TRUE means the employee is paid transport for each day worked, at
+     * the company rate in force on the month's last day.
+     *
+     * <p>Having this in force is what puts an employee on the per-day mode — the
+     * same sentence that governs {@link #TRANSPORT_FIXED_MONTHLY}, so there is no
+     * separate flag to fall out of step with. An employee with neither is paid no
+     * transport, which is how a month before the entitlement began differs from
+     * one after it (OPEN-15).
+     */
+    public static final String TRANSPORT_PER_DAY = "TRANSPORT_PER_DAY";
+
     public static final String FIXED_LD_AMOUNT = "FIXED_LD_AMOUNT";
 
     private EmployeePayrollValueCodes() {

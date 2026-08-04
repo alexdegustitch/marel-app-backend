@@ -14,9 +14,11 @@ import java.time.LocalDate;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Per-employee payroll values and their history.
@@ -83,8 +85,43 @@ public class EmployeePayrollValueService {
         }
         Map<Long, Map<String, BigDecimal>> result = new HashMap<>();
         for (EmployeePayrollValueHistory row : historyRepository.findInForceForEmployees(employeeIds, on)) {
+            // NUMERIC ROWS ONLY. Since TRANSPORT_PER_DAY arrived, an employee can
+            // have a BOOLEAN value in force and no numeric one — and putting it
+            // here mapped its code to null and, worse, created an entry for an
+            // employee who has no numeric value at all. "Absent means not
+            // configured" is the contract every calculator reads this map by; an
+            // employee present with nothing in them breaks it silently.
+            if (row.getNumericValue() == null) {
+                continue;
+            }
             result.computeIfAbsent(row.getEmployee().getId(), id -> new HashMap<>())
                     .put(row.getDefinition().getCode(), row.getNumericValue());
+        }
+        return result;
+    }
+
+    /**
+     * The BOOLEAN values that are TRUE for a batch of employees on one date, as
+     * {@code employeeId -> set of definition codes}.
+     *
+     * <p>An absent code means "not configured", exactly as with the numeric
+     * values — never false-as-in-decided. A calculator that cannot tell those two
+     * apart pays somebody nothing without saying so.
+     *
+     * <p>One query for the whole batch, same reasoning as
+     * {@link #numericValuesOn}.
+     */
+    @Transactional(readOnly = true)
+    public Map<Long, Set<String>> trueFlagsOn(Collection<Long> employeeIds, LocalDate on) {
+        if (employeeIds == null || employeeIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Set<String>> result = new HashMap<>();
+        for (EmployeePayrollValueHistory row : historyRepository.findInForceForEmployees(employeeIds, on)) {
+            if (Boolean.TRUE.equals(row.getBooleanValue())) {
+                result.computeIfAbsent(row.getEmployee().getId(), id -> new HashSet<>())
+                        .add(row.getDefinition().getCode());
+            }
         }
         return result;
     }
@@ -113,16 +150,56 @@ public class EmployeePayrollValueService {
                                                    LocalDate effectiveFrom,
                                                    String note,
                                                    Long changedBy) {
-        Employee employee = requireEmployee(employeeId);
-
-        if (effectiveFrom == null) {
-            throw new IllegalArgumentException("Datum početka primene je obavezan.");
-        }
         if (numericValue == null) {
             throw new IllegalArgumentException("Vrednost je obavezna.");
         }
         if (numericValue.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("Vrednost ne može biti negativna.");
+        }
+        return changePeriod(employeeId, code, "NUMERIC", numericValue, null,
+                effectiveFrom, note, changedBy);
+    }
+
+    /**
+     * The same operation for a BOOLEAN value — an entitlement with a start date.
+     *
+     * <p>{@code TRANSPORT_PER_DAY} is the first: having it TRUE and in force is
+     * what puts an employee on the per-day transport mode, and the date is what
+     * every month before it needs in order to pay nothing rather than something
+     * (OPEN-15).
+     *
+     * <p>Shares every line of the period mechanics with {@link #changeValue} —
+     * closing the covering period, extending a successor that already says the
+     * same thing, bounding a backdated period. Two copies of that logic is two
+     * chances to get {@code ex_epvh_no_overlap} wrong.
+     */
+    @Transactional
+    public EmployeePayrollValueHistory changeFlag(Long employeeId,
+                                                  String code,
+                                                  boolean value,
+                                                  LocalDate effectiveFrom,
+                                                  String note,
+                                                  Long changedBy) {
+        return changePeriod(employeeId, code, "BOOLEAN", null, value,
+                effectiveFrom, note, changedBy);
+    }
+
+    /**
+     * @param numericValue exactly one of these two is non-null; {@code expectedType}
+     * @param booleanValue says which, and the definition must agree.
+     */
+    private EmployeePayrollValueHistory changePeriod(Long employeeId,
+                                                     String code,
+                                                     String expectedType,
+                                                     BigDecimal numericValue,
+                                                     Boolean booleanValue,
+                                                     LocalDate effectiveFrom,
+                                                     String note,
+                                                     Long changedBy) {
+        Employee employee = requireEmployee(employeeId);
+
+        if (effectiveFrom == null) {
+            throw new IllegalArgumentException("Datum početka primene je obavezan.");
         }
 
         EmployeePayrollValueDefinition definition = definitionRepository.findByCode(code)
@@ -131,9 +208,10 @@ public class EmployeePayrollValueService {
             throw new IllegalArgumentException(
                     "Vrsta vrednosti \"" + definition.getName() + "\" nije aktivna.");
         }
-        if (!"NUMERIC".equals(definition.getValueType())) {
+        if (!expectedType.equals(definition.getValueType())) {
             throw new IllegalArgumentException(
-                    "Vrsta vrednosti \"" + definition.getName() + "\" nije brojčana.");
+                    "Vrsta vrednosti \"" + definition.getName() + "\" nije "
+                            + ("NUMERIC".equals(expectedType) ? "brojčana" : "logička") + ".");
         }
 
         List<EmployeePayrollValueHistory> periods =
@@ -161,7 +239,7 @@ public class EmployeePayrollValueService {
                 .min(Comparator.comparing(EmployeePayrollValueHistory::getValidFrom))
                 .orElse(null);
 
-        if (covering != null && covering.getNumericValue().compareTo(numericValue) == 0) {
+        if (covering != null && holdsSameValue(covering, numericValue, booleanValue)) {
             throw new ConflictException("Zaposleni već ima tu vrednost na datum " + effectiveFrom + ".");
         }
 
@@ -170,7 +248,7 @@ public class EmployeePayrollValueService {
         // say nothing a single one does not, and the split would misrepresent a
         // correction as a change of rate.
         if (covering == null && successor != null
-                && successor.getNumericValue().compareTo(numericValue) == 0) {
+                && holdsSameValue(successor, numericValue, booleanValue)) {
             successor.setValidFrom(effectiveFrom);
             successor.setNote(note != null ? note : successor.getNote());
             EmployeePayrollValueHistory extended = historyRepository.saveAndFlush(successor);
@@ -208,6 +286,7 @@ public class EmployeePayrollValueService {
                         .definition(definition)
                         .valueType(definition.getValueType())
                         .numericValue(numericValue)
+                        .booleanValue(booleanValue)
                         .validFrom(effectiveFrom)
                         .validUntil(validUntil)
                         .note(note)
@@ -215,10 +294,20 @@ public class EmployeePayrollValueService {
                         .build());
 
         log.info("Employee {} value {} set to {} for [{} .. {}] (history id {})",
-                employeeId, code, numericValue, effectiveFrom,
+                employeeId, code, numericValue != null ? numericValue : booleanValue, effectiveFrom,
                 validUntil == null ? "open" : validUntil, created.getId());
 
         return created;
+    }
+
+    /** Does this period already say exactly what is being written? */
+    private static boolean holdsSameValue(EmployeePayrollValueHistory period,
+                                          BigDecimal numericValue, Boolean booleanValue) {
+        if (numericValue != null) {
+            return period.getNumericValue() != null
+                    && period.getNumericValue().compareTo(numericValue) == 0;
+        }
+        return java.util.Objects.equals(period.getBooleanValue(), booleanValue);
     }
 
     /**

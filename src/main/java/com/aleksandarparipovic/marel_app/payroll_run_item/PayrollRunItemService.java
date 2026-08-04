@@ -1145,14 +1145,43 @@ public class PayrollRunItemService {
                 : employeePayrollValueService.numericValuesOn(List.of(employeeId), pricingDate)
                         .getOrDefault(employeeId, Map.of());
 
+        // The BOOLEAN half of the same history: which modes this employee is on.
+        java.util.Set<String> employeeFlags = employeeId == null
+                ? java.util.Set.of()
+                : employeePayrollValueService.trueFlagsOn(List.of(employeeId), pricingDate)
+                        .getOrDefault(employeeId, java.util.Set.of());
+
+        // THE TWO COMPANY PRICES ARE READ ON DIFFERENT DAYS, and that is not an
+        // oversight.
+        //
+        //   transport — the month's LAST day. Client's rule, given in answer to
+        //               OPEN-15: "the per-day transport value for the last day of
+        //               the month and year of the payroll being calculated". A
+        //               price raised mid-month applies to that whole month.
+        //
+        //   meal      — the month's FIRST day, unchanged. The opposite rule, and
+        //               it was pinned deliberately: "a payroll month is priced by
+        //               what was true when it started". The client answered about
+        //               transport, so only transport moved. Extending it to meal
+        //               would have reversed a stated rule nobody asked about —
+        //               which is precisely what the golden test caught.
+        //
+        // OUTSTANDING: whether meal should follow transport. One line either way,
+        // and no money moves today — both settings have exactly one period ever.
+        //
+        // The EMPLOYEE's own values above stay at the month's start too: when an
+        // employee's own rate change takes effect is a separate question with money
+        // attached, and it has not been asked.
+        LocalDate transportPriceDate = mr.getEndDate() != null ? mr.getEndDate() : pricingDate;
+
         Map<String, BigDecimal> settings = new java.util.HashMap<>();
         settings.put(MealAllowanceCalculator.SETTING_MEAL_PER_DAY,
                 appSettingService.getMealAllowancePerDayOn(pricingDate));
         settings.put(TransportAllowanceCalculator.SETTING_TRANSPORT_PER_DAY,
-                appSettingService.getTransportAllowancePerDayOn(pricingDate));
+                appSettingService.getTransportAllowancePerDayOn(transportPriceDate));
 
         return new ComponentContext(item, mr, mr.getStartDate(), mr.getEndDate(),
-                employeeValues, settings);
+                employeeValues, settings, employeeFlags);
     }
 
     /**

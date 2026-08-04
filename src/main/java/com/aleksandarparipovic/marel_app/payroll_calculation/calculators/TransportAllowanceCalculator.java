@@ -21,12 +21,27 @@ import java.util.Map;
  * all. Having a {@code TRANSPORT_FIXED_MONTHLY} value in force is what puts an
  * employee on this mode; there is no separate flag to fall out of step with it.
  *
- * <p><b>PER DAY.</b> Everyone else is paid for the days they actually worked,
- * priced from the single company rate {@code app_settings.transport_allowance_per_day}.
+ * <p><b>PER DAY.</b> Employees with {@code TRANSPORT_PER_DAY} in force are paid
+ * for the days they actually worked, priced from the single company rate
+ * {@code app_settings.transport_allowance_per_day} — read at the month's LAST day,
+ * so a price raised mid-month applies to that whole month.
+ *
+ * <p>THE ENTITLEMENT IS WHAT CHANGED, AND WHY (OPEN-15). This mode used to mean
+ * "everyone without a fixed amount", which read nothing about the employee — so it
+ * had no start date, and every month anybody had ever worked would be paid
+ * transport the next time it was recalculated. 98 of 135 employees and 322 items
+ * before 2026, none of them locked. Now the mode is a dated per-employee value,
+ * exactly as the fixed mode already was.
+ *
+ * <p>An employee with NEITHER value is paid no transport. That is the point of the
+ * change: before the entitlement's start date there is no transport rather than a
+ * silent one.
  *
  * <p>The two are modes, not two rates for the same thing, which is why neither is
  * a "fallback" for the other: a fixed employee is not paid more for coming in more
- * often, and a per-day employee has no monthly figure to fall back to.
+ * often, and a per-day employee has no monthly figure to fall back to. The fixed
+ * amount still wins where an employee somehow carries both, so a data mistake
+ * cannot pay somebody twice.
  *
  * <p>What counts as a day worked is a {@code daily_reports} row with
  * {@code total_work_minutes > 0}. That excludes absence and sick leave — those are
@@ -57,7 +72,14 @@ public class TransportAllowanceCalculator implements PayrollComponentCalculator 
         if (fixedMonthly != null) {
             return fixedMonthlyAmount(fixedMonthly);
         }
-        return perWorkedDay(ctx);
+        if (ctx.hasFlag(EmployeePayrollValueCodes.TRANSPORT_PER_DAY)) {
+            return perWorkedDay(ctx);
+        }
+        // Neither mode is in force for this month. Not an error and not a zero
+        // somebody chose — the employee simply has no transport entitlement on
+        // this date, which is what every month before the entitlement starts
+        // looks like.
+        return ComponentResult.zero("NO_TRANSPORT_ENTITLEMENT");
     }
 
     /**

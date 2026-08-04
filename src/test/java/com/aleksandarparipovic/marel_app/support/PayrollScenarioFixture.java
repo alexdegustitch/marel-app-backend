@@ -108,6 +108,7 @@ public class PayrollScenarioFixture {
     private final PayrollAdjustmentCategorySchemeRuleRepository adjustmentRuleRepository;
     private final AppSettingRepository appSettingRepository;
     private final DailyReportRepository dailyReportRepository;
+    private final com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueService payrollValueService;
     private final WorkShiftRepository workShiftRepository;
     private final ShiftRepository shiftRepository;
     private final com.aleksandarparipovic.marel_app.bonus.BonusCategoryRepository bonusCategoryRepository;
@@ -207,6 +208,8 @@ public class PayrollScenarioFixture {
         private BigDecimal mealRate = new BigDecimal("300.00");
         private BigDecimal transportRate = new BigDecimal("350.00");
         private BigDecimal employeeTransportRate = new BigDecimal("350.00");
+        /** Since OPEN-15 the per-day mode is a dated entitlement, not a default. */
+        private boolean transportPerDay = true;
         private final List<String> deniedAdjustmentCodes = new ArrayList<>();
         private boolean foreigner = false;
         private boolean commercial = false;
@@ -224,6 +227,8 @@ public class PayrollScenarioFixture {
         public Builder mealRate(String value) { this.mealRate = new BigDecimal(value); return this; }
         public Builder transportRate(String value) { this.transportRate = new BigDecimal(value); return this; }
         public Builder employeeTransportRate(String value) { this.employeeTransportRate = new BigDecimal(value); return this; }
+        /** An employee with no transport entitlement at all — neither mode. */
+        public Builder withoutTransportEntitlement() { this.transportPerDay = false; return this; }
         public Builder denyAdjustment(String... codes) { this.deniedAdjustmentCodes.addAll(List.of(codes)); return this; }
         public Builder foreigner(boolean value) { this.foreigner = value; return this; }
         public Builder commercial(boolean value) { this.commercial = value; return this; }
@@ -263,6 +268,20 @@ public class PayrollScenarioFixture {
                     .transportAllowanceMode("AUTO")
                     .preferredLocale("sr-Latn")
                     .build());
+
+            // PER-DAY TRANSPORT IS AN ENTITLEMENT WITH A START DATE (OPEN-15).
+            //
+            // It used to be what every employee without a fixed monthly amount got,
+            // which meant it applied to every month anybody had ever worked. The
+            // scenario grants it from 2020 so the golden figures stay what they
+            // were; withoutTransportEntitlement() describes the other case, which
+            // is now a real one rather than an impossible one.
+            if (transportPerDay) {
+                payrollValueService.changeFlag(employee.getId(),
+                        com.aleksandarparipovic.marel_app.employee_payroll_value
+                                .EmployeePayrollValueCodes.TRANSPORT_PER_DAY,
+                        true, LocalDate.of(2020, 1, 1), "Golden snapshot fixture", null);
+            }
 
             schemeHistoryRepository.saveAndFlush(EmployeeCompensationSchemeHistory.builder()
                     .employee(employee)

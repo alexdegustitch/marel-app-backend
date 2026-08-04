@@ -19,8 +19,13 @@ import java.util.Map;
  * @param employeeValues per-employee values in force on {@link #periodStart},
  *                       keyed by {@code EmployeePayrollValueCodes}. A missing key
  *                       means "not configured" — never zero.
- * @param settings       payroll-relevant {@code app_settings} in force on
- *                       {@link #periodStart}, keyed by setting key.
+ * @param settings       payroll-relevant {@code app_settings} in force during the
+ *                       month, keyed by setting key. Read at the month's LAST day
+ *                       — a price raised mid-month applies to that whole month.
+ * @param employeeFlags  the per-employee BOOLEAN values that are TRUE on
+ *                       {@link #periodStart}. Absent means "not configured",
+ *                       never "decided false" — the same rule as
+ *                       {@link #employeeValues}.
  */
 public record ComponentContext(
         PayrollRunItem item,
@@ -28,9 +33,15 @@ public record ComponentContext(
         LocalDate periodStart,
         LocalDate periodEnd,
         Map<String, BigDecimal> employeeValues,
-        Map<String, BigDecimal> settings
+        Map<String, BigDecimal> settings,
+        java.util.Set<String> employeeFlags
 ) {
     public Long employeeId() {
         return item.getEmployee() == null ? null : item.getEmployee().getId();
+    }
+
+    /** True only where the employee has this flag set to true, in force. */
+    public boolean hasFlag(String code) {
+        return employeeFlags != null && employeeFlags.contains(code);
     }
 }

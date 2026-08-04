@@ -4,12 +4,13 @@ Stanje na dan 2026-08-04, posle završetka faze 7 (brisanje ogledalskih kolona).
 `payroll_run_items` je sa 66 na 41 kolonu. 254 backend testa, 956 frontend, 0
 padova.
 
-Šest stavki je ostalo. **Tri traže odgovor klijenta** — bez njih se ne zna šta je
-tačno, pa ih ne mogu odlučiti ja. **Tri su moj posao** i ne čekaju nikoga.
+Šest stavki je ostalo. **Tri su tražile odgovor klijenta** — odgovoreno
+2026-08-04, sprovedeno istog dana, odgovori su zapisani ispod. **Tri su moj
+posao** i ne čekaju nikoga.
 
 ---
 
-## A. Traži odluku klijenta
+## A. Odgovoreno 2026-08-04 ✅
 
 ### A1 · OPEN-12 — da li telefon tekućeg meseca i „isplaćeno u prethodnom periodu" umanjuju zaradu?
 
@@ -50,11 +51,38 @@ odbija obe stavke gore.
 >    *Sistem danas radi ovo prvo: prethodno stanje već nosi
 >    `previous_net_payable_amount`, pa bi brojanje ove stavke bilo dvostruko.*
 
-**Šta radim kad dobijem odgovor.** Ako su odgovori „sledećeg meseca" i
-„informativna" — potvrđuje se današnje ponašanje, prebacujem isplate na uticajne
-kodove i sekcije prestaju da odlučuju o novcu. Ako je bilo koji drugačiji, menja
-se ono što ljudi dobijaju na ruke, pa ide zasebna migracija sa preračunom i
-pisanim tragom.
+### ✅ ODGOVOR KLIJENTA (2026-08-04)
+
+> 1. Telefon za tekući mesec **se prenosi i odbija kao telefon za prethodni
+>    mesec.**
+> 2. „Isplaćeno u prethodnom obračunskom periodu" **je zbir svih settlements-a.**
+>    „Prethodno stanje" (za tekući mesec) je **svega za isplatu iz prethodnog
+>    meseca**. Saldo je **ukupna zarada − isplaćeno u prethodnom obračunskom
+>    periodu**. Svega za isplatu za tekući mesec je **prethodno stanje + saldo**.
+
+**Oba odgovora potvrđuju ono što kod već radi, tačno u dlaku:**
+
+```
+previouslyPaidAmount = Σ(sekcija SETTLEMENTS)  = INSTALLMENT + PHONE_PREVIOUS_MONTH
+                                                 + PAID_PART_1 + PAID_PART_2
+currentBalanceAmount = totalNetEarnings − previouslyPaidAmount
+netPayableAmount     = previousNetPayableAmount + currentBalanceAmount
+previousNetPayable   = netPayableAmount prethodnog meseca
+```
+
+Linija `PAID_PREVIOUS_PERIOD` **prikazuje** taj zbir umesto da ga ponovo računa,
+pa dve cifre ne mogu da se raziđu.
+
+**Ništa nije trebalo promeniti — i baš zato je napisan test.** Pravilo koje se
+poklapa sa kodom je pravilo koje niko ne čuva: `PayrollGoldenSnapshotIT` „17d3"
+pribija sve četiri rečenice, uključujući ono što **ne sme** da uđe u zbir
+(`PAID_PREVIOUS_PERIOD`, jer je to sam zbir, i telefon tekućeg meseca, jer
+pripada sledećem mesecu).
+
+**Posledica za prelazak na uticajne kodove:** isplate mogu da pređu, ali tek kad
+te dve stavke prestanu da budu `DEDUCTION_MINUS` / `PAYMENT_MINUS` — inače bi ih
+prelazak automatski uvukao u zbir. Test iznad je ono što će puknuti ako neko to
+zaboravi.
 
 ---
 
@@ -89,11 +117,54 @@ rad. Tada su tri izlaza:
    ima. To je trajno rešenje i moj posao — ali traži od klijenta **od kog datuma
    svaki radnik dobija prevoz po danu**, inače nemam šta da upišem.
 
-**Pitanje za klijenta, doslovno:**
+### ✅ ODGOVOR KLIJENTA (2026-08-04) — i šta je urađeno
 
-> Prevoz po danu (200,00 dinara po danu) — od kog meseca ga računamo? Da li stari
-> meseci, koji su već isplaćeni po starom Excel postupku, treba da ostanu
-> netaknuti?
+> 1. Stavke u statusu DRAFT se preračunavaju **samo ako je bilo izmena** u odnosu
+>    na prethodno otvaranje — ako se ne slažu verzije ili `needs_recalculation`.
+> 2. Uzima se **vrednost prevoza po danu za poslednji dan meseca** obračuna, ne
+>    trenutna vrednost.
+> 3. Rešenje je **pod 3): datirana istorija po radniku za režim po danu.**
+
+**Na 1 — ispravka moje formulacije.** Tačno je: `getForPayrollAccess`
+preračunava samo ustajalu stavku (verzija se ne slaže, ili je postavljen
+`needs_recalculation`, ili je red dodat kroz izmenu šeme). Nisam smeo da napišem
+„svaka DRAFT stavka se preračunava pri otvaranju". Rizik ipak ostaje stvaran, jer
+promena jednog pravila bonusa ili podešavanja **podigne verziju svim stavkama tog
+meseca** — tako je 560 stavki dobilo lažnu „aktivnost".
+
+**Na 2 — bilo je bolje nego što je izgledalo, ali ne dovoljno dobro.** Kod nikad
+nije čitao `now()`; čitao je **prvi** dan meseca. Sada:
+
+| Cena | Kada se čita | Zašto |
+|---|---|---|
+| prevoz po danu | **poslednji** dan meseca | pravilo klijenta |
+| topli obrok | **prvi** dan meseca | ranije pribijeno pravilo, klijent nije pitan |
+
+Namerno se razlikuju. Klijent je odgovorio o prevozu; da sam to preneo i na topli
+obrok, oborio bih pravilo koje niko nije doveo u pitanje — što je zlatni test i
+uhvatio. **Otvoreno: da li i topli obrok da prati prevoz?** Jedna linija u oba
+smera, i danas ne pomera ni dinar (obe cene imaju tačno po jedan period ikada).
+
+**Na 3 — urađeno**, migracija
+[`2026-09-10-01`](../../src/main/resources/sql/2026-09-10-01-transport-per-day-is-dated-per-employee.sql):
+
+- Nova vrednost `TRANSPORT_PER_DAY` (BOOLEAN, po radniku, sa `valid_from`).
+  Imati je uključenu i na snazi je ono što radnika stavlja u režim „po danu" —
+  ista rečenica koja već važi za `TRANSPORT_FIXED_MONTHLY`, pa nema zasebne
+  zastavice koja može da se raziđe sa režimom.
+- Radnik **bez ijedne od dve vrednosti nema prevoz**. To je i bila poenta: pre
+  početnog datuma nema prevoza, umesto tihog „ima".
+- **Iznos se nije pomerio** — i dalje je jedna firmina cena, sada čitana na
+  poslednji dan meseca.
+- **Backfill datum je izveden, ne izabran:** prvi mesec koji još nije obračunat,
+  `max(period) + 1 mesec` = **2026-09-01**. Isto pravilo koje je faza 2 koristila
+  za satnice, iz istog razloga: nijedan mesec koji je već bio na obračunskom listu
+  ne može da dobije prevoz koji nije imao. 98 radnika je dobilo pravo.
+
+**Ako je za nekog radnika prevoz stvarno počeo ranije**, taj jedan se vraća unazad
+kroz `EmployeePayrollValueService.changeValue`, koji prima datum pre cele
+istorije. Po radniku, sa tragom, i poništivo arhiviranjem reda. To je predviđeni
+put ispravke — ne ponovno pokretanje migracije.
 
 ---
 
@@ -110,11 +181,11 @@ rastu na ekranu a bonus stoji.
 Dve cifre se razlikuju samo tamo gde je neko ručno korigovao vreme — u ovoj bazi
 2 stavke.
 
-**Pitanje za klijenta:**
+### ✅ ODGOVOR KLIJENTA (2026-08-04)
 
-> Kad se radniku ručno doda zaboravljena smena, da li ti sati ulaze u uslov za
-> mesečni bonus? *(Sistem danas kaže: da — bonus se odlučuje po satima za koje je
-> radnik plaćen.)*
+> **Da, ulazi.**
+
+Potvrđeno; kod je već takav i ostaje. Ništa nije menjano.
 
 ---
 

@@ -851,6 +851,135 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("17d3. the settlement arithmetic, in the client's own four sentences")
+    void theSettlementArithmeticIsWhatTheClientSaid() {
+        // OPEN-12, answered 2026-08-04. Written out because these four sentences
+        // are the whole of it, and because the answer CONFIRMED what the code does
+        // — which is worth an assertion precisely because nothing had to change,
+        // so nothing would have caught it drifting:
+        //
+        //   1. "isplaćeno u prethodnom obračunskom periodu" = the sum of all
+        //      SETTLEMENTS lines
+        //   2. "prethodno stanje" = last month's "svega za isplatu"
+        //   3. saldo = ukupna zarada − isplaćeno u prethodnom obračunskom periodu
+        //   4. svega za isplatu = prethodno stanje + saldo
+        var scenario = fixture.scenario().build();
+
+        fixture.adjustmentAmount(scenario, "INSTALLMENT", "2000.00");            // SETTLEMENTS
+        fixture.adjustmentAmount(scenario, "PHONE_PREVIOUS_MONTH", "700.00");    // SETTLEMENTS
+        fixture.adjustmentAmount(scenario, "PAID_PART_1", "30000.00");           // SETTLEMENTS
+        fixture.adjustmentAmount(scenario, "PAID_PART_2", "20000.00");           // SETTLEMENTS
+        fixture.adjustmentAmount(scenario, "PHONE_CURRENT_MONTH", "800.00");     // NOT settled here
+
+        PayrollRunItem item = calculate(scenario);
+
+        BigDecimal settled = new BigDecimal("52700.00");   // 2000 + 700 + 30000 + 20000
+
+        // 1 — and the current month's phone is NOT among them. It is carried into
+        // next month and deducted there as PHONE_PREVIOUS_MONTH (client, OPEN-12.1),
+        // so counting it here would charge the same phone twice.
+        assertThat(item.getPreviouslyPaidAmount()).isEqualByComparingTo(settled);
+        assertThat(lineAmount(item, "PAID_PREVIOUS_PERIOD"))
+                .as("the line SHOWS that sum rather than recomputing it, so the two cannot drift")
+                .isEqualByComparingTo(settled);
+
+        // 3
+        assertThat(item.getCurrentBalanceAmount())
+                .isEqualByComparingTo(item.getTotalNetEarnings().subtract(settled));
+
+        // 4 — with 2 the previous month's closing figure, which this scenario has
+        // none of, so it is zero and the two agree.
+        BigDecimal previousBalance = item.getPreviousNetPayableAmount() != null
+                ? item.getPreviousNetPayableAmount() : BigDecimal.ZERO;
+        assertThat(item.getNetPayableAmount())
+                .isEqualByComparingTo(previousBalance.add(item.getCurrentBalanceAmount()));
+
+        // AND THE TWO LINES THAT MUST NEVER JOIN THE SUM. PAID_PREVIOUS_PERIOD is
+        // that sum — counting it inside itself deducts everything twice — and
+        // PHONE_CURRENT_MONTH belongs to next month. This is the assertion that has
+        // to fail if anybody switches the settlements side to impact codes without
+        // dealing with these two first.
+        assertThat(item.getPreviouslyPaidAmount())
+                .as("neither PAID_PREVIOUS_PERIOD (52 700) nor the current phone (800) is inside the sum")
+                .isEqualByComparingTo(settled);
+    }
+
+    @Test
+    @DisplayName("15a1. per-day transport needs a dated entitlement — before it starts, nothing")
+    void perDayTransportNeedsAnEntitlement() {
+        // OPEN-15. The per-day mode used to mean "everyone without a fixed monthly
+        // amount", which read nothing about the employee — so it had no start date
+        // and every month anybody ever worked would be paid transport the next time
+        // it was recalculated: 98 of 135 employees, 322 items before 2026, not one
+        // of them locked. The mode is now a dated value, exactly as the fixed mode
+        // already was.
+        var scenario = fixture.scenario().withoutTransportEntitlement().build();
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 3), 6, 480, 450);
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 4), 6, 480, 470);
+
+        PayrollRunItem item = calculate(scenario);
+
+        assertThat(lineAmount(item, "TRANSPORT_ALLOWANCE"))
+                .as("two days worked, and no entitlement — that is nothing, not 700")
+                .isEqualByComparingTo("0.00");
+        assertThat(adjustmentRepository
+                .findByItemIdAndCategoryCode(item.getId(), "TRANSPORT_ALLOWANCE")
+                .orElseThrow().getCalculationInputs())
+                // The payslip says WHICH of the two modes is missing rather than
+                // showing a bare zero somebody has to go and explain.
+                .containsEntry("reason", "NO_TRANSPORT_ENTITLEMENT");
+    }
+
+    @Test
+    @DisplayName("15a2. the entitlement's start date is what holds an earlier month back")
+    void theEntitlementStartDateHoldsEarlierMonthsBack() {
+        var scenario = fixture.scenario().withoutTransportEntitlement().build();
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 3), 6, 480, 450);
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 4), 6, 480, 470);
+
+        // Granted from OCTOBER, and this is September's payroll.
+        valueService.changeFlag(scenario.employee().getId(),
+                EmployeePayrollValueCodes.TRANSPORT_PER_DAY, true,
+                LocalDate.of(2026, 10, 1), null, null);
+
+        entityManager.createNativeQuery(
+                "UPDATE payroll_run_items SET needs_recalculation = TRUE WHERE id = :id")
+                .setParameter("id", scenario.item().getId())
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(lineAmount(calculate(scenario), "TRANSPORT_ALLOWANCE"))
+                .as("the month before the entitlement pays nothing — that IS the fix")
+                .isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    @DisplayName("15a3. the per-day price is the one in force on the month's LAST day")
+    void theTransportPriceIsReadAtTheMonthsEnd() {
+        var scenario = fixture.scenario().period(YearMonth.of(2026, 7)).build();
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 7, 3), 6, 480, 450);
+
+        // Raised on 15 July: not yet true on the 1st, true on the 31st.
+        fixture.appSetting("transport_allowance_per_day", new BigDecimal("500.00"),
+                OffsetDateTime.of(2026, 7, 15, 0, 0, 0, 0, ZoneOffset.UTC), null);
+
+        PayrollRunItem item = calculate(scenario);
+
+        // Client's rule, in answer to OPEN-15: "the per-day transport value for the
+        // last day of the month and year of the payroll being calculated". A price
+        // raised mid-month applies to that whole month.
+        assertThat(lineSystemUnit(item, "TRANSPORT_ALLOWANCE")).isEqualByComparingTo("500.00");
+
+        // AND MEAL IS DELIBERATELY THE OPPOSITE, still priced at the month's start
+        // — see aMidMonthRiseAppliesFromTheNextMonth. The client answered about
+        // transport; extending it to meal would have reversed a stated rule nobody
+        // asked about. Whether it should follow is an open question, and this
+        // assertion is what makes the difference visible rather than accidental.
+        assertThat(lineSystemUnit(item, "MEAL_ALLOWANCE")).isEqualByComparingTo("300.00");
+    }
+
+    @Test
     @DisplayName("15b. FIXED mode: the whole monthly amount, whatever was worked")
     void aFixedMonthlyAmountIgnoresAttendance() {
         var scenario = fixture.scenario().build();
