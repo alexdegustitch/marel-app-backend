@@ -19,9 +19,9 @@ import java.util.Map;
  * @param employeeValues per-employee values in force on {@link #periodStart},
  *                       keyed by {@code EmployeePayrollValueCodes}. A missing key
  *                       means "not configured" — never zero.
- * @param settings       payroll-relevant {@code app_settings} in force during the
- *                       month, keyed by setting key. Read at the month's LAST day
- *                       — a price raised mid-month applies to that whole month.
+ * @param settings       payroll-relevant {@code app_settings} in force on
+ *                       {@link #periodStart}, keyed by setting key. A price raised
+ *                       mid-month applies from the next month.
  * @param employeeFlags  the per-employee BOOLEAN values that are TRUE on
  *                       {@link #periodStart}. Absent means "not configured",
  *                       never "decided false" — the same rule as

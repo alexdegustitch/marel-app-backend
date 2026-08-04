@@ -23,8 +23,8 @@ import java.util.Map;
  *
  * <p><b>PER DAY.</b> Employees with {@code TRANSPORT_PER_DAY} in force are paid
  * for the days they actually worked, priced from the single company rate
- * {@code app_settings.transport_allowance_per_day} — read at the month's LAST day,
- * so a price raised mid-month applies to that whole month.
+ * {@code app_settings.transport_allowance_per_day}, in force when the payroll
+ * month began.
  *
  * <p>THE ENTITLEMENT IS WHAT CHANGED, AND WHY (OPEN-15). This mode used to mean
  * "everyone without a fixed amount", which read nothing about the employee — so it

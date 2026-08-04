@@ -955,26 +955,24 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("15a3. the per-day price is the one in force on the month's LAST day")
-    void theTransportPriceIsReadAtTheMonthsEnd() {
-        var scenario = fixture.scenario().period(YearMonth.of(2026, 7)).build();
-        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 7, 3), 6, 480, 450);
+    @DisplayName("15a3. an old month is priced at ITS per-day rate, not at a later one")
+    void transportIsPricedByThePeriod() {
+        // The transport half of test 12. Meal had this pinned from the start and
+        // transport did not, which is how the two came to be read on different days
+        // at all.
+        var scenario = fixture.scenario().period(YearMonth.of(2026, 3)).build();
+        fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 3, 3), 6, 480, 450);
 
-        // Raised on 15 July: not yet true on the 1st, true on the 31st.
-        fixture.appSetting("transport_allowance_per_day", new BigDecimal("500.00"),
-                OffsetDateTime.of(2026, 7, 15, 0, 0, 0, 0, ZoneOffset.UTC), null);
+        // Raised from June: after March, before today. Without this second period
+        // both readings agree and the test would pass whatever the code does.
+        fixture.appSetting("transport_allowance_per_day", new BigDecimal("900.00"),
+                OffsetDateTime.of(2026, 6, 1, 0, 0, 0, 0, ZoneOffset.UTC), null);
 
         PayrollRunItem item = calculate(scenario);
 
-        // Client's rule, in answer to OPEN-15: "the per-day transport value for the
-        // last day of the month and year of the payroll being calculated". A price
-        // raised mid-month applies to that whole month.
-        assertThat(lineSystemUnit(item, "TRANSPORT_ALLOWANCE")).isEqualByComparingTo("500.00");
-
-        // Meal follows the same rule — the client confirmed it in the same words.
-        // Untouched here, so it stays at the fixture's 300 all month; 12c is where
-        // both are raised mid-month together.
-        assertThat(lineSystemUnit(item, "MEAL_ALLOWANCE")).isEqualByComparingTo("300.00");
+        assertThat(lineSystemUnit(item, "TRANSPORT_ALLOWANCE"))
+                .as("March is priced at March's rate, not at the rate in force today")
+                .isEqualByComparingTo("350.00");
     }
 
     @Test
@@ -1211,22 +1209,16 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("12c. a rate that starts mid-month prices that WHOLE month")
-    void aMidMonthRiseAppliesToTheWholeMonth() {
-        // THIS TEST USED TO SAY THE OPPOSITE, and is rewritten rather than deleted
-        // so the reversal is on the record.
-        //
-        // It read: "a payroll month is priced by what was true when it started",
-        // and the company prices were taken at the month's FIRST day. The client
-        // answered otherwise on 2026-08-04 — first for transport, in answer to
-        // OPEN-15, then in the same words for meal: the value on the LAST day of
-        // the month being calculated. A price raised mid-month applies to that
-        // whole month.
-        //
-        // It moves no money today: both settings have exactly one period ever.
-        // This is what happens the first time somebody reprices mid-month.
+    @DisplayName("12c. a rate that starts mid-month does not reprice that month")
+    void aMidMonthRiseAppliesFromTheNextMonth() {
+        // BOTH company prices, by one rule. They were briefly split — transport at
+        // the month's end, meal at its start — and a company price and a company
+        // price should not need two rules between them. Confirmed for both by the
+        // client on 2026-08-04: a payroll month is priced by what was true when it
+        // started.
         var scenario = fixture.scenario().period(YearMonth.of(2026, 7)).build();
 
+        // In force from 15 July: not yet true on 1 July, so July keeps its prices.
         fixture.appSetting("meal_allowance_per_day", new BigDecimal("500.00"),
                 OffsetDateTime.of(2026, 7, 15, 0, 0, 0, 0, ZoneOffset.UTC), null);
         fixture.appSetting("transport_allowance_per_day", new BigDecimal("900.00"),
@@ -1235,22 +1227,20 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         PayrollRunItem item = calculate(scenario);
 
-        // Both, and by the same rule — they were briefly split, and a company price
-        // and a company price should not need two rules between them.
         assertThat(lineSystemUnit(item, "MEAL_ALLOWANCE"))
-                .as("in force on 31 July, so July is priced at 500")
-                .isEqualByComparingTo("500.00");
+                .as("a payroll month is priced by what was true when it started")
+                .isEqualByComparingTo("300.00");
         assertThat(lineSystemUnit(item, "TRANSPORT_ALLOWANCE"))
-                .isEqualByComparingTo("900.00");
+                .isEqualByComparingTo("350.00");
     }
 
     @Test
-    @DisplayName("12c2. the EMPLOYEE'S own terms still change from the month they start")
-    void anEmployeeValueStillTakesEffectFromItsOwnMonth() {
-        // The company price moved to the month's end; a person's own terms did not,
-        // and the difference is deliberate. When a raise given on the 15th takes
-        // effect is a separate question with money attached, and nobody has asked
-        // it — so it keeps answering the way it always has.
+    @DisplayName("12c2. an employee's own value starting mid-month waits for the next one too")
+    void anEmployeeValueTakesEffectFromItsOwnMonth() {
+        // The same rule reaches a person's own terms, and this says so separately
+        // because the two are read through different code — the settings map and
+        // the employee-values map. One of them changing alone is the bug this
+        // catches.
         var scenario = fixture.scenario().period(YearMonth.of(2026, 7)).build();
 
         valueService.changeValue(scenario.employee().getId(),

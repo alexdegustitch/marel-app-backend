@@ -132,23 +132,25 @@ preračunava samo ustajalu stavku (verzija se ne slaže, ili je postavljen
 promena jednog pravila bonusa ili podešavanja **podigne verziju svim stavkama tog
 meseca** — tako je 560 stavki dobilo lažnu „aktivnost".
 
-**Na 2 — bilo je bolje nego što je izgledalo, ali ne dovoljno dobro.** Kod nikad
-nije čitao `now()`; čitao je **prvi** dan meseca. Sada:
+**Na 2 — kod nikad nije čitao `now()`.** Čitao je **prvi** dan meseca, što je i
+ostalo pravilo — za sve:
 
-| Vrednost | Kada se čita | Zašto |
-|---|---|---|
-| prevoz po danu (firmina cena) | **poslednji** dan meseca | pravilo klijenta |
-| topli obrok (firmina cena) | **poslednji** dan meseca | pravilo klijenta (potvrđeno posebno) |
-| satnica, fiksni prevoz, prava — **vrednosti radnika** | **prvi** dan meseca | nije menjano; niko nije pitan |
+| Vrednost | Kada se čita |
+|---|---|
+| prevoz po danu (firmina cena) | **prvi** dan meseca |
+| topli obrok (firmina cena) | **prvi** dan meseca |
+| satnica, fiksni prevoz, prava — vrednosti radnika | **prvi** dan meseca |
 
-**Ovo je oborilo ranije pravilo, namerno i po nalogu.** Topli obrok je bio
-pribijen na prvi dan meseca — „mesec se cenovno određuje onim što je važilo kad
-je počeo" — i zlatni test „12c" je to čuvao. Test je **prepisan, ne obrisan**, pa
-je obaranje na zapisniku umesto da izgleda kao pravilo koje nikad nije postojalo.
+**Mesec se cenovno određuje onim što je važilo kad je počeo**; cena podignuta
+sredinom meseca važi od **sledećeg**. Nikad `now()` — čitanje na današnji datum je
+ono što je pri preračunu marta u julu naplaćivalo julske cene.
 
-Vrednosti **radnika** ostaju na prvom danu meseca: kad povišica data 15-og stupa
-na snagu je zasebno pitanje sa novcem, i nije postavljeno. Firmina cena i nečiji
-lični uslovi nisu ista stvar — to čuva test „12c2".
+Usput je isprobano pravilo „poslednji dan meseca" (prvo za prevoz, pa i za topli
+obrok) i **vraćeno na prvi dan** istog dana, na zahtev. Zlatni test „12c" sada
+pokriva **obe** cene jednim pravilom — ranije je samo topli obrok bio pribijen, a
+prevoz nije, i baš zato su njih dvoje uopšte i mogli da se raziđu. Test „12c2"
+pokriva isto pravilo za vrednosti radnika, jer se čitaju kroz drugi kod, pa je
+greška u kojoj se jedno promeni bez drugog moguća.
 
 Danas ne pomera ni dinar: obe cene imaju tačno po jedan period ikada.
 

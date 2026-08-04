@@ -27,7 +27,7 @@ public final class EmployeePayrollValueCodes {
 
     /**
      * BOOLEAN. TRUE means the employee is paid transport for each day worked, at
-     * the company rate in force on the month's last day.
+     * the company rate in force when the payroll month began.
      *
      * <p>Having this in force is what puts an employee on the per-day mode — the
      * same sentence that governs {@link #TRANSPORT_FIXED_MONTHLY}, so there is no

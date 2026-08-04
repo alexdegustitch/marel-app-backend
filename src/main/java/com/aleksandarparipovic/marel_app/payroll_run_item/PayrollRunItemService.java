@@ -1151,30 +1151,19 @@ public class PayrollRunItemService {
                 : employeePayrollValueService.trueFlagsOn(List.of(employeeId), pricingDate)
                         .getOrDefault(employeeId, java.util.Set.of());
 
-        // BOTH COMPANY PRICES ARE READ AT THE MONTH'S LAST DAY.
+        // EVERYTHING IS READ AT THE MONTH'S FIRST DAY — the company prices and the
+        // employee's own values alike. A payroll month is priced by what was true
+        // when it started, so a price raised mid-month applies from the NEXT month.
+        // Confirmed by the client on 2026-08-04, for both prices, after a day spent
+        // trying the other rule.
         //
-        // Client's rule, given for transport in answer to OPEN-15 and then for meal
-        // in the same words: "the value on the last day of the month and year of
-        // the payroll being calculated". A price raised mid-month applies to that
-        // whole month.
-        //
-        // THIS REVERSED AN EARLIER RULE, deliberately and on instruction. Meal was
-        // pinned at the month's FIRST day — "a payroll month is priced by what was
-        // true when it started" — and the golden test that said so has been
-        // rewritten rather than deleted, so the reversal is on the record instead
-        // of looking like a rule that never existed.
-        //
-        // THE EMPLOYEE'S OWN VALUES STAY AT THE MONTH'S START. Their rate, their
-        // fixed transport, their entitlements: when a change to one of those takes
-        // effect is a separate question with money attached, and it has not been
-        // asked. A company price and a person's own terms are not the same thing.
-        LocalDate priceDate = mr.getEndDate() != null ? mr.getEndDate() : pricingDate;
-
+        // Never now(): reading these at today's date is what made recalculating
+        // March in July charge July's prices.
         Map<String, BigDecimal> settings = new java.util.HashMap<>();
         settings.put(MealAllowanceCalculator.SETTING_MEAL_PER_DAY,
-                appSettingService.getMealAllowancePerDayOn(priceDate));
+                appSettingService.getMealAllowancePerDayOn(pricingDate));
         settings.put(TransportAllowanceCalculator.SETTING_TRANSPORT_PER_DAY,
-                appSettingService.getTransportAllowancePerDayOn(priceDate));
+                appSettingService.getTransportAllowancePerDayOn(pricingDate));
 
         return new ComponentContext(item, mr, mr.getStartDate(), mr.getEndDate(),
                 employeeValues, settings, employeeFlags);
