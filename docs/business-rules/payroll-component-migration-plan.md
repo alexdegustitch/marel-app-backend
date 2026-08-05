@@ -1084,17 +1084,26 @@ the reason fields existed (Phase 6 for lines, 2026-08-27-01 for time). It asks
 the business question rather than naming a column, so it survives a decision
 moving tables — which three of them since have.
 
-It also PINS A DEFECT it found rather than asserting it away:
-`trg_audit_logs_payroll_adjustments` has no WHEN clause, so every recalculation
-writes a full-row diff per line. 20 954 of 33 472 update entries in the
-development database touch nothing but `system_*`, `calculated_at` and
-`calculation_inputs`, against roughly thirty real decisions — and a read of a
-stale item is a write, so the count grows whenever anybody opens a payroll. A
-WHEN clause cannot fix it, for the reason 2026-09-03-01 gives about activity: a
-patch and the recalculation it triggers land in the same UPDATE, so a clause
-narrow enough to drop the churn drops the decision with it. The fix is the one
-that worked for activity — record decisions at the caller and stop auditing the
-row — and it is not done.
+It also PINNED A DEFECT it found rather than asserting it away, and
+**2026-09-12-01 fixed it**: `trg_audit_logs_payroll_adjustments` had no WHEN
+clause, so every recalculation wrote a full-row diff per line — 20 954 of 33 472
+update entries touching nothing but `system_*`, `calculated_at` and
+`calculation_inputs`, against roughly thirty real decisions, and growing whenever
+anybody opened a payroll, because a read of a stale item is a write.
+
+A WHEN clause over the COLUMNS cannot fix it, for the reason 2026-09-03-01 gives
+about activity: a patch and the recalculation it triggers land in the same
+UPDATE. What separates them is which method was called, and only the caller knows
+— so the caller says so. `PayrollRunItemService.markHumanDecision`, called from
+patch, lock and unlock and nowhere else, sets `app.records_decision` for the rest
+of the transaction; the trigger's WHEN clause tests it.
+
+The whole diff of a decision's transaction is still recorded, including lines the
+recalculation rewrote as a consequence — that is the interesting part of a
+decision. The existing entries are left alone: a decision and a recalculation
+wrote indistinguishable rows, so the noise cannot be deleted without the signal.
+
+The pinning test is now the fix's test, which is what pinning a defect is for.
 
 ### Phase 5 ✅
 `PayrollSchemeScopeIT` — rewritten, as the plan required rather than deleted:

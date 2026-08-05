@@ -198,7 +198,7 @@ Potvrđeno; kod je već takav i ostaje. Ništa nije menjano.
 
 ---
 
-## B. Moj posao, ne čeka nikoga
+## B. Moj posao — sve tri urađene 2026-08-04/05 ✅
 
 ### B1 · Audit trag na `payroll_adjustments` se guši u sopstvenom preračunu
 

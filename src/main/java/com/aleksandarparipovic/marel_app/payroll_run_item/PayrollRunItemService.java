@@ -97,6 +97,9 @@ public class PayrollRunItemService {
     private final PayrollCalculatorRegistry calculatorRegistry;
     private final com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository workCodeCategoryRepository;
 
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
+
     // ─── Standard CRUD ──────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
@@ -363,7 +366,7 @@ public class PayrollRunItemService {
      */
     @Transactional
     public PayrollRunItem lock(Long id) {
-        recordUserActivity(id);
+        markHumanDecision(id);
         PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
 
@@ -418,7 +421,7 @@ public class PayrollRunItemService {
     /** Undo a lock. Separate operation, separate permission, separate audit entry. */
     @Transactional
     public PayrollRunItem unlock(Long id) {
-        recordUserActivity(id);
+        markHumanDecision(id);
         PayrollRunItem item = payrollRunItemRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
 
@@ -632,7 +635,7 @@ public class PayrollRunItemService {
         // before. Where the figure is stored and what it does to the balance are
         // two different questions.
         refuseEditsToExcludedCategories(item, req);
-        recordUserActivity(id);
+        markHumanDecision(id);
 
         if (req.getManualAdjustedMinutes() != null) {
             // The correction is a ROW now, not an integer on the item. The column
@@ -942,7 +945,41 @@ public class PayrollRunItemService {
      *
      * <p>Silent when nobody is logged in: a background sweep is not activity.
      */
-    private void recordUserActivity(Long payrollRunItemId) {
+    /**
+     * Say, for the rest of this transaction, that what follows is somebody's
+     * decision — and record it as this item's last activity.
+     *
+     * <p>TWO THINGS, ONE PLACE, because they answer the same question and were
+     * always going to be called together. It is called from exactly three
+     * methods: patch, lock and unlock. Reading a payroll — even when that read
+     * recalculates — calls neither.
+     *
+     * <p>THE SESSION FLAG IS WHAT THE AUDIT TRIGGER WATCHES.
+     * trg_audit_logs_payroll_adjustments used to fire on every write, so every
+     * recalculation left a full-row diff per line: 20 954 of 33 472 entries in
+     * the development database touched nothing but system_*, calculated_at and
+     * calculation_inputs, against roughly thirty real decisions. And since a read
+     * of a stale item is a write, the count grew whenever anybody opened a
+     * payroll. Thirty decisions in thirty thousand entries is not a trail.
+     *
+     * <p>IT CANNOT BE A WHEN CLAUSE OVER COLUMNS, for the reason 2026-09-03-01
+     * gives about activity: a patch and the recalculation it triggers land in the
+     * SAME update on the same row, so no column test separates them. What DOES
+     * separate them is which method was called, and only the caller knows that.
+     * So the caller says so.
+     *
+     * <p>SET UNCONDITIONALLY, before the user check. A patch made with no
+     * authenticated user — a test, a script — is still somebody's decision, and
+     * an audit trail that quietly switches off when nobody is logged in is worse
+     * than none.
+     *
+     * <p>{@code true} as the third argument makes it local to the transaction, so
+     * it cannot leak into the next thing this connection does from the pool.
+     */
+    private void markHumanDecision(Long payrollRunItemId) {
+        entityManager.createNativeQuery("SELECT set_config('app.records_decision', 'true', true)")
+                .getSingleResult();
+
         Long userId = currentUserService.getCurrentUserId();
         if (userId == null || payrollRunItemId == null) {
             return;

@@ -177,8 +177,19 @@ class PayrollAuditReconstructionIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("a recalculation records nothing on the ITEM — and, today, plenty on its lines")
-    void recalculationChurnIsNotFilteredOnTheLines() {
+    @DisplayName("a recalculation records nothing — on the item OR on its lines")
+    void recalculationIsNotADecision() {
+        // THIS TEST USED TO PIN THE DEFECT and now pins the fix.
+        //
+        // It read: "a recalculation records nothing on the ITEM — and, today,
+        // plenty on its lines", and asserted the churn was there, deliberately, so
+        // that fixing it would fail this test on purpose. 2026-09-12-01 fixed it,
+        // and this is that failure being answered.
+        //
+        // trg_audit_logs_payroll_adjustments now carries a WHEN clause on
+        // app.records_decision, which PayrollRunItemService.markHumanDecision sets
+        // — from patch, lock and unlock, and from nowhere else. A read that
+        // recalculates sets nothing.
         var scenario = fixture.scenario().build();
         Long itemId = scenario.item().getId();
         Long employeeId = scenario.employee().getId();
@@ -193,35 +204,38 @@ class PayrollAuditReconstructionIT extends AbstractIntegrationTest {
         entityManager.flush();
         entityManager.clear();
 
-        // A read of a stale item is a write: getForPayrollAccess rewrites the item,
-        // every line's system figures, calculated_at and calculation_inputs.
+        // A read of a stale item is a write: this rewrites the item, every line's
+        // system figures, calculated_at and calculation_inputs.
         payrollRunItemService.getForPayrollAccess(itemId);
 
-        // THE ITEM IS CLEAN, and that is 2026-08-26-01 working: its trigger has a
-        // WHEN clause naming the one value a person enters.
         assertThat(auditEntriesForItem(itemId))
-                .as("the partial trigger keeps recalculation churn off payroll_run_items")
+                .as("the item's partial trigger keeps recalculation off payroll_run_items")
                 .isEmpty();
-
-        // THE LINES ARE NOT, AND THIS IS A KNOWN DEFECT — pinned here rather than
-        // asserted away, so that fixing it fails this test on purpose.
-        //
-        // trg_audit_logs_payroll_adjustments is a plain AFTER INSERT OR UPDATE OR
-        // DELETE with no WHEN clause, so every recalculation writes a full-row diff
-        // per line. In the development database that is 20 954 of 33 472 update
-        // entries touching nothing but system_*, calculated_at and
-        // calculation_inputs — against roughly thirty real decisions. A dispute six
-        // months from now means finding those thirty in thirty thousand.
-        //
-        // IT CANNOT BE FIXED WITH A WHEN CLAUSE, for the reason 2026-09-03-01 gives
-        // about activity: a patch and the recalculation it triggers land in the
-        // SAME update on the same row, so no column test separates them — and a
-        // clause narrow enough to drop the churn would drop the decision with it.
-        // The fix is the one that worked for activity: record decisions explicitly
-        // at the caller, and stop auditing the row.
         assertThat(decisionsFor(itemId, employeeId))
-                .as("today the calculation's own work lands in the trail; see the comment above")
-                .hasSizeGreaterThan(before);
+                .as("and the lines are clean too — this is what 20 954 of 33 472 entries were")
+                .hasSize(before);
+    }
+
+    @Test
+    @DisplayName("a decision records the WHOLE diff, including what it caused")
+    void aDecisionRecordsItsConsequences() {
+        var scenario = fixture.scenario().build();
+        Long itemId = scenario.item().getId();
+        Long employeeId = scenario.employee().getId();
+        payrollRunItemService.getForPayrollAccess(itemId);
+        int before = decisionsFor(itemId, employeeId).size();
+
+        patchLine(itemId, "MEAL_ALLOWANCE", d -> d.setUnitAmount(new BigDecimal("430.00")));
+
+        // The other half of the rule, and the reason the flag covers the whole
+        // transaction rather than one statement: an entry has to show the price
+        // somebody typed TOGETHER WITH every amount that moved because of it. A
+        // filter narrow enough to record only the typed field would answer "what
+        // was changed" and not "what did it do".
+        List<String> after = decisionsFor(itemId, employeeId);
+        assertThat(after).hasSizeGreaterThan(before);
+        assertThat(after).anySatisfy(e -> assertThat(e).contains("unit_amount").contains("430"));
+        assertThat(after).anySatisfy(e -> assertThat(e).contains("amount"));
     }
 
     @Test
