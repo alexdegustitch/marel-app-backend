@@ -1062,8 +1062,12 @@ Changed expectations, deliberately, both in test 1 and test 12:
 `app_settings` rate against a count that was never computed; it now shows the
 employee's own rate, and the fixture employee has none.
 
-Still owed: `required_manual_input` behaviour (columns and status values exist,
-the lock-time validation does not). ~~The backfill-SQL test from Phase 2~~ —
+~~Still owed: `required_manual_input` behaviour~~ — stale by the time it was
+written. `lock()` recalculates, then refuses with `pendingRequiredInputs`, naming
+each line; `PayrollGoldenSnapshotIT` 17f and 17g cover it, including the half
+that matters most: an explicit zero IS an answer and unblocks the lock, because
+`has_manual_input` is the only thing that can tell "not entered" from "entered as
+zero". Recorded here as done rather than left looking owed. ~~The backfill-SQL test from Phase 2~~ —
 `PayrollValueBackfillIT`: seeds a known rate sequence, re-runs the real migration
 file through psql, and reads the period boundaries back. Covers the collapse, a
 rate that returns to an earlier value, a missing month, and re-running.

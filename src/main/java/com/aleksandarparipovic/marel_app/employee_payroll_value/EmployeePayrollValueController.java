@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.employee_payroll_value;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.ChangeEmployeePayrollValueRequest;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.EmployeePayrollValueDefinitionDto;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.EmployeePayrollValueDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,23 @@ public class EmployeePayrollValueController {
 
     private final EmployeePayrollValueService valueService;
     private final CurrentUserService currentUserService;
+
+    /**
+     * The value types an administrator may set.
+     *
+     * <p>Under the employee path because that is where they are used, and because
+     * a screen that hardcoded the list would silently stop offering the next one
+     * somebody adds. {@code valueType} is what tells the form whether to ask for a
+     * number or a yes/no.
+     */
+    @GetMapping("/definitions")
+    public ResponseEntity<List<EmployeePayrollValueDefinitionDto>> definitions(
+            @PathVariable Long employeeId
+    ) {
+        return ResponseEntity.ok(valueService.definitions().stream()
+                .map(EmployeePayrollValueDefinitionDto::new)
+                .toList());
+    }
 
     /**
      * @param code optional filter; omit for every value this employee has.
