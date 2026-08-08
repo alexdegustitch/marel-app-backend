@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.analytics;
 
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
+import com.aleksandarparipovic.marel_app.employee.ProbationPolicy;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
 import com.aleksandarparipovic.marel_app.work_log.WorkLogPerformanceCalculator;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
@@ -60,6 +61,7 @@ public class AnalyticsFactSyncService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final WorkLogPerformanceCalculator performanceCalculator;
+    private final ProbationPolicy probationPolicy;
 
     @Transactional
     public void upsertFactsForShift(WorkShift workShift, List<WorkLog> logs) {
@@ -81,14 +83,21 @@ public class AnalyticsFactSyncService {
                         .addValue("workShiftId", workShift.getId())
                         .addValue("activeIds", activeIds));
 
+        // Once per shift, not once per log: every log here shares one employee and
+        // one work date, and the work date is the shift's — a night shift's
+        // after-midnight logs must not fall on the far side of a probation end.
+        boolean onProbation = probationPolicy.isOnProbation(
+                workShift.getEmployee().getId(), workShift.getWorkDate());
+
         SqlParameterSource[] batchParams = active.stream()
-                .map(log -> toParams(workShift, log))
+                .map(log -> toParams(workShift, log, onProbation))
                 .toArray(SqlParameterSource[]::new);
         jdbc.batchUpdate(UPSERT_SQL, batchParams);
     }
 
-    private SqlParameterSource toParams(WorkShift workShift, WorkLog log) {
-        BigDecimal approvedRate = performanceCalculator.calculateApprovedPerformanceRate(log);
+    private SqlParameterSource toParams(WorkShift workShift, WorkLog log, boolean onProbation) {
+        BigDecimal approvedRate =
+                performanceCalculator.calculateApprovedPerformanceRate(log, onProbation);
         ProductionOrder order = log.getProductionOrder();
 
         return new MapSqlParameterSource()

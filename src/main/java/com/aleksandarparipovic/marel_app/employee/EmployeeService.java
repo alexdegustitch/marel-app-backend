@@ -1,8 +1,16 @@
 package com.aleksandarparipovic.marel_app.employee;
 
 import com.aleksandarparipovic.marel_app.bonus.BonusCategory;
+import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationScheme;
+import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationSchemeRepository;
+import com.aleksandarparipovic.marel_app.department_head.EmployeeRowEnricher;
+import com.aleksandarparipovic.marel_app.department_head.DepartmentHeadPeriod;
+import com.aleksandarparipovic.marel_app.department_head.DepartmentHeadPeriodRepository;
+import com.aleksandarparipovic.marel_app.shift.Shift;
+import com.aleksandarparipovic.marel_app.shift.ShiftRepository;
 import com.aleksandarparipovic.marel_app.bonus.BonusCategoryRepository;
 import com.aleksandarparipovic.marel_app.common.i18n.AppLocales;
+import com.aleksandarparipovic.marel_app.employment_period.EmploymentPeriodService;
 import com.aleksandarparipovic.marel_app.department.Department;
 import com.aleksandarparipovic.marel_app.department.DepartmentRepository;
 import com.aleksandarparipovic.marel_app.employee.dto.ArchiveEmployeeRequest;
@@ -60,8 +68,15 @@ public class EmployeeService {
     private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final CompensationSchemeInitializer compensationSchemeInitializer;
+    private final EmploymentPeriodService employmentPeriodService;
     private final EmployeePayrollValueService employeePayrollValueService;
     private final CurrentUserService currentUserService;
+    private final CompensationSchemeRepository schemeRepository;
+    private final DepartmentHeadPeriodRepository departmentHeadPeriodRepository;
+    private final ShiftRepository shiftRepository;
+    private final com.aleksandarparipovic.marel_app.recalc_queue.AffectedMonthsRecalculator employeeRowRecalculator;
+    private final com.aleksandarparipovic.marel_app.employee_work_category.EmployeeWorkCategoryService employeeWorkCategoryService;
+    private final EmployeeRowEnricher employeeRowEnricher;
 
 
     public EmployeeBasicInfoDto getEmployeeById(Long employeeId){
@@ -84,42 +99,130 @@ public class EmployeeService {
     public EmployeeWithBonusView  createEmployee(EmployeeCreateRequest request){
         Employee employee = new Employee();
         employee.setEmployeeNo(request.getEmployeeNo());
-        employee.setFullName(request.getFullName());
+        employee.setFirstName(request.getFirstName());
+        employee.setLastName(request.getLastName());
 
         Department department = departmentRepository.findById(request.getDepartmentId())
                 .orElseThrow(() -> new EntityNotFoundException("Department not found"));
 
         employee.setDepartment(department);
-        employee.setForeigner(request.getForeigner());
+        employee.setEmail(request.getEmail());
         employee.setTransportAllowanceRsd(request.getTransportAllowanceRsd());
         if (request.getTransportAllowanceMode() != null) {
             employee.setTransportAllowanceMode(request.getTransportAllowanceMode());
         }
         employee.setEmploymentStartDate(request.getEmploymentStartDate());
         employee.setNotes(request.getNotes());
+        employee.setMobilePhone(request.getMobilePhone());
+        employee.setHourlyRate(request.getHourlyRate());
+        if (request.getNormGraceDays() != null) {
+            employee.setNormGraceDays(request.getNormGraceDays());
+        }
+        if (request.getPreferredLocale() != null) {
+            // Same check and same message as patchEmployee: isSupported (not a
+            // case-sensitive set lookup), then store normalize()'s canonical
+            // spelling so the column cannot collect casing variants.
+            if (!AppLocales.isSupported(request.getPreferredLocale())) {
+                throw new IllegalArgumentException(
+                        "Nepodržan jezik: " + request.getPreferredLocale()
+                                + ". Dozvoljeni su: " + String.join(", ", AppLocales.SUPPORTED) + ".");
+            }
+            employee.setPreferredLocale(AppLocales.normalize(request.getPreferredLocale()));
+        }
 
         employee = repository.save(employee);
 
         // Every employee needs a compensation scheme from their first day, or the
         // first work log recorded for them is rejected and their first recalc job
-        // fails. STANDARD, deliberately, and regardless of is_foreigner: the
-        // restricted policy is assigned explicitly by an administrator, never
-        // inferred from a personnel attribute.
-        compensationSchemeInitializer.assignInitialScheme(employee);
+        // fails. The scheme is now CHOSEN on the form rather than defaulted: it
+        // decides which categories are usable and whether a performance bonus is
+        // earned at all, so it is a payroll decision and the administrator makes
+        // it explicitly.
+        compensationSchemeInitializer.assignInitialScheme(employee, request.getCompensationSchemeId());
 
-        BonusCategory category = bonusCategoryRepository.findById(request.getCategoryId())
-                .orElseThrow(() -> new EntityNotFoundException("Bonus category not found"));
+        // The first spell of employment, opened with the employee's own
+        // norm_grace_days — the employee-level default (30) applies to the FIRST
+        // period only; a later one defaults to zero, because a returning employee
+        // serves no new probation unless somebody says so.
+        employmentPeriodService.openFirstPeriod(employee);
 
+        // The bonus category is meaningful only under a scheme that earns a
+        // performance bonus. Under one that does not, the form disables the field
+        // and sends nothing — so require it here rather than with @NotNull, which
+        // cannot see which scheme was chosen.
+        CompensationScheme chosenScheme = schemeRepository.findById(request.getCompensationSchemeId())
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Način obračuna ne postoji: " + request.getCompensationSchemeId()));
+        boolean bonusApplies = Boolean.TRUE.equals(chosenScheme.getAllowsPerformanceBonus());
 
-        EmployeeBonus newBonus = new EmployeeBonus();
-        newBonus.setEmployee(employee);
-        newBonus.setBonusCategory(category);
-        newBonus.setStartDate(LocalDate.now());
+        if (bonusApplies) {
+            if (request.getCategoryId() == null) {
+                throw new IllegalArgumentException("Kategorija bonusa je obavezna.");
+            }
 
-        employeeBonusRepository.save(newBonus);
+            BonusCategory category = bonusCategoryRepository.findById(request.getCategoryId())
+                    .orElseThrow(() -> new EntityNotFoundException("Bonus category not found"));
 
-        return repository.findEmployeeWithBonusById(employee.getId())
+            EmployeeBonus newBonus = new EmployeeBonus();
+            newBonus.setEmployee(employee);
+            newBonus.setBonusCategory(category);
+            newBonus.setStartDate(LocalDate.now());
+
+            employeeBonusRepository.save(newBonus);
+        }
+
+        employeeWorkCategoryService.openFirstPeriod(
+                employee, request.getDefaultWorkCategoryId(), employee.getEmploymentStartDate());
+
+        if (request.getDepartmentHead() != null) {
+            openDepartmentHeadPeriod(employee, department,
+                    request.getCompensationSchemeId(), request.getDepartmentHead());
+        }
+
+        return employeeRowEnricher.enrich(repository.findEmployeeWithBonusById(employee.getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Employee projection not found"));
+    }
+
+    /**
+     * Make a newly created employee head of their own department.
+     *
+     * <p>Refused for a scheme that earns no performance bonus. That is the rule
+     * the owner asked for — "only a standard worker can be head" — expressed
+     * through {@code allows_performance_bonus} rather than by naming STANDARD,
+     * FOREIGN_FIXED_COEFFICIENT and COMMERCIAL here: naming a scheme in Java is
+     * what the business rules forbid (§10), and a scheme added tomorrow gets the
+     * right answer with no code change.
+     *
+     * <p>Overlap is left to {@code ex_dhp_no_overlap}. A check-then-insert here
+     * would be a race two concurrent requests could both pass.
+     */
+    private void openDepartmentHeadPeriod(Employee employee,
+                                          Department department,
+                                          Long compensationSchemeId,
+                                          EmployeeCreateRequest.DepartmentHeadOnCreate head) {
+
+        CompensationScheme scheme = schemeRepository.findById(compensationSchemeId)
+                .orElseThrow(() -> new EntityNotFoundException("Način obračuna ne postoji"));
+
+        if (!Boolean.TRUE.equals(scheme.getAllowsPerformanceBonus())) {
+            throw new IllegalStateException(
+                    "Radnik na načinu obračuna \"" + scheme.getName()
+                            + "\" ne može biti šef odeljenja.");
+        }
+
+        Shift shift = head.getShiftId() == null ? null
+                : shiftRepository.findById(head.getShiftId())
+                        .orElseThrow(() -> new EntityNotFoundException(
+                                "Smena ne postoji: " + head.getShiftId()));
+
+        departmentHeadPeriodRepository.save(DepartmentHeadPeriod.builder()
+                .department(department)
+                .employee(employee)
+                .shift(shift)
+                .validFrom(head.getValidFrom())
+                .validTo(head.getValidTo())
+                .note("Opened with the employee.")
+                .build());
     }
 
     public Page<EmployeeWithBonusView> search(SearchRequest state) {
@@ -130,14 +233,20 @@ public class EmployeeService {
         Pageable pageable =
                 PageableBuilder.from(state);
 
-        return repository.searchWithBonus(spec, pageable);
+        return employeeRowEnricher.enrich(repository.searchWithBonus(spec, pageable));
     }
 
 
     public <T> Page<T> searchAll(SearchRequest request, Class<T> projectionType) {
         Specification<Employee> spec = EmployeeSpecifications.fromSearchRequest(request);
         Pageable pageable = PageableBuilder.from(request);
-        return repository.searchWithProjection(spec, pageable, projectionType);
+        Page<T> page = repository.searchWithProjection(spec, pageable, projectionType);
+        if (projectionType.equals(EmployeeWithBonusView.class)) {
+            @SuppressWarnings("unchecked")
+            Page<EmployeeWithBonusView> rows = (Page<EmployeeWithBonusView>) page;
+            employeeRowEnricher.enrich(rows);
+        }
+        return page;
     }
 
 
@@ -173,7 +282,7 @@ public class EmployeeService {
         // overruled by the other on the next recalculation.
         recordHourlyRate(id, employee.getHourlyRate(), null);
 
-        return repository.findEmployeeWithBonusById(id)
+        return employeeRowEnricher.enrich(repository.findEmployeeWithBonusById(id))
                 .orElseThrow(() -> new EntityNotFoundException("Employee projection not found"));
 
     }
@@ -256,7 +365,7 @@ public class EmployeeService {
     }
 
     public Page<EmployeeWithBonusView> getEmployeeBonusTable(Pageable pageable) {
-        return repository.findEmployeesWithCurrentBonus(pageable);
+        return employeeRowEnricher.enrich(repository.findEmployeesWithCurrentBonus(pageable));
     }
 
 
@@ -264,12 +373,17 @@ public class EmployeeService {
     public Employee update(Long id, Employee updated) {
         Employee e = repository.findById(id).orElseThrow();
 
-        e.setFullName(updated.getFullName());
+        e.setFirstName(updated.getFirstName());
+        e.setLastName(updated.getLastName());
         e.setDepartment(updated.getDepartment());
-        e.setEmploymentStartDate(updated.getEmploymentStartDate());
-        e.setEmploymentEndDate(updated.getEmploymentEndDate());
+        // Employment dates are written to the CURRENT period, not here: these
+        // columns are a trigger-maintained mirror of it, so setting them directly
+        // would be overwritten by the next period change and disagree with the
+        // periods until then.
+        employmentPeriodService.applyEditedDates(
+                e.getId(), updated.getEmploymentStartDate(), updated.getEmploymentEndDate());
         e.setActive(updated.isActive());
-        e.setForeigner(updated.isForeigner());
+        e.setEmail(updated.getEmail());
         e.setNormGraceDays(updated.getNormGraceDays());
         e.setProbationEndDate(updated.getProbationEndDate());
         e.setTransportAllowanceRsd(updated.getTransportAllowanceRsd());
@@ -301,6 +415,21 @@ public class EmployeeService {
         Employee employee = repository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
 
+        LocalDate endedOn = req.getEmploymentEndDate() != null ? req.getEmploymentEndDate() : LocalDate.now();
+
+        if (employee.getEmploymentStartDate() != null && endedOn.isBefore(employee.getEmploymentStartDate())) {
+            throw new IllegalArgumentException(
+                    "Datum prestanka rada ne može biti pre početka rada ("
+                            + employee.getEmploymentStartDate() + ").");
+        }
+
+        // Closes the open spell in employee_employment_periods, which is the
+        // authority; employees.employment_end_date is a trigger-maintained mirror
+        // of it and must not be written directly.
+        employmentPeriodService.applyEditedDates(employee.getId(), null, endedOn);
+
+        // now(), not endedOn: this records when the row was hidden, not when the
+        // person stopped working. The second question is answered by the period.
         employee.setArchivedAt(OffsetDateTime.now());
         employee.setActive(false);
         repository.save(employee);
@@ -310,7 +439,7 @@ public class EmployeeService {
     public EmployeeDetailDto getEmployeeDetail(Long id) {
         Employee employee = repository.findByIdWithDetails(id)
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
-        return new EmployeeDetailDto(employee);
+        return new EmployeeDetailDto(employee, employmentPeriodService.canEditEmploymentStart(id));
     }
 
     @Transactional
@@ -319,8 +448,8 @@ public class EmployeeService {
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
 
         if (req.getEmployeeNo() != null) employee.setEmployeeNo(req.getEmployeeNo());
-        if (req.getFullName() != null) employee.setFullName(req.getFullName());
-        if (req.getForeigner() != null) employee.setForeigner(req.getForeigner());
+        if (req.getFirstName() != null) employee.setFirstName(req.getFirstName());
+        if (req.getLastName() != null) employee.setLastName(req.getLastName());
         if (req.getTransportAllowanceRsd() != null) employee.setTransportAllowanceRsd(req.getTransportAllowanceRsd());
         if (req.getTransportAllowanceMode() != null)
         {
@@ -331,33 +460,53 @@ public class EmployeeService {
             }
             employee.setTransportAllowanceMode(req.getTransportAllowanceMode());
         }
-        if (req.getEmploymentStartDate() != null)  employee.setEmploymentStartDate(req.getEmploymentStartDate());
-        if (req.getEmploymentEndDate() != null)    employee.setEmploymentEndDate(req.getEmploymentEndDate());
+        // Straight to the period; employees.* are the trigger's mirror of it.
+        employmentPeriodService.applyEditedDates(
+                employee.getId(), req.getEmploymentStartDate(), req.getEmploymentEndDate());
         if (req.getActive() != null)               employee.setActive(req.getActive());
-        if (req.getNormGraceDays() != null)        employee.setNormGraceDays(req.getNormGraceDays());
+        // Routed to the PERIOD, not the column. employees.norm_grace_days is a
+        // trigger-maintained mirror and ProbationPolicy reads the period's
+        // generated probation_end_date — setting the column alone changed
+        // nothing, so probation could not actually be edited at all.
+        if (req.getNormGraceDays() != null) {
+            employmentPeriodService.changeProbationDays(employee.getId(), req.getNormGraceDays())
+                    .ifPresent(range -> employeeRowRecalculator.recalculate(
+                            employee, range[0], range[1],
+                            "Trajanje probnog perioda promenjeno na " + req.getNormGraceDays() + " dana"));
+        }
         if (req.getNotes() != null)                employee.setNotes(req.getNotes());
-        if (req.getWorksInCommercial() != null)     employee.setWorksInCommercial(req.getWorksInCommercial());
+        if (req.getEmail() != null)                employee.setEmail(req.getEmail());
         if (req.getMobilePhone() != null)          employee.setMobilePhone(req.getMobilePhone());
         if (req.getPreferredLocale() != null) {
             // Validated against the supported set rather than passed through: the
             // column has a CHECK constraint, and a raw constraint violation is a
             // 500 the user cannot act on.
-            if (!AppLocales.SUPPORTED.contains(req.getPreferredLocale())) {
+            //
+            // isSupported rather than SUPPORTED.contains: the latter is
+            // case-sensitive, so "SR-LATN" was refused here while normalize()
+            // accepted it everywhere else — two different notions of "supported"
+            // in one application. What is stored is normalize()'s canonical
+            // spelling, so the column cannot collect casing variants.
+            if (!AppLocales.isSupported(req.getPreferredLocale())) {
                 throw new IllegalArgumentException(
                         "Nepodržan jezik: " + req.getPreferredLocale()
                                 + ". Dozvoljeni su: " + String.join(", ", AppLocales.SUPPORTED) + ".");
             }
-            employee.setPreferredLocale(req.getPreferredLocale());
+            employee.setPreferredLocale(AppLocales.normalize(req.getPreferredLocale()));
         }
 
         if (req.getHourlyRate() != null) {
             employee.setHourlyRate(req.getHourlyRate());
         }
 
-        if(req.getDefaultWorkCategoryId() != null) {
-            WorkCodeCategory category = workCodeCategoryRepository.findById(req.getDefaultWorkCategoryId())
-                    .orElseThrow(() -> new EntityNotFoundException("Work code category not found: " + req.getDefaultWorkCategoryId()));
-            employee.setDefaultWorkCategory(category);
+        // NOT written here any more. Since 2026-09-22-01 the column is a
+        // trigger-maintained mirror of employee_work_category_periods, so setting
+        // it directly would be overwritten by the next period change and disagree
+        // with the history until then. Use POST /employees/{id}/work-category-history.
+        if (req.getDefaultWorkCategoryId() != null) {
+            throw new IllegalArgumentException(
+                    "Podrazumevana kategorija rada se menja preko istorije kategorija, "
+                            + "sa datumom od kada važi.");
         }
 
         if (req.getDepartmentId() != null) {
@@ -383,7 +532,7 @@ public class EmployeeService {
 
         recordHourlyRate(id, req.getHourlyRate(), req.getHourlyRateEffectiveFrom());
 
-        return repository.findEmployeeWithBonusById(id)
+        return employeeRowEnricher.enrich(repository.findEmployeeWithBonusById(id))
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
     }
 }

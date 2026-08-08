@@ -705,3 +705,178 @@ worked.
 **The backend always revalidates the submitted category.** Having appeared in a
 dropdown earlier is not evidence that a category is still valid for the employee
 and date now being submitted.
+
+---
+
+## 13. Probation withholds the weekend bonus
+
+An employee inside their probation period is paid **no Saturday/Sunday bonus**.
+The night-shift and multiple-machines remaps are unaffected — they apply from the
+first day.
+
+### Why this is NOT a compensation scheme
+
+It was considered and rejected, for reasons that apply to anything shaped like
+it:
+
+- **A scheme is ASSIGNED; probation is DERIVED.** A scheme is a dated period in
+  `employee_compensation_scheme_history`, and exactly one must cover every work
+  date or the calculation refuses the day (§3). Probation comes out of the
+  employment dates. As a scheme, somebody would have to open a period on hire and
+  close it when probation ends, by hand, for every employee — and forgetting the
+  second half breaks work **entry**, not merely a bonus.
+- **Schemes are mutually exclusive; probation crosses them.** A foreign worker
+  can be on probation. It would need `STANDARD_PROBATION`,
+  `FOREIGN_FIXED_COEFFICIENT_PROBATION`, `COMMERCIAL_PROBATION`, and every future
+  scheme would double the set — destroying the "add a worker type with data
+  alone" property of §10 that makes schemes worth having.
+- **Different questions.** A scheme answers what work is **worth**. A mapping
+  answers what work **becomes**, given its context (§4). Probation belongs to the
+  second, and that question already had exactly one home:
+  `DailyRecalcService.resolveApplicableMappingTypes`, which already takes the
+  employee and already gates `WEEKEND_BONUS` on the 180-minute weekly rule.
+
+### `work_code_category_mapping_types` — the registry
+
+`2026-09-15-01`. One row per remap kind, carrying `applies_during_probation`:
+
+| `code` | `applies_during_probation` |
+|---|:-:|
+| `NIGHT_SHIFT_BONUS` | `TRUE` |
+| `MULTIPLE_MACHINES_BONUS` | `TRUE` |
+| `WEEKEND_BONUS` | **`FALSE`** |
+
+The flag is on the **type**, not on each mapping row: the rule is "no weekend
+bonus on probation", not "`J → JB` does not fire". Per row it would be four rows
+(`J→JB`, `D→DB`, `G→GB`, `Z→ZB`) somebody has to keep in step, and a fifth added
+later would default to the wrong answer. `DEFAULT TRUE` means a new type can
+never silently withhold a bonus nobody meant to withhold.
+
+**The registry also closes an older hole.** `mapping_type` was a bare `VARCHAR`
+and the switch in `DailyRecalcService` ends in
+`default -> { /* unknown mapping type: ignore */ }` — so a typo produced a mapping
+row that looked configured and did nothing. `fk_wccm_mapping_type` makes that
+impossible.
+
+### `ProbationPolicy` — who, and when
+
+Probation runs from `employment_start_date` to `probation_end_date`
+(`= employment_start_date + norm_grace_days`), **both inclusive**, and is asked
+**by work date, never by today** — the same discipline the scheme resolver
+follows, so reopening an old month cannot re-decide it against the current
+calendar.
+
+> **Zero grace days is NO probation, not a one-day probation.** With
+> `norm_grace_days = 0` the generated end equals the start, so arithmetic alone
+> would put the first day inside the period. A returning employee is given zero
+> precisely to say the opposite, and having it cost them a bonus on their first
+> day back would invert the rule.
+
+Missing data — no employee, no start date — resolves to **not** on probation.
+This decides whether to WITHHOLD money, so the safe direction is to pay.
+
+**In force always**, not from a date (owner's decision). Contextual mappings are
+recomputed on every recalculation by design, so this applies to historical months
+as they are recalculated. When it landed that changed nothing: no employee was on
+probation and the database held no weekend shift worked during one.
+
+### `ProbationPolicy` is the seam for employment periods
+
+Employment is one start and one end on the employee row today, but an employee
+can leave and return, so it is becoming a table of periods each carrying its own
+`norm_grace_days`. When that lands, **only `ProbationPolicy.isOnProbation`
+changes** — it looks up the period covering the work date instead of the employee
+row — and nothing in the recalculation moves.
+
+Note the interaction, because it is easy to get wrong: `employment_start_date` is
+to become the start of the **latest** employment, and `probation_end_date` is
+today a `GENERATED ALWAYS` column derived from it. Left there, a rehired employee
+would automatically get a fresh 30-day probation — the opposite of the rule that a
+returning employee gets `norm_grace_days = 0` by default. **The generated column
+has to move onto the period row.**
+
+### Not covered by an automated test
+
+`ProbationPolicy` and the registry are covered by `ProbationWeekendBonusIT` (10
+tests). The **wiring** — that `resolveApplicableMappingTypes` actually removes the
+withheld type — is not: driving the real recalculation needs committed
+`work_logs`, which needs products, operations and norms, and no fixture builds
+them. The three lines that do the removal are in one place and visible, but this
+is a gap and should be closed when a work-log fixture exists.
+
+---
+
+## 14. Employment is a history of periods
+
+`2026-09-16-01`. An employee can leave and come back. As one start and one end on
+the employee row a rehire either erased the first spell or needed a second
+employee record — splitting one person's work, payroll and audit trail in two.
+
+```
+employee_employment_periods
+  employee_id, started_on, ended_on, norm_grace_days,
+  probation_end_date GENERATED ALWAYS AS (started_on + norm_grace_days)
+```
+
+`ex_eep_no_overlap` (GiST) makes it impossible to be employed twice at once —
+the same device the scheme and payroll-value histories use, chosen over a
+check-then-insert that two concurrent transactions could both pass.
+
+### Why probation had to move with it
+
+`employees.probation_end_date` was `GENERATED ALWAYS AS
+(employment_start_date + norm_grace_days)`. Once "date of employment" means the
+start of the **latest** spell — the owner's rule — that column would hand every
+returning employee a fresh 30-day probation, contradicting the rule that a rehire
+serves **none** by default.
+
+On the period the same arithmetic is honest, because both inputs are columns of
+the same row, so it stays `GENERATED` there: it cannot drift and it can be
+queried.
+
+> **On `employees` it is no longer generated.** Its value now comes from another
+> table, and a generated column cannot be written by a trigger. `DROP EXPRESSION`
+> converts it in place, keeping the values.
+
+### The three mirrored columns
+
+`employees.employment_start_date`, `employment_end_date` and `probation_end_date`
+all survive as mirrors of the **latest** period, maintained by
+`trg_eep_sync_employee`. A trigger rather than application code, so no write path
+can forget them. 47 places read those columns — screens, filters, sorting,
+projections — and none had to change.
+
+The periods table is the authority; the columns are a view of it that existing SQL
+and existing code can still use. `EmployeeDeactivationScheduler` needed no change
+for the same reason: the mirrored `employment_end_date` is NULL for a rehired
+employee, so they are not deactivated by their old leaving date.
+
+### Grace days: 30 on the employee, 0 on a new period
+
+| | Default | Means |
+|---|:-:|---|
+| `employees.norm_grace_days` | **30** | the length the FIRST period is opened with |
+| `employee_employment_periods.norm_grace_days` | **0** | a rehire serves no new probation unless somebody says so |
+
+`EmploymentPeriodService.openFirstPeriod` copies the employee's value into the
+first period; every later one takes the column default. An administrator can set
+a returning employee's grace days explicitly, and then they do serve one.
+
+### Writing employment dates
+
+**Only `EmploymentPeriodService` writes periods.** `EmployeeService`'s create,
+update and patch paths all route through it — setting the mirror columns directly
+would be overwritten by the next period change, and disagree with the periods
+until then.
+
+`applyEditedDates` edits the **current** period, which is what "edit the
+employment dates" has always meant and still means for the single-spell case that
+every employee is today. **Adding a spell is a different action** and deliberately
+not that one: moving the current period's start to a rehire date would erase the
+first spell, which is the thing this table exists to stop. There is no screen for
+it yet — the table carries everything one would write.
+
+### Not covered
+
+There is no UI for adding or closing a spell, and no API endpoint. Until there is,
+a rehire is two SQL statements: close the open period, insert a new one.

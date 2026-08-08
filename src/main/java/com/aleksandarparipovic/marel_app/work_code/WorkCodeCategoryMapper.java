@@ -34,6 +34,7 @@ public class WorkCodeCategoryMapper {
                 category.getAffectsMealAllowance(),
                 category.getDisplayOrder(),
                 category.getBaseCategory(),
+                category.getBaseOperation(),
                 category.getAllowsParallelWork()
         );
     }

@@ -11,10 +11,10 @@ import java.time.LocalDate;
 public class EmployeePatchRequest {
 
     private String employeeNo;
-    private String fullName;
+    private String firstName;
+    private String lastName;
     private Long departmentId;
     private Long categoryId;
-    private Boolean foreigner;
     private BigDecimal transportAllowanceRsd;
     private String transportAllowanceMode;
     private LocalDate employmentStartDate;
@@ -23,6 +23,7 @@ public class EmployeePatchRequest {
     private Integer normGraceDays;
     private String notes;
     private String mobilePhone;
+    private String email;
     private BigDecimal hourlyRate;
     /**
      * The date the new hourly rate starts to apply. Optional; when absent the
@@ -36,7 +37,6 @@ public class EmployeePatchRequest {
      */
     private LocalDate hourlyRateEffectiveFrom;
     private Long defaultWorkCategoryId;
-    private Boolean worksInCommercial;
     /**
      * Language for documents produced FOR this employee (the payroll PDF).
      * Independent of {@code foreigner} and of the compensation scheme.

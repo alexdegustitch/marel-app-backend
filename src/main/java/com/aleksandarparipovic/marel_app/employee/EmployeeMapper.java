@@ -12,6 +12,8 @@ public class EmployeeMapper {
 
         dto.setId(e.getId());
         dto.setEmployeeNo(e.getEmployeeNo());
+        dto.setFirstName(e.getFirstName());
+        dto.setLastName(e.getLastName());
         dto.setFullName(e.getFullName());
 
         dto.setDepartmentId(e.getDepartment().getId());
@@ -21,7 +23,6 @@ public class EmployeeMapper {
         dto.setEmploymentEndDate(e.getEmploymentEndDate());
 
         dto.setActive(e.isActive());
-        dto.setForeigner(e.isForeigner());
 
         dto.setNormGraceDays(e.getNormGraceDays());
         dto.setProbationEndDate(e.getProbationEndDate());
@@ -34,7 +35,7 @@ public class EmployeeMapper {
         dto.setHourlyRate(e.getHourlyRate());
         dto.setDefaultWorkCategoryId(e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getId() : null);
         dto.setDefaultWorkCategoryName(e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getCategoryName() : null);
-        dto.setWorksInCommercial(e.isWorksInCommercial());
+        dto.setEmail(e.getEmail());
 
         dto.setCreatedAt(e.getCreatedAt());
         dto.setUpdatedAt(e.getUpdatedAt());
@@ -48,6 +49,8 @@ public class EmployeeMapper {
     public EmployeeBasicInfoDto toBasicInfoDto(Employee e){
         EmployeeBasicInfoDto employeeBasicInfoDto = new EmployeeBasicInfoDto();
         employeeBasicInfoDto.setId(e.getId());
+        employeeBasicInfoDto.setFirstName(e.getFirstName());
+        employeeBasicInfoDto.setLastName(e.getLastName());
         employeeBasicInfoDto.setFullName(e.getFullName());
         employeeBasicInfoDto.setEmployeeNo(e.getEmployeeNo());
         employeeBasicInfoDto.setNotes(e.getNotes());

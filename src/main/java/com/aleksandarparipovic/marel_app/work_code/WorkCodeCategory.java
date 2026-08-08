@@ -61,6 +61,21 @@ public class WorkCodeCategory {
     @Column(name = "base_category")
     private Boolean baseCategory;
 
+    /**
+     * Whether this category may be an employee's DEFAULT work category.
+     *
+     * <p>Only a presentation/assignment rule: it decides what the employee form
+     * offers, and nothing in the calculation reads it. A category that is false
+     * here is still worked and still reaches payroll — it simply is not a
+     * standing assignment. See 2026-09-21-01.
+     */
+    // @Builder.Default, not just a field initialiser: the builder ignores the
+    // initialiser and would insert NULL into a NOT NULL column — which is
+    // exactly what 233 integration tests hit.
+    @Builder.Default
+    @Column(name = "is_base_operation", nullable = false)
+    private Boolean baseOperation = true;
+
     @Column(name = "allows_parallel_work", nullable = false)
     private Boolean allowsParallelWork = false;
 

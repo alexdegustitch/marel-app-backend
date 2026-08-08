@@ -31,6 +31,8 @@ public interface EmployeeRepository
     select
       e.id as employeeId,
       e.employeeNo as employeeNo,
+      e.firstName as firstName,
+      e.lastName as lastName,
       e.fullName as fullName,
       d.name as departmentName,
       d.id as departmentId,
@@ -44,12 +46,15 @@ public interface EmployeeRepository
       bc.categoryName as categoryName,
       bc.bonusAmount as bonusAmount,
       eb.startDate as bonusStart,
-      e.foreigner as foreigner,
+      cs.code as schemeCode,
+      cs.name as schemeName,
+      cs.allowsPerformanceBonus as allowsPerformanceBonus,
       e.mobilePhone as mobilePhone,
+      e.email as email,
       e.hourlyRate as hourlyRate,
       wcc.id as defaultWorkCategoryId,
       wcc.categoryName as defaultWorkCategoryName,
-      e.worksInCommercial as worksInCommercial
+      e.preferredLocale as preferredLocale
     
     from Employee e
     join e.department d
@@ -61,6 +66,10 @@ public interface EmployeeRepository
       on bc.archivedAt is null
      and current_date between bc.validFrom and coalesce(bc.validUntil, '9999-12-31')
     
+    left join e.compensationSchemePeriods csp
+      on csp.validUntil is null and csp.archivedAt is null
+    left join csp.compensationScheme cs
+
     left join e.defaultWorkCategory wcc
     
     where e.archivedAt is null
@@ -72,6 +81,8 @@ public interface EmployeeRepository
     select
       e.id as employeeId,
       e.employeeNo as employeeNo,
+      e.firstName as firstName,
+      e.lastName as lastName,
       e.fullName as fullName,
       d.name as departmentName,
       d.id as departmentId,
@@ -85,12 +96,15 @@ public interface EmployeeRepository
       bc.categoryName as categoryName,
       bc.bonusAmount as bonusAmount,
       eb.startDate as bonusStart,
-      e.foreigner as foreigner,
+      cs.code as schemeCode,
+      cs.name as schemeName,
+      cs.allowsPerformanceBonus as allowsPerformanceBonus,
       e.mobilePhone as mobilePhone,
+      e.email as email,
       e.hourlyRate as hourlyRate,
       wcc.id as defaultWorkCategoryId,
       wcc.categoryName as defaultWorkCategoryName,
-      e.worksInCommercial as worksInCommercial
+      e.preferredLocale as preferredLocale
     from Employee e
     join e.department d
     left join EmployeeBonus eb
@@ -98,6 +112,10 @@ public interface EmployeeRepository
     left join eb.bonusCategory bc
       on bc.archivedAt is null
      and current_date between bc.validFrom and coalesce(bc.validUntil, '9999-12-31')
+    left join e.compensationSchemePeriods csp
+      on csp.validUntil is null and csp.archivedAt is null
+    left join csp.compensationScheme cs
+
     left join e.defaultWorkCategory wcc
     where e.archivedAt is null
       and e.id = :id

@@ -68,14 +68,13 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
 
         return employeeRepository.saveAndFlush(Employee.builder()
                 .department(department)
-                .fullName("Test Employee " + n)
+                .firstName("Test").lastName("Employee " + n)
                 .employeeNo("IT-EMP-" + n)
                 .employmentStartDate(LocalDate.of(2020, 1, 1))
-                .foreigner(false)
                 .active(true)
                 .normGraceDays(30)
                 .transportAllowanceMode("AUTO")
-                .worksInCommercial(false)
+                
                 .preferredLocale("sr-Latn")
                 .build());
     }

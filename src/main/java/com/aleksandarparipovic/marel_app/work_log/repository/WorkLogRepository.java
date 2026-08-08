@@ -18,6 +18,31 @@ import java.util.List;
 @Repository
 public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpecificationExecutor<WorkLog> {
 
+    /**
+     * Whether this employee has any work log of a WORK category.
+     *
+     * <p>Asked before the employment start date may be moved: once real work is
+     * recorded, the start date is no longer a free-standing field but the anchor
+     * of everything calculated after it.
+     *
+     * <p>Deliberately NOT filtered by {@code wl.is_active}: a log that was
+     * entered and later deactivated still means work was recorded against this
+     * employee, and re-opening the date on the strength of a deletion is the
+     * wrong direction to be lenient in. The SOURCE category is the one asked —
+     * what the employee actually worked, not a night/weekend remap of it.
+     */
+    @Query(value = """
+    SELECT EXISTS (
+        SELECT 1
+        FROM work_logs wl
+        JOIN work_shifts ws ON ws.id = wl.work_shift_id
+        JOIN work_code_categories wcc ON wcc.id = wl.work_code_category_id
+        WHERE ws.employee_id = :employeeId
+          AND upper(wcc.type) = 'WORK'
+    )
+    """, nativeQuery = true)
+    boolean existsWorkTypeLogForEmployee(@Param("employeeId") Long employeeId);
+
     @Query(value = """
     SELECT
         wl.id AS id, wl.work_shift_id AS shiftId,

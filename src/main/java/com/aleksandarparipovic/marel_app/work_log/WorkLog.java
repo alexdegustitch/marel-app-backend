@@ -7,6 +7,8 @@ import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.WorkCodeCategorySchemeRule;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
 import jakarta.persistence.*;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -84,7 +86,11 @@ public class WorkLog {
     @Column(name = "end_at", nullable = false)
     private OffsetDateTime endAt;
 
-    // Generated column
+    // Generated column. @Generated makes Hibernate SELECT it back after the write:
+    // without it a freshly saved log carries null here for the rest of the
+    // session, and anything reading it in the same transaction — the analytics
+    // fact sync does — writes that null on. Same fix as User.fullName.
+    @Generated(event = {EventType.INSERT, EventType.UPDATE})
     @Column(name = "duration_min", insertable = false, updatable = false)
     private Integer durationMin;
 
@@ -100,7 +106,9 @@ public class WorkLog {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
-    // Generated column
+    // Generated column — read back for the same reason as duration_min above.
+    // This one also feeds the performance rate, so a null would measure as 100 %.
+    @Generated(event = {EventType.INSERT, EventType.UPDATE})
     @Column(name = "hourly_output", insertable = false, updatable = false)
     private BigDecimal hourlyOutput;
 

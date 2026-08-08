@@ -5,12 +5,15 @@ import com.aleksandarparipovic.marel_app.department.Department;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee.specification.EmployeeJoinContext;
+import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationScheme;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
+import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistory;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import jakarta.persistence.criteria.*;
+import jakarta.persistence.criteria.Nulls;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +50,7 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
         Join<Employee, EmployeeBonus> activeBonusJoin = joins.activeBonus(root, cb);
         Join<EmployeeBonus, BonusCategory> bonusCategoryJoin = joins.bonusCategory(root, cb);
         Join<Employee, WorkCodeCategory> workCategoryJoin = root.join("defaultWorkCategory", JoinType.LEFT);
+        Join<EmployeeCompensationSchemeHistory, CompensationScheme> schemeJoin = joins.scheme(root, cb);
 
         // Select distinct employees with their bonus info (construct DTO)
         query.distinct(true);
@@ -54,6 +58,8 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                 EmployeeWithBonusView.class,
                 root.get("id"),
                 root.get("employeeNo"),
+                root.get("firstName"),
+                root.get("lastName"),
                 root.get("fullName"),
                 departmentJoin.get("name"),
                 departmentJoin.get("id"),
@@ -67,12 +73,15 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                 bonusCategoryJoin.get("categoryName"),
                 bonusCategoryJoin.get("bonusAmount"),
                 activeBonusJoin.get("startDate"),
-                root.get("foreigner"),
+                schemeJoin.get("code"),
+                schemeJoin.get("name"),
+                schemeJoin.get("allowsPerformanceBonus"),
                 root.get("mobilePhone"),
+                root.get("email"),
                 root.get("hourlyRate"),
                 workCategoryJoin.get("id"),
                 workCategoryJoin.get("categoryName"),
-                root.get("worksInCommercial")
+                root.get("preferredLocale")
         ));
 
         // Apply sorting if specified in the pageable
@@ -119,6 +128,7 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
         return new PageImpl<>(content, pageable, totalCount);
     }
 
+
     @Override
     public <T> Page<T> searchWithProjection(Specification<Employee> spec, Pageable pageable, Class<T> projectionType) {
         CriteriaBuilder cb = em.getCriteriaBuilder();
@@ -131,6 +141,7 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
         Join<Employee, EmployeeBonus> activeBonusJoin = joins.activeBonus(root, cb);
         Join<EmployeeBonus, BonusCategory> bonusCategoryJoin = joins.bonusCategory(root, cb);
         Join<Employee, WorkCodeCategory> workCategoryJoin = root.join("defaultWorkCategory", JoinType.LEFT);
+        Join<EmployeeCompensationSchemeHistory, CompensationScheme> schemeJoin = joins.scheme(root, cb);
 
         // Apply filters
         if (spec != null) {
@@ -144,6 +155,8 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                     projectionType,
                     root.get("id"),
                     root.get("employeeNo"),
+                    root.get("firstName"),
+                    root.get("lastName"),
                     root.get("fullName"),
                     departmentJoin.get("name"),
                     departmentJoin.get("id"),
@@ -157,12 +170,15 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                     bonusCategoryJoin.get("categoryName"),
                     bonusCategoryJoin.get("bonusAmount"),
                     activeBonusJoin.get("startDate"),
-                    root.get("foreigner"),
+                    schemeJoin.get("code"),
+                    schemeJoin.get("name"),
+                    schemeJoin.get("allowsPerformanceBonus"),
                     root.get("mobilePhone"),
+                    root.get("email"),
                     root.get("hourlyRate"),
                     workCategoryJoin.get("id"),
                     workCategoryJoin.get("categoryName"),
-                    root.get("worksInCommercial")
+                    root.get("preferredLocale")
             ));
         } else {
             throw new UnsupportedOperationException("Unsupported projection type: " + projectionType.getName());
@@ -180,20 +196,36 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                     case "departmentId" -> sortExpr = departmentJoin.get("id");
                     case "categoryNo" -> sortExpr = bonusCategoryJoin.get("categoryNo");
                     case "categoryName" -> sortExpr = bonusCategoryJoin.get("categoryName");
-                    case "bonusAmount" -> {
-                        Path<Number> path = bonusCategoryJoin.get("bonusAmount");
-                        sortExpr = order.isAscending() ? cb.coalesce(path, Integer.MAX_VALUE) : cb.coalesce(path, Integer.MIN_VALUE);
-                    }
+                    case "bonusAmount" -> sortExpr = bonusCategoryJoin.get("bonusAmount");
                     case "bonusStart" -> sortExpr = activeBonusJoin.get("startDate");
                     case "transportAllowanceRsd" -> {
-                        Path<Number> path = root.get("transportAllowanceRsd");
-                        sortExpr = order.isAscending() ? cb.coalesce(path, Integer.MAX_VALUE) : cb.coalesce(path, Integer.MIN_VALUE);
+                        // Everyone on a FIXED allowance first, ordered by amount;
+                        // the AUTO ones after them, since they have no amount to
+                        // compare. 'FIXED' > 'AUTO' as text, so DESC on the mode
+                        // gives that grouping in BOTH directions — the people
+                        // without a fixed figure stay at the bottom either way.
+                        orders.add(cb.desc(root.get("transportAllowanceMode")));
+                        Path<Number> amount = root.get("transportAllowanceRsd");
+                        orders.add(order.isAscending()
+                                ? cb.asc(amount, Nulls.LAST)
+                                : cb.desc(amount, Nulls.LAST));
+                        continue;
                     }
                     case "defaultWorkCategoryName" -> sortExpr = workCategoryJoin.get("categoryName");
                     default -> sortExpr = root.get(order.getProperty());
                 }
 
-                orders.add(order.isAscending() ? cb.asc(sortExpr) : cb.desc(sortExpr));
+                // NULLS LAST in BOTH directions: an employee with no bonus
+                // category belongs at the bottom whichever way the column is
+                // sorted, not floated to the top by a descending sort.
+                //
+                // The JPA 3.2 Nulls overload, NOT coalesce(): this query is
+                // SELECT DISTINCT, and Postgres refuses an ORDER BY expression
+                // that is not in the select list — which is exactly what the
+                // earlier coalesce() did.
+                orders.add(order.isAscending()
+                        ? cb.asc(sortExpr, Nulls.LAST)
+                        : cb.desc(sortExpr, Nulls.LAST));
             }
 
             query.orderBy(orders);

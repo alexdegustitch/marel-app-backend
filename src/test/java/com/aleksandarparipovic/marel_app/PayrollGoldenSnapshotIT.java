@@ -10,6 +10,7 @@ import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentRep
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentService;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.dto.PayrollAdjustmentCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_calculation.PayrollCalculatorRegistry;
+import com.aleksandarparipovic.marel_app.payroll_calculation.calculators.TransportAllowanceCalculator;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategoryRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemService;
@@ -75,14 +76,32 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     @Autowired private PayrollAdjustmentService payrollAdjustmentService;
     @Autowired private EntityManager entityManager;
 
-    /** The exact rule from decision D3, run as the calculator will run it in phase 3. */
+    /**
+     * The transport counting rule, restated here independently of the calculator.
+     *
+     * <p>Deliberately a second copy: this suite exists to notice when the payroll
+     * changes, and a helper that called the production query would agree with it
+     * by construction and notice nothing.
+     *
+     * <p>One unit per ARRIVAL, not per shift — worked shifts less than
+     * {@code TransportAllowanceCalculator.ARRIVAL_GAP_MINUTES} apart are one
+     * journey. See {@code DailyReportRepository.countQualifyingArrivals}.
+     */
     private static final String TRANSPORT_UNITS_SQL = """
+            WITH shifts AS (
+                SELECT ws.start_at,
+                       lag(ws.end_at) OVER (ORDER BY ws.start_at, ws.end_at) AS previous_end
+                FROM daily_reports dr
+                JOIN work_shifts ws ON ws.id = dr.work_shift_id
+                WHERE dr.employee_id = :employeeId
+                  AND dr.work_date BETWEEN :periodStart AND :periodEnd
+                  AND dr.total_work_minutes > 0
+                  AND dr.archived_at IS NULL
+            )
             SELECT count(*)
-            FROM daily_reports dr
-            WHERE dr.employee_id = :employeeId
-              AND dr.work_date BETWEEN :periodStart AND :periodEnd
-              AND dr.total_work_minutes > 0
-              AND dr.archived_at IS NULL
+            FROM shifts
+            WHERE previous_end IS NULL
+               OR start_at - previous_end > make_interval(mins => :gapMinutes)
             """;
 
     /**
@@ -165,6 +184,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
                 .setParameter("employeeId", employee.getId())
                 .setParameter("periodStart", from)
                 .setParameter("periodEnd", to)
+                .setParameter("gapMinutes", TransportAllowanceCalculator.ARRIVAL_GAP_MINUTES)
                 .getSingleResult()).longValue();
     }
 
@@ -371,7 +391,6 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     void foreignEmployee() {
         var scenario = fixture.scenario()
                 .scheme(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT)
-                .foreigner(true)
                 .denyAdjustment("MEAL_ALLOWANCE", "TRANSPORT_ALLOWANCE")
                 .build();
 
@@ -415,7 +434,6 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         var scenario = fixture.scenario()
                 .scheme("IT-COMMERCIAL")
-                .commercial(true)
                 .build();
 
         PayrollRunItem item = calculate(scenario);
@@ -600,7 +618,6 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     void remappedSourceCategoryIsNotPayable() {
         var scenario = fixture.scenario()
                 .scheme(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT)
-                .foreigner(true)
                 .build();
 
         // Booked on the source, paid on the target.
@@ -824,20 +841,25 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     // ═══ 15. Transport actually computes now (phase 3) ══════════════════════
 
     @Test
-    @DisplayName("15. PER-DAY mode: worked days x the company rate")
+    @DisplayName("15. PER-ARRIVAL mode: journeys to work x the company rate")
     void transportIsPaidPerWorkedDay() {
         var scenario = fixture.scenario().build();
 
-        // Three shift records, one of them with no work in it.
+        // Three shift records on three different days, one of them with no work in
+        // it. Each is a separate journey — the gaps are sixteen hours.
         fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 3), 6, 480, 450);
         fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 4), 6, 480, 470);
         fixture.dailyReport(scenario.employee(), LocalDate.of(2026, 9, 5), 6, 480, 0);
 
         PayrollRunItem item = calculate(scenario);
 
-        // 2 worked days x 350 (the fixture's company rate). The zero-work shift is
-        // not a day worked. This is the money risk R1 is about: the line was
-        // structurally 0 before the calculator existed.
+        // 2 arrivals x 350 (the fixture's company rate). The zero-work shift is not
+        // a journey. This is the money risk R1 is about: the line was structurally
+        // 0 before the calculator existed.
+        //
+        // These figures are UNCHANGED by the move from per-shift to per-arrival
+        // counting: one shift a day cannot chain with anything. Only a day with two
+        // shifts can, and that is TransportPerArrivalIT's subject.
         assertThat(transportLine(item).getSystemQuantity()).isEqualByComparingTo("2");
         assertThat(transportLine(item).getSystemUnitAmount()).isEqualByComparingTo("350.00");
         assertThat(lineAmount(item, "TRANSPORT_ALLOWANCE")).isEqualByComparingTo("700.00");
@@ -846,7 +868,10 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "TRANSPORT_ALLOWANCE")
                 .orElseThrow().getCalculationInputs())
-                .containsEntry("mode", "PER_WORKED_DAY")
+                .containsEntry("mode", "PER_ARRIVAL")
+                .containsEntry("arrivals", 2)
+                // Kept under the old key as well, so a screen reading either one
+                // still finds the number.
                 .containsEntry("workedDays", 2);
     }
 
@@ -1029,18 +1054,19 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
 
         PayrollRunItem item = calculate(march);
 
-        // March is before the fixed amount begins, so it falls to the per-day mode
-        // and is paid 1 x 350 — NOT nothing.
+        // March is before the fixed amount begins, so it falls to the per-arrival
+        // mode and is paid 1 x 350 — NOT nothing.
         //
-        // ⚠️ OPEN-15: the per-day mode reads no per-employee value, so no start date
-        // can hold it back. Every historical month in which somebody worked now
-        // gains transport the next time it is opened. Locking closed months is the
-        // only control for that.
+        // OPEN-15 is closed: 2026-09-10-01 gave the per-arrival mode a dated
+        // per-employee entitlement, and 2026-09-13-01 backdated it to 2025-01-01 on
+        // the owner's instruction. A month is now paid because the employee was
+        // entitled on that date, not because nothing said otherwise. The fixture
+        // grants the entitlement, which is why this month is paid at all.
         assertThat(lineAmount(item, "TRANSPORT_ALLOWANCE")).isEqualByComparingTo("350.00");
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "TRANSPORT_ALLOWANCE")
                 .orElseThrow().getCalculationInputs())
-                .containsEntry("mode", "PER_WORKED_DAY");
+                .containsEntry("mode", "PER_ARRIVAL");
     }
 
     @Test
@@ -1059,7 +1085,6 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     void anExcludedSchemeBeatsTheRate() {
         var scenario = fixture.scenario()
                 .scheme(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT)
-                .foreigner(true)
                 .denyAdjustment("MEAL_ALLOWANCE", "TRANSPORT_ALLOWANCE")
                 .build();
 

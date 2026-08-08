@@ -1,7 +1,9 @@
 package com.aleksandarparipovic.marel_app.employee;
 
 import com.aleksandarparipovic.marel_app.bonus.BonusCategory;
+import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationScheme;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
+import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistory;
 import com.aleksandarparipovic.marel_app.search.EntityFieldMapper;
 import com.aleksandarparipovic.marel_app.search.JoinManager;
 import jakarta.persistence.criteria.CriteriaBuilder;
@@ -25,9 +27,14 @@ public final class EmployeeFieldMapper implements EntityFieldMapper<Employee> {
                     Map.entry("id", (root, cb, jm) -> root.get("id")),
                     Map.entry("employeeId", (root, cb, jm) -> root.get("id")),
                     Map.entry("employeeNo", (root, cb, jm) -> root.get("employeeNo")),
+                    Map.entry("firstName", (root, cb, jm) -> root.get("firstName")),
+                    Map.entry("lastName", (root, cb, jm) -> root.get("lastName")),
                     Map.entry("fullName", (root, cb, jm) -> root.get("fullName")),
                     Map.entry("notes", (root, cb, jm) -> root.get("notes")),
-                    Map.entry("foreigner", (root, cb, jm) -> root.get("foreigner")),
+                    // The scheme code, not a boolean flag: since 2026-09-19-03 there is
+                    // no is_foreigner column, and which code counts as which worker type
+                    // is a presentation decision the client makes (business rules §10).
+                    Map.entry("schemeCode", (root, cb, jm) -> activeSchemeJoin(jm, cb).get("code")),
                     Map.entry("active", (root, cb, jm) -> root.get("active")),
                     Map.entry("employmentStartDate", (root, cb, jm) -> root.get("employmentStartDate")),
                     Map.entry("employmentEndDate", (root, cb, jm) -> root.get("employmentEndDate")),
@@ -44,6 +51,16 @@ public final class EmployeeFieldMapper implements EntityFieldMapper<Employee> {
                     Map.entry("categoryName", (root, cb, jm) -> bonusCategoryJoin(jm, cb).get("categoryName")),
                     Map.entry("bonusAmount", (root, cb, jm) -> bonusCategoryJoin(jm, cb).get("bonusAmount"))
             );
+
+    private static Join<EmployeeCompensationSchemeHistory, CompensationScheme> activeSchemeJoin(
+            JoinManager<Employee> joinManager,
+            CriteriaBuilder cb
+    ) {
+        Join<Employee, EmployeeCompensationSchemeHistory> openPeriod =
+                joinManager.join("compensationSchemePeriods", JoinType.LEFT);
+        openPeriod.on(cb.and(cb.isNull(openPeriod.get("validUntil")), cb.isNull(openPeriod.get("archivedAt"))));
+        return joinManager.join(openPeriod, "compensationScheme", JoinType.LEFT);
+    }
 
     private static Join<Employee, EmployeeBonus> activeBonusJoin(
             JoinManager<Employee> joinManager,
@@ -73,6 +90,9 @@ public final class EmployeeFieldMapper implements EntityFieldMapper<Employee> {
 
     @Override
     public List<String> getGlobalSearchFields() {
+        // fullName rather than the two parts: it IS first || ' ' || last, so a
+        // contains-match on it already finds either one, and searching all three
+        // would just OR the same rows in three times.
         return List.of("employeeNo", "fullName", "departmentName", "categoryName", "notes");
     }
 }

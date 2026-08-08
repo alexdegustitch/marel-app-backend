@@ -66,9 +66,9 @@ class PayrollCategoryOrderIT extends AbstractIntegrationTest {
                         Department.builder().name("IT-DEPT-" + n).active(true).build()));
 
         Employee employee = employeeRepository.saveAndFlush(Employee.builder()
-                .department(department).fullName("Order Employee " + n).employeeNo("IT-ORD-EMP-" + n)
-                .employmentStartDate(LocalDate.of(2020, 1, 1)).foreigner(false).active(true)
-                .normGraceDays(30).transportAllowanceMode("AUTO").worksInCommercial(false)
+                .department(department).firstName("Order").lastName("Employee " + n).employeeNo("IT-ORD-EMP-" + n)
+                .employmentStartDate(LocalDate.of(2020, 1, 1)).active(true)
+                .normGraceDays(30).transportAllowanceMode("AUTO")
                 .preferredLocale("sr-Latn").build());
 
         PayrollRun run = new PayrollRun();

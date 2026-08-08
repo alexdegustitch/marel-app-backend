@@ -83,30 +83,64 @@ public class EmployeeCompensationSchemeService {
         // Locks this employee's periods for the rest of the transaction.
         List<EmployeeCompensationSchemeHistory> periods = historyRepository.lockHistoryFor(employeeId);
 
-        requireMonthBoundary(effectiveFrom, periods);
+        final LocalDate appliesFrom = normalizeToMonthBoundary(effectiveFrom, periods);
 
         EmployeeCompensationSchemeHistory covering = periods.stream()
-                .filter(p -> p.coversInclusive(effectiveFrom))
+                .filter(p -> p.coversInclusive(appliesFrom))
                 .findFirst()
                 .orElse(null);
 
-        // Anything starting on or after the new date would be orphaned or would
-        // overlap. Refuse rather than silently deleting or truncating periods the
-        // user cannot see.
-        boolean hasLaterPeriod = periods.stream()
-                .anyMatch(p -> !p.getValidFrom().isBefore(effectiveFrom));
-        if (hasLaterPeriod) {
-            throw new ConflictException(
-                    "Već postoji period obračuna koji počinje na ili posle " + effectiveFrom
-                            + ". Obrišite ili ispravite taj period pre dodavanja novog.");
+        // A period starting later does NOT block the change any more. The new
+        // period is inserted BETWEEN: the covering one is cut short before it and
+        // the new one ends the day before the next one begins.
+        //
+        // This used to refuse, on the reasoning that a later period would be
+        // orphaned. It is not — it keeps its own dates untouched; only the gap in
+        // front of it is filled. Refusing meant an employee with any future
+        // scheme change could not have an earlier month corrected at all.
+        EmployeeCompensationSchemeHistory successor = periods.stream()
+                .filter(p -> p.getValidFrom().isAfter(appliesFrom))
+                .min(java.util.Comparator.comparing(EmployeeCompensationSchemeHistory::getValidFrom))
+                .orElse(null);
+
+        // A period that starts on exactly this date is REPLACED in place: its
+        // scheme changes, its dates do not. Refusing here meant an administrator
+        // who picked the 13th — normalised to the 1st, where a period already
+        // began — was told to go and fix it by hand, with nothing on the screen
+        // to fix it with.
+        EmployeeCompensationSchemeHistory sameStart = periods.stream()
+                .filter(p -> p.getValidFrom().equals(appliesFrom))
+                .findFirst()
+                .orElse(null);
+
+        if (sameStart != null) {
+            if (sameStart.getCompensationScheme().getId().equals(scheme.getId())) {
+                throw new ConflictException(
+                        "Zaposleni već koristi način obračuna \"" + scheme.getName()
+                                + "\" od " + appliesFrom + ".");
+            }
+            sameStart.setCompensationScheme(scheme);
+            if (note != null) {
+                sameStart.setNote(note);
+            }
+            EmployeeCompensationSchemeHistory replaced = historyRepository.saveAndFlush(sameStart);
+
+            // The same invalidation the new-period path uses, not a second
+            // mechanism: a replaced period changes what that range is worth
+            // exactly as a new one does.
+            invalidateFrom(employeeId, appliesFrom, "COMPENSATION_SCHEME_CHANGE");
+
+            log.info("Employee {} scheme replaced in place from {} with {} (history id {})",
+                    employeeId, appliesFrom, scheme.getCode(), replaced.getId());
+            return replaced;
         }
 
         if (covering != null) {
             if (covering.getCompensationScheme().getId().equals(scheme.getId())) {
                 throw new ConflictException(
-                        "Zaposleni već koristi način obračuna \"" + scheme.getName() + "\" na datum " + effectiveFrom + ".");
+                        "Zaposleni već koristi način obračuna \"" + scheme.getName() + "\" na datum " + appliesFrom + ".");
             }
-            if (!covering.getValidFrom().isBefore(effectiveFrom)) {
+            if (!covering.getValidFrom().isBefore(appliesFrom)) {
                 // Closing it would produce valid_until < valid_from.
                 throw new ConflictException(
                         "Novi period mora počinjati posle " + covering.getValidFrom()
@@ -115,7 +149,7 @@ public class EmployeeCompensationSchemeService {
             // Close the open period the day before the new one starts. Inclusive
             // end date, so the two periods touch without overlapping and the
             // transition day itself already belongs to the new scheme.
-            covering.setValidUntil(effectiveFrom.minusDays(1));
+            covering.setValidUntil(appliesFrom.minusDays(1));
 
             // saveAndFlush, NOT save. Hibernate orders INSERTs before UPDATEs inside
             // a flush, and IDENTITY generation forces the INSERT out the moment the
@@ -130,15 +164,18 @@ public class EmployeeCompensationSchemeService {
                 EmployeeCompensationSchemeHistory.builder()
                         .employee(employee)
                         .compensationScheme(scheme)
-                        .validFrom(effectiveFrom)
-                        .validUntil(null)
+                        .validFrom(appliesFrom)
+                        // Ends the day before the next period, or stays open when
+                        // there is none. Without this the insert would overlap the
+                        // successor and ex_ecsh_no_overlap would reject it.
+                        .validUntil(successor == null ? null : successor.getValidFrom().minusDays(1))
                         .note(note)
                         .build());
 
-        invalidateFrom(employeeId, effectiveFrom, "COMPENSATION_SCHEME_CHANGE");
+        invalidateFrom(employeeId, appliesFrom, "COMPENSATION_SCHEME_CHANGE");
 
         log.info("Employee {} moved to compensation scheme {} from {} (history id {})",
-                employeeId, scheme.getCode(), effectiveFrom, created.getId());
+                employeeId, scheme.getCode(), appliesFrom, created.getId());
 
         return created;
     }
@@ -160,22 +197,31 @@ public class EmployeeCompensationSchemeService {
      * whatever day of the month that is — that is not a change, it is the beginning
      * of the history, and there is no earlier month for it to split.
      */
-    private void requireMonthBoundary(LocalDate effectiveFrom,
-                                      List<EmployeeCompensationSchemeHistory> periods) {
+    private LocalDate normalizeToMonthBoundary(LocalDate effectiveFrom,
+                                               List<EmployeeCompensationSchemeHistory> periods) {
         if (periods.isEmpty()) {
-            return;
+            return effectiveFrom;
         }
-        if (effectiveFrom.getDayOfMonth() != 1) {
-            throw new ConflictException(
-                    "Promena načina obračuna mora početi prvog dana u mesecu, a ne "
-                            + effectiveFrom + ". Obračunski mesec ne sme imati dva načina obračuna.");
+
+        // A payroll month must hold exactly ONE scheme — PayrollSchemeScopeService
+        // throws otherwise and the month's payslip cannot be produced at all. So a
+        // mid-month date is not refused, it is moved to the FIRST OF ITS OWN
+        // MONTH: picking the 20th of August means August is calculated under the
+        // new scheme, not September.
+        LocalDate firstOfItsMonth = effectiveFrom.withDayOfMonth(1);
+
+        // Never further back than the month being calculated now. Reaching into a
+        // closed month would re-price payroll nobody expected to move.
+        LocalDate firstOfThisMonth = LocalDate.now().withDayOfMonth(1);
+        LocalDate normalized = firstOfItsMonth.isBefore(firstOfThisMonth)
+                ? firstOfThisMonth
+                : firstOfItsMonth;
+
+        if (!normalized.equals(effectiveFrom)) {
+            log.info("Scheme change requested from {} moved to {} — a payroll month takes one scheme",
+                    effectiveFrom, normalized);
         }
-        LocalDate firstOfNextMonth = LocalDate.now().withDayOfMonth(1).plusMonths(1);
-        if (effectiveFrom.isBefore(firstOfNextMonth)) {
-            throw new ConflictException(
-                    "Promena načina obračuna može važiti najranije od " + firstOfNextMonth
-                            + ". Tekući mesec se već obračunava po postojećem načinu.");
-        }
+        return normalized;
     }
 
     /**

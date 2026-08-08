@@ -9,6 +9,7 @@ import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCatego
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
 import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecordService;
+import com.aleksandarparipovic.marel_app.employee.ProbationPolicy;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.notification.ReportNotificationService;
 import com.aleksandarparipovic.marel_app.recalc_queue.DailyRecalcQueue;
@@ -20,6 +21,7 @@ import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.WorkCodeCategoryMapping;
 import com.aleksandarparipovic.marel_app.work_code_category_mappings.repository.WorkCodeCategoryMappingRepository;
+import com.aleksandarparipovic.marel_app.work_code_category_mappings.repository.WorkCodeCategoryMappingTypeRepository;
 import com.aleksandarparipovic.marel_app.work_category_resolution.WorkCategoryResolution;
 import com.aleksandarparipovic.marel_app.work_category_resolution.WorkCategoryResolutionService;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
@@ -79,9 +81,11 @@ public class DailyRecalcService {
     private final RecalcWorkerProperties properties;
     private final MeterRegistry meterRegistry;
     private final EmployeeRepository employeeRepository;
+    private final ProbationPolicy probationPolicy;
     private final EmployeeRecordService employeeRecordService;
     private final WorkShiftRepository workShiftRepository;
     private final WorkCodeCategoryMappingRepository mappingRepository;
+    private final WorkCodeCategoryMappingTypeRepository mappingTypeRepository;
     private final ShiftRepository shiftRepository;
     private final TransactionTemplate transactionTemplate;
     private final ApplicationEventPublisher eventPublisher;
@@ -148,6 +152,24 @@ public class DailyRecalcService {
                         .employee(employee)
                         .workDate(workDate)
                         .workShift(workShift)
+                        // Zeroed explicitly, as DailyReportService.create does. The
+                        // columns are NOT NULL with a database DEFAULT, but Hibernate
+                        // names every mapped column in the INSERT, so an unset field
+                        // is sent as an explicit NULL and the default never applies —
+                        // the row is refused. fillDailyTotals overwrites all of these
+                        // moments later; they exist so the first save can happen at all.
+                        .totalShiftMinutes(0)
+                        .totalWorkMinutes(0)
+                        .totalAbsencePaidMinutes(0)
+                        .totalAbsenceUnpaidMinutes(0)
+                        .totalSickLeavePaidMinutes(0)
+                        .totalSickLeaveUnpaidMinutes(0)
+                        .totalCompensatedMinutes(0)
+                        .totalApprovedMinutes(0)
+                        .bonusEligibleMinutes(0)
+                        .totalQuantity(0)
+                        .totalScrap(0)
+                        .totalWeightedNormMinutes(BigDecimal.ZERO)
                         .calcVersion(0)
                         .version(0)
                         .createdAt(OffsetDateTime.now())
@@ -232,9 +254,20 @@ public class DailyRecalcService {
         // the category's own multiplier exactly as before.
         Map<Long, BigDecimal> schemeCoefficientByCategory = new HashMap<>();
 
+        // Resolved ONCE for the whole shift, from the shift's WORK DATE. Work done
+        // on probation is credited at 100 % however it measured — and the work
+        // date, not each log's own start, is what decides it, or a night shift
+        // starting on the last day of probation would be split across the boundary.
+        boolean onProbation = probationPolicy.isOnProbation(employeeId, workDate);
+
         List<DailyReportCategory> categories = buildCategories(
                 logs, report, nightRemap, weekendRemap, plSourceIds, plbCategory,
-                schemeContext, resolutionByLogId, schemeCoefficientByCategory);
+                schemeContext, resolutionByLogId, schemeCoefficientByCategory, onProbation);
+
+        // Recorded so a 100 % shift can say WHY it is 100 %: an employee who
+        // genuinely hit the norm exactly and one who was on probation are
+        // otherwise identical in the data.
+        report.setWasProbation(onProbation);
         if (!categories.isEmpty()) {
             categoryRepo.saveAll(categories);
         }
@@ -382,6 +415,12 @@ public class DailyRecalcService {
         if (isWeekendBonusEligible(workDate, employeeId)) {
             types.add(MAPPING_WEEKEND_BONUS);
         }
+        // Probation withholds whichever remaps say so — WEEKEND_BONUS today.
+        // Removed here rather than never added, so the registry decides which
+        // ones and this method keeps saying only WHEN each context applies.
+        if (probationPolicy.isOnProbation(employeeId, workDate)) {
+            types.removeAll(mappingTypeRepository.findCodesWithheldDuringProbation());
+        }
         return types;
     }
 
@@ -457,7 +496,8 @@ public class DailyRecalcService {
                                                        WorkCodeCategory plbCategory,
                                                        WorkCategoryResolutionService.ResolutionContext schemeContext,
                                                        Map<Long, WorkCategoryResolution> resolutionByLogId,
-                                                       Map<Long, BigDecimal> schemeCoefficientByCategory) {
+                                                       Map<Long, BigDecimal> schemeCoefficientByCategory,
+                                                       boolean onProbation) {
         List<WorkLog> filteredLogs = logs.stream()
                 .filter(wl -> wl.getWorkCode() != null)
                 .toList();
@@ -510,7 +550,7 @@ public class DailyRecalcService {
             if (category != null) {
                 recordRowCoefficient(category, rowResolutionByCategory.get(entry.getKey()),
                         schemeCoefficientByCategory);
-                result.add(buildCategoryEntry(entry.getValue(), category, report));
+                result.add(buildCategoryEntry(entry.getValue(), category, report, onProbation));
             }
         }
 
@@ -535,7 +575,7 @@ public class DailyRecalcService {
                 WorkCategoryResolution plResolution = schemeContext.resolveFor(plCategory);
                 WorkCodeCategory plFinal = categoryOf(plResolution, plCategory);
                 recordRowCoefficient(plFinal, plResolution, schemeCoefficientByCategory);
-                result.add(buildPlCategoryEntry(catLogs, plFinal, report, plMinutes));
+                result.add(buildPlCategoryEntry(catLogs, plFinal, report, plMinutes, onProbation));
             }
 
             if (plbMinutes > 0 && plbCategory != null) {
@@ -739,12 +779,13 @@ public class DailyRecalcService {
         return current;
     }
 
-    private DailyReportCategory buildCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category, DailyReport report) {
+    private DailyReportCategory buildCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category,
+                                                   DailyReport report, boolean onProbation) {
         int totalMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
         int totalQuantity = catLogs.stream().mapToInt(wl -> safeInt(wl.getQuantity())).sum();
         int totalScrap = catLogs.stream().mapToInt(wl -> safeInt(wl.getScrap())).sum();
 
-        BigDecimal[] rates = computeWeightedRates(catLogs);
+        BigDecimal[] rates = computeWeightedRates(catLogs, onProbation);
         BigDecimal performanceCoefficient = totalMinutes > 0
                 ? rates[0].divide(BigDecimal.valueOf(totalMinutes), 6, RoundingMode.HALF_UP)
                         .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
@@ -772,12 +813,13 @@ public class DailyRecalcService {
     }
 
     private DailyReportCategory buildPlCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category,
-                                                      DailyReport report, int reducedMinutes) {
+                                                      DailyReport report, int reducedMinutes,
+                                                     boolean onProbation) {
         int totalQuantity = catLogs.stream().mapToInt(wl -> safeInt(wl.getQuantity())).sum();
         int totalScrap = catLogs.stream().mapToInt(wl -> safeInt(wl.getScrap())).sum();
         int originalMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
 
-        BigDecimal[] rates = computeWeightedRates(catLogs);
+        BigDecimal[] rates = computeWeightedRates(catLogs, onProbation);
         BigDecimal performanceCoefficient = originalMinutes > 0
                 ? rates[0].divide(BigDecimal.valueOf(originalMinutes), 6, RoundingMode.HALF_UP)
                         .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
@@ -824,14 +866,27 @@ public class DailyRecalcService {
                 .build();
     }
 
-    private BigDecimal[] computeWeightedRates(List<WorkLog> logs) {
+    /**
+     * @param onProbation resolved ONCE for the shift by the caller. Work done on
+     *   probation is credited at 100 %, and the paid rate comes from
+     *   {@link WorkLogPerformanceCalculator#calculateApprovedPerformanceRate}
+     *   rather than being recomputed here.
+     *
+     *   <p>This method used to reimplement {@code rate.min(ceiling)} inline, which
+     *   made the payroll and the analytics two copies of one rule. They had not
+     *   diverged yet only because nothing had changed the rule since.
+     */
+    private BigDecimal[] computeWeightedRates(List<WorkLog> logs, boolean onProbation) {
         BigDecimal weightedRate = BigDecimal.ZERO;
         BigDecimal weightedApprovedRate = BigDecimal.ZERO;
         for (WorkLog wl : logs) {
             int duration = safeInt(wl.getDurationMin());
             if (duration <= 0) continue;
+            // The MEASURED rate is unchanged by probation and is what the log,
+            // the report and the payslip all still show as the real figure.
             BigDecimal perfRate = performanceCalculator.calculatePerformanceRate(wl);
-            BigDecimal approvedRate = perfRate.min(appSettingService.getMaxEfficiencyPercentAt(wl.getStartAt()));
+            BigDecimal approvedRate =
+                    performanceCalculator.calculateApprovedPerformanceRate(wl, onProbation);
             weightedRate = weightedRate.add(perfRate.multiply(BigDecimal.valueOf(duration)));
             weightedApprovedRate = weightedApprovedRate.add(approvedRate.multiply(BigDecimal.valueOf(duration)));
         }

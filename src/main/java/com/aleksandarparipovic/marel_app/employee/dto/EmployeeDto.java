@@ -9,6 +9,9 @@ public class EmployeeDto {
 
     private Long id;
     private String employeeNo;
+    private String firstName;
+    private String lastName;
+    /** Derived from the two parts by the database; never sent back on a write. */
     private String fullName;
 
     private Long departmentId;
@@ -18,7 +21,6 @@ public class EmployeeDto {
     private LocalDate employmentEndDate;
 
     private boolean active;
-    private boolean foreigner;
 
     private Integer normGraceDays;
     private LocalDate probationEndDate;
@@ -28,10 +30,10 @@ public class EmployeeDto {
     private String notes;
 
     private String mobilePhone;
+    private String email;
     private BigDecimal hourlyRate;
     private Long defaultWorkCategoryId;
     private String defaultWorkCategoryName;
-    private boolean worksInCommercial;
 
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

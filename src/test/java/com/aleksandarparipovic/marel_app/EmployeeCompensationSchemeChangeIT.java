@@ -130,33 +130,38 @@ class EmployeeCompensationSchemeChangeIT extends AbstractIntegrationTest {
     // ── D1: a change lands on the first of a month, and not this one ────────
 
     @Test
-    @DisplayName("13. a mid-month date is refused rather than snapped forward")
-    void aMidMonthDateIsRefused() {
+    @DisplayName("13. a mid-month date is moved to the first of the following month")
+    void aMidMonthDateIsMoved() {
         Employee employee = anEmployeeOnStandard();
 
-        // "from 15 September" and "from 1 October" are different requests. Snapping
-        // one into the other silently would mean the confirmation screen shows a
-        // date the system did not use.
-        assertThatThrownBy(() -> schemeService.changeScheme(employee.getId(),
+        // CHANGED BY OWNER DECISION. This used to refuse, on the argument that
+        // "from 15 September" and "from 1 October" are different requests and
+        // snapping one into the other SILENTLY would show a date the system did
+        // not use. The owner chose moving instead — and the objection is answered
+        // by the returned period: it carries the date actually used, and the
+        // screen is required to report it ("važiće od 1. oktobra").
+        EmployeeCompensationSchemeHistory created = schemeService.changeScheme(employee.getId(),
                 scheme(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT).getId(),
-                LocalDate.now().plusMonths(1).withDayOfMonth(15), null))
-                .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("prvog dana u mesecu");
+                LocalDate.now().plusMonths(1).withDayOfMonth(15), null);
+
+        assertThat(created.getValidFrom())
+                .isEqualTo(LocalDate.now().plusMonths(1).withDayOfMonth(1));
     }
 
     @Test
-    @DisplayName("13. a change dated inside the current month is refused")
-    void thisMonthIsTooLate() {
+    @DisplayName("13. a change dated inside the current month lands on its first day")
+    void thisMonthLandsOnItsFirstDay() {
         Employee employee = anEmployeeOnStandard();
 
-        // The current month is already being calculated under the existing scheme.
-        // Letting a change land inside it would give that month two schemes, which
-        // PayrollSchemeScopeService refuses to calculate at all.
-        assertThatThrownBy(() -> schemeService.changeScheme(employee.getId(),
+        // Two schemes in one month cannot be calculated, so the date moves to the
+        // first of that month — the CURRENT month is then recalculated under the
+        // new scheme, which is what the owner asked for.
+        EmployeeCompensationSchemeHistory created = schemeService.changeScheme(employee.getId(),
                 scheme(CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT).getId(),
-                LocalDate.now().withDayOfMonth(1), null))
-                .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("najranije");
+                LocalDate.now().withDayOfMonth(20), null);
+
+        assertThat(created.getValidFrom())
+                .isEqualTo(LocalDate.now().withDayOfMonth(1));
     }
 
     @Test

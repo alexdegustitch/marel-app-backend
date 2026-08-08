@@ -81,11 +81,11 @@ class PayrollValueBackfillIT extends AbstractIntegrationTest {
                     RETURNING id
                     """).getSingleResult();
             Object id = entityManager.createNativeQuery("""
-                    INSERT INTO employees (department_id, full_name, employee_no,
-                                           employment_start_date, is_foreigner, is_active,
+                    INSERT INTO employees (department_id, first_name, last_name, employee_no,
+                                           employment_start_date, is_active,
                                            created_at, norm_grace_days,
                                            transport_allowance_mode, preferred_locale)
-                    VALUES (:dept, 'IT Backfill', 'IT-BACKFILL-1', DATE '2024-01-01', FALSE,
+                    VALUES (:dept, 'IT', 'Backfill', 'IT-BACKFILL-1', DATE '2024-01-01',
                             TRUE, now(), 30, 'AUTO', 'sr-Latn')
                     RETURNING id
                     """).setParameter("dept", ((Number) departmentId).longValue()).getSingleResult();

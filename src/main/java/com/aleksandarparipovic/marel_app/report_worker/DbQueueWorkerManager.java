@@ -7,6 +7,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +21,21 @@ import java.util.concurrent.atomic.AtomicLong;
  * Dedicated background workers that continuously pull jobs from DB queue tables.
  * No in-memory task queue is used for business jobs.
  */
+/**
+ * Owns the background threads that drain the recalculation queues.
+ *
+ * <p><b>{@code app.recalc.enabled=false} keeps them from starting at all.</b>
+ * Integration tests drive {@code DailyRecalcService.processJob} themselves, and a
+ * worker running on its own timer races them for the same job — both claim it,
+ * both try to create the month's {@code employee_records} row, and one loses on
+ * {@code uq_employee_records_employee_start_date}. The outbox and delivery
+ * workers are already neutralised in the test profile for the same reason; this
+ * one had no switch.
+ *
+ * <p>Defaults to enabled, so nothing changes anywhere it is not set.
+ */
 @Component
+@ConditionalOnProperty(name = "app.recalc.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 @Slf4j
 public class DbQueueWorkerManager {

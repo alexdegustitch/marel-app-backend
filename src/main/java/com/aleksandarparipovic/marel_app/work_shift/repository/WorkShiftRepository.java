@@ -101,7 +101,10 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             SELECT e.id AS employeeId,
                    e.full_name AS employeeName,
                    e.employee_no as employeeNo,
-                   e.is_foreigner as employeeForeigner,
+                   (SELECT cs.code FROM employee_compensation_scheme_history h
+                     JOIN compensation_schemes cs ON cs.id = h.compensation_scheme_id
+                    WHERE h.employee_id = e.id AND h.valid_until IS NULL AND h.archived_at IS NULL
+                    LIMIT 1) AS employeeSchemeCode,
                    e.department_id,
                    eb.bonus_category_id,
                    MAX(ws.last_activity_at) AS updateTime
@@ -116,7 +119,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
                     OR e.full_name ILIKE '%' || :search || '%'
                     OR e.employee_no ILIKE '%' || :search || '%'
                   )
-            GROUP BY e.id, e.full_name, e.employee_no, e.is_foreigner, e.department_id, eb.bonus_category_id
+            GROUP BY e.id, e.full_name, e.employee_no, e.department_id, eb.bonus_category_id
         ) t
         JOIN departments d ON d.id = t.department_id
         JOIN bonus_categories bc ON bc.id = t.bonus_category_id

@@ -42,7 +42,21 @@ public class DailyReport {
     @Column(name = "total_shift_minutes")
     private Integer totalShiftMinutes;
 
-    @Column(name = "total_work_minutes")
+        /**
+     * TRUE when the employee was on probation on this work date, so
+     * {@code approvedPerformanceRate} was credited at 100 % rather than measured.
+     *
+     * <p>Derived by {@code DailyRecalcService} from {@code ProbationPolicy} on
+     * every recalculation — never entered by hand, and never read to decide
+     * anything. It exists so a 100 % shift can say why it is 100 %.
+     */
+    // @Builder.Default, or the builder ignores this initialiser and writes NULL
+    // into a NOT NULL column — which is exactly what happened.
+    @Column(name = "was_probation", nullable = false)
+    @Builder.Default
+    private Boolean wasProbation = false;
+
+@Column(name = "total_work_minutes")
     private Integer totalWorkMinutes;
 
     @Column(name = "total_absence_paid_minutes")

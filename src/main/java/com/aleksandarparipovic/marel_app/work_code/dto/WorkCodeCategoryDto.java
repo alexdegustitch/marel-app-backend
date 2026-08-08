@@ -27,6 +27,8 @@ public record WorkCodeCategoryDto(
         Boolean affectsMealAllowance,
         Integer displayOrder,
         Boolean baseCategory,
+        /** May this be an employee's default work category. */
+        Boolean baseOperation,
         Boolean allowsParallelWork
 ) {
 }

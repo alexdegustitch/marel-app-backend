@@ -29,6 +29,16 @@ public class WorkCodeCategoryService {
      */
     @Transactional(readOnly = true)
     public List<WorkCodeCategoryDto> getAllWorkCodeCategories(String requestedLocale) {
+        return getAllWorkCodeCategories(requestedLocale, false);
+    }
+
+    /**
+     * @param baseOperationsOnly keep only categories that may be an employee's
+     *                           DEFAULT work category. The employee form asks for
+     *                           this; the shift and operation screens do not, and
+     *                           must keep seeing every category.
+     */
+    public List<WorkCodeCategoryDto> getAllWorkCodeCategories(String requestedLocale, boolean baseOperationsOnly) {
         Map<Long, String> translations = nameResolver.translationsFor(requestedLocale);
         Map<Long, String> englishNames = AppLocales.ENGLISH.equalsIgnoreCase(AppLocales.normalize(requestedLocale))
                 ? translations
@@ -36,6 +46,7 @@ public class WorkCodeCategoryService {
 
         return workCodeCategoryRepository.findByArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
                 .stream()
+                .filter(category -> !baseOperationsOnly || Boolean.TRUE.equals(category.getBaseOperation()))
                 .map(category -> mapper.mapToDto(category, translations, englishNames))
                 .toList();
     }

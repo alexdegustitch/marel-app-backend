@@ -53,7 +53,10 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             e.full_name AS employeeName,
             e.id AS employeeId,
             e.employee_no AS employeeNo,
-            e.is_foreigner AS employeeForeigner,
+            (SELECT cs.code FROM employee_compensation_scheme_history h
+                     JOIN compensation_schemes cs ON cs.id = h.compensation_scheme_id
+                    WHERE h.employee_id = e.id AND h.valid_until IS NULL AND h.archived_at IS NULL
+                    LIMIT 1) AS employeeSchemeCode,
             d.name AS employeeDepartment,
             bc.category_no AS employeeBonus,
             MAX(eru.last_activity_at) AS updateTime,
@@ -75,7 +78,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
                 OR e.full_name ILIKE '%' || :search || '%'
                 OR e.employee_no ILIKE '%' || :search || '%'
               )
-        GROUP BY er.id, e.full_name, e.id, e.employee_no, e.is_foreigner, d.name, bc.category_no,
+        GROUP BY er.id, e.full_name, e.id, e.employee_no, d.name, bc.category_no,
                  mr.total_shift_minutes, mr.approved_performance_rate
     """,
             countQuery = """
@@ -117,9 +120,14 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             e.full_name AS employeeName,
             e.id AS employeeId,
             EXTRACT(MONTH FROM er.start_date)::int AS month,
-            EXTRACT(YEAR FROM er.start_date)::int AS year
+            EXTRACT(YEAR FROM er.start_date)::int AS year,
+            mr.approved_performance_rate AS approvedPerformanceRate,
+            mr.total_shift_minutes       AS totalShiftMinutes
         FROM employee_records er
         JOIN employees e ON e.id = er.employee_id
+        -- LEFT: a record exists before its monthly report is built, and the
+        -- employee page must still list the month rather than drop it.
+        LEFT JOIN monthly_reports mr ON mr.employee_record_id = er.id
         WHERE e.id = :employeeId
         ORDER BY er.start_date DESC
         LIMIT :size

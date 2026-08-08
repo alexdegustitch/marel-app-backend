@@ -17,6 +17,8 @@ import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistory;
 import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistoryRepository;
+import com.aleksandarparipovic.marel_app.employment_period.EmployeeEmploymentPeriod;
+import com.aleksandarparipovic.marel_app.employment_period.EmployeeEmploymentPeriodRepository;
 import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
 import com.aleksandarparipovic.marel_app.employee_record.repository.EmployeeRecordRepository;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReport;
@@ -35,10 +37,21 @@ import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategory;
 import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategoryRepository;
+import com.aleksandarparipovic.marel_app.operation.Operation;
+import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
+import com.aleksandarparipovic.marel_app.product.Product;
+import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
+import com.aleksandarparipovic.marel_app.recalc_queue.DailyRecalcQueueRepository;
+import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
+import com.aleksandarparipovic.marel_app.report_worker.DailyRecalcService;
 import com.aleksandarparipovic.marel_app.shift.Shift;
+import com.aleksandarparipovic.marel_app.work_log.WorkLog;
+import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import com.aleksandarparipovic.marel_app.shift.ShiftRepository;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
+import com.aleksandarparipovic.marel_app.work_code_category_mappings.WorkCodeCategoryMapping;
+import com.aleksandarparipovic.marel_app.work_code_category_mappings.repository.WorkCodeCategoryMappingRepository;
 import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.WorkCodeCategorySchemeRule;
 import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.repository.WorkCodeCategorySchemeRuleRepository;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
@@ -96,6 +109,7 @@ public class PayrollScenarioFixture {
     private final EmployeeRecordRepository employeeRecordRepository;
     private final CompensationSchemeRepository schemeRepository;
     private final EmployeeCompensationSchemeHistoryRepository schemeHistoryRepository;
+    private final EmployeeEmploymentPeriodRepository employmentPeriodRepository;
     private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final WorkCodeCategorySchemeRuleRepository workRuleRepository;
     private final MonthlyReportRepository monthlyReportRepository;
@@ -111,6 +125,13 @@ public class PayrollScenarioFixture {
     private final com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueService payrollValueService;
     private final WorkShiftRepository workShiftRepository;
     private final ShiftRepository shiftRepository;
+    private final ProductRepository productRepository;
+    private final OperationRepository operationRepository;
+    private final WorkLogRepository workLogRepository;
+    private final WorkCodeCategoryMappingRepository mappingRepository;
+    private final RecalcQueueService recalcQueueService;
+    private final DailyRecalcQueueRepository recalcQueueRepository;
+    private final DailyRecalcService dailyRecalcService;
     private final com.aleksandarparipovic.marel_app.bonus.BonusCategoryRepository bonusCategoryRepository;
     private final com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonusRepository employeeBonusRepository;
     private final com.aleksandarparipovic.marel_app.bonus_min_hours_rules.BonusMinHoursRuleRepository bonusMinHoursRuleRepository;
@@ -211,8 +232,6 @@ public class PayrollScenarioFixture {
         /** Since OPEN-15 the per-day mode is a dated entitlement, not a default. */
         private boolean transportPerDay = true;
         private final List<String> deniedAdjustmentCodes = new ArrayList<>();
-        private boolean foreigner = false;
-        private boolean commercial = false;
         private PayrollRun reuseRun = null;
         private boolean employeeHasHourlyRate = true;
 
@@ -230,8 +249,6 @@ public class PayrollScenarioFixture {
         /** An employee with no transport entitlement at all — neither mode. */
         public Builder withoutTransportEntitlement() { this.transportPerDay = false; return this; }
         public Builder denyAdjustment(String... codes) { this.deniedAdjustmentCodes.addAll(List.of(codes)); return this; }
-        public Builder foreigner(boolean value) { this.foreigner = value; return this; }
-        public Builder commercial(boolean value) { this.commercial = value; return this; }
 
         /** Put this employee in an existing run, so one run holds several items. */
         public Builder inRun(PayrollRun value) { this.reuseRun = value; return this; }
@@ -256,11 +273,9 @@ public class PayrollScenarioFixture {
 
             Employee employee = employeeRepository.saveAndFlush(Employee.builder()
                     .department(department(n))
-                    .fullName("Golden Employee " + n)
+                    .firstName("Golden").lastName("Employee " + n)
                     .employeeNo("IT-GOLD-" + n)
                     .employmentStartDate(LocalDate.of(2020, 1, 1))
-                    .foreigner(foreigner)
-                    .worksInCommercial(commercial)
                     .active(true)
                     .normGraceDays(30)
                     .hourlyRate(employeeHasHourlyRate ? hourlyRate : null)
@@ -282,6 +297,21 @@ public class PayrollScenarioFixture {
                                 .EmployeePayrollValueCodes.TRANSPORT_PER_DAY,
                         true, LocalDate.of(2020, 1, 1), "Golden snapshot fixture", null);
             }
+
+            // One spell of employment, for the same reason the scheme below is
+            // written: EmployeeService.createEmployee opens it in production, and
+            // this fixture builds the Employee directly. Without it ProbationPolicy
+            // finds no period and every scenario employee reads as never employed.
+            //
+            // norm_grace_days from the employee, matching openFirstPeriod: the
+            // employee-level default applies to the FIRST period only.
+            employmentPeriodRepository.saveAndFlush(EmployeeEmploymentPeriod.builder()
+                    .employee(employee)
+                    .startedOn(employee.getEmploymentStartDate())
+                    .endedOn(employee.getEmploymentEndDate())
+                    .normGraceDays(employee.getNormGraceDays() == null ? 0 : employee.getNormGraceDays())
+                    .note("Golden snapshot fixture")
+                    .build());
 
             schemeHistoryRepository.saveAndFlush(EmployeeCompensationSchemeHistory.builder()
                     .employee(employee)
@@ -661,6 +691,47 @@ public class PayrollScenarioFixture {
      * <p>The source is selectable but not payable: work booked on it lands on the
      * target, so a payslip row for the source would be a permanent zero.
      */
+    /**
+     * Gives {@code source} a contextual bonus remap of the given kind and returns
+     * the target it produces.
+     *
+     * <p>The work-code categories and their mappings are seeded by a migration
+     * that the test schema folds into the baseline as DDL only — the same reason
+     * {@link #catalogue()} recreates the adjustment catalogue — so a test that
+     * needs J → JB has to build it.
+     *
+     * @param mappingType must exist in {@code work_code_category_mapping_types};
+     *   the foreign key added by 2026-09-15-01 refuses anything else, which is the
+     *   point of that key.
+     */
+    public WorkCodeCategory bonusMapping(WorkCodeCategory source, String mappingType) {
+        int n = COUNTER.incrementAndGet();
+        WorkCodeCategory target = workCodeCategoryRepository.saveAndFlush(WorkCodeCategory.builder()
+                .categoryNo("IT-BONUS-" + n)
+                .categoryName("Bonus kategorija " + n)
+                .type("WORK")
+                .isPaid(true)
+                .normMultiplier(1.2d)
+                .isActive(true)
+                .fixedHourlyRate(false)
+                .affectsMealAllowance(true)
+                .allowsParallelWork(false)
+                .displayOrder(30)
+                .baseCategory(false)
+                .build());
+
+        mappingRepository.saveAndFlush(WorkCodeCategoryMapping.builder()
+                .sourceCategory(source)
+                .targetCategory(target)
+                .mappingType(mappingType)
+                .isActive(true)
+                .validFrom(LocalDate.of(2020, 1, 1))
+                .note("Fixture: contextual bonus remap")
+                .build());
+
+        return target;
+    }
+
     public WorkCodeCategory remap(String schemeCode, WorkCodeCategory target) {
         int n = COUNTER.incrementAndGet();
         WorkCodeCategory source = workCodeCategoryRepository.saveAndFlush(WorkCodeCategory.builder()
@@ -817,9 +888,12 @@ public class PayrollScenarioFixture {
     /**
      * One shift record plus its {@code daily_reports} row.
      *
-     * <p>The transport rule counts these: one unit per distinct work-shift record
-     * with {@code total_work_minutes > 0}. {@code uq_daily_reports_employee_shift}
-     * guarantees one row per shift, which is what makes a plain count correct.
+     * <p>The transport rule counts these, but not one-for-one: it pays per
+     * ARRIVAL, so worked shifts less than
+     * {@code TransportAllowanceCalculator.ARRIVAL_GAP_MINUTES} apart are one
+     * journey. Two shifts at 06:00 and 14:00 are one unit; 06:00 and 22:00 are
+     * two. {@code uq_daily_reports_employee_shift} guarantees one row per shift,
+     * so the shifts a day has are exactly the rows written here.
      */
     public DailyReport dailyReport(Employee employee, LocalDate workDate,
                                    int shiftMinutes, int workMinutes) {
@@ -861,6 +935,104 @@ public class PayrollScenarioFixture {
                 .isMealAllowed(workMinutes > 0)
                 .mealsCount(workMinutes > 0 ? 1 : 0)
                 .build());
+    }
+
+    // ═══ Recorded work — the input the recalculation actually reads ═════════
+    //
+    // daily_reports and daily_report_categories are DERIVED: processJob deletes
+    // and rebuilds them from work_logs every time. So a test that writes a daily
+    // report and then runs the recalculation is testing nothing — the recalc
+    // discards it and rebuilds from logs that are not there.
+    //
+    // These four methods are what let a test drive the real pipeline. They are the
+    // reason DailyRecalcService — night and weekend remaps, PLB overlap, category
+    // merging, coefficient snapshots — is testable at all.
+
+    /** A product. Only its name matters here; an operation cannot exist without one. */
+    public Product product(String name) {
+        Product product = new Product();
+        product.setProductName(name);
+        product.setProductCode("IT-P-" + COUNTER.incrementAndGet());
+        product.setActive(true);
+        return productRepository.saveAndFlush(product);
+    }
+
+    /**
+     * An operation, which is where the NORM lives.
+     *
+     * @param minNorm pieces per hour. This is the denominator of the performance
+     *   rate — {@code 100 x hourly_output / min_norm} — so without it a log
+     *   measures nothing and a test would pass for the wrong reason.
+     */
+    public Operation operation(Product product, WorkCodeCategory category, int minNorm) {
+        Operation operation = new Operation();
+        operation.setProduct(product);
+        operation.setWorkCodeCategory(category);
+        operation.setOpName("IT-OP-" + COUNTER.incrementAndGet());
+        operation.setMinNorm(minNorm);
+        operation.setMaxNorm(minNorm * 3);
+        operation.setNormRequired(true);
+        operation.setUnitsPerProduct(1);
+        operation.setNormDate(LocalDate.of(2020, 1, 1));
+        operation.setActive(true);
+        return operationRepository.saveAndFlush(operation);
+    }
+
+    /** An operation on a throwaway product, for tests that do not care which. */
+    public Operation operation(WorkCodeCategory category, int minNorm) {
+        return operation(product("IT-Product-" + COUNTER.incrementAndGet()), category, minNorm);
+    }
+
+    /**
+     * One stretch of recorded work inside a shift.
+     *
+     * <p>{@code duration_min} and {@code hourly_output} are GENERATED columns, so
+     * only the times and the quantity are written and the database derives the
+     * rest. That is also why the entity maps them {@code insertable = false} — and
+     * why the returned object does not carry them until it is read back.
+     *
+     * @param minutesIn how far into the shift this work starts
+     * @param minutes   how long it lasts
+     * @param quantity  pieces produced; with {@code minNorm} this is what decides
+     *                  the performance rate
+     */
+    public WorkLog workLog(WorkShift shift, Operation operation, WorkCodeCategory category,
+                           int minutesIn, int minutes, int quantity) {
+        OffsetDateTime start = shift.getStartAt().plusMinutes(minutesIn);
+        return workLogRepository.saveAndFlush(WorkLog.builder()
+                .workShift(shift)
+                .operation(operation)
+                .workCode(category)
+                .startAt(start)
+                .endAt(start.plusMinutes(minutes))
+                .quantity(quantity)
+                .scrap(0)
+                .isActive(true)
+                .build());
+    }
+
+    /**
+     * Runs the REAL daily recalculation for a shift, the way the worker does.
+     *
+     * <p>Through the queue and {@code processJob} rather than by calling the
+     * mapping or performance logic directly: what a test wants to know is what
+     * reaches {@code daily_reports}, and only the whole path can say that.
+     *
+     * <p>The caller must not be {@code @Transactional} — {@code processJob} commits
+     * in its own transaction and the test has to see committed state.
+     */
+    public void recalculate(WorkShift shift) {
+        recalcQueueService.enqueueDailyJob(shift, "PayrollScenarioFixture");
+
+        // CLAIMED first, exactly as DbQueueWorkerManager does. processJob refuses a
+        // job that is not IN_PROGRESS — it rechecks the claim right before writing
+        // and reschedules anything that lost it — so calling it on a PENDING row
+        // silently does nothing and the test sees no report at all.
+        //
+        // The workers themselves are off in the test profile (app.recalc.enabled),
+        // or they would claim this job first and race the test for it.
+        List<Long> claimed = recalcQueueService.claimDailyJobIds(50, "PayrollScenarioFixture");
+        claimed.forEach(dailyRecalcService::processJob);
     }
 
     /**

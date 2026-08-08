@@ -14,16 +14,16 @@ public class EmployeeEditRequest {
     private String employeeNo;
 
     @NotBlank
-    private String fullName;
+    private String firstName;
+
+    @NotBlank
+    private String lastName;
 
     @NotNull
     private Long departmentId;
 
     @NotNull
     private Long categoryId;
-
-    @NotNull
-    private Boolean foreigner;
 
     @Min(0)
     private BigDecimal transportAllowanceRsd;
@@ -37,10 +37,11 @@ public class EmployeeEditRequest {
 
     private String mobilePhone;
 
+    private String email;
+
     @Min(0)
     private BigDecimal hourlyRate;
 
     private Long defaultWorkCategoryId;
 
-    private Boolean worksInCommercial;
 }

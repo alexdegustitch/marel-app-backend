@@ -1,8 +1,10 @@
 package com.aleksandarparipovic.marel_app.employee;
 
 import com.aleksandarparipovic.marel_app.department.Department;
+import com.aleksandarparipovic.marel_app.department_head.DepartmentHeadPeriod;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeEditRequest;
 import com.aleksandarparipovic.marel_app.employee_bonus.EmployeeBonus;
+import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistory;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import jakarta.persistence.*;
 import lombok.*;
@@ -32,7 +34,31 @@ public class Employee {
     @OneToMany(mappedBy = "employee", fetch = FetchType.LAZY)
     private Set<EmployeeBonus> employeeBonuses = new HashSet<>();
 
-    @Column(name = "full_name", nullable = false)
+    @Column(name = "first_name", nullable = false, length = 120)
+    private String firstName;
+
+    @Column(name = "last_name", nullable = false, length = 120)
+    private String lastName;
+
+    /**
+     * How this worker's name is rendered, everywhere.
+     *
+     * <p>DB-generated (GENERATED ALWAYS AS first_name || ' ' || last_name) and so
+     * read-only here — the same arrangement as {@code User.fullName}. Roughly
+     * forty report, search and ORDER BY queries across payroll, employee records,
+     * work shifts and analytics read {@code employees.full_name}; deriving it in
+     * the database is what stops those from disagreeing with the name parts.
+     *
+     * <p>{@code @Generated} makes Hibernate re-read the value after an insert or
+     * update. Without it a freshly saved Employee has {@code fullName == null} for
+     * the rest of the transaction, which is exactly the bug that bit User.
+     */
+    @org.hibernate.annotations.Generated(event = {
+            org.hibernate.generator.EventType.INSERT,
+            org.hibernate.generator.EventType.UPDATE
+    })
+    @Setter(AccessLevel.NONE)
+    @Column(name = "full_name", insertable = false, updatable = false)
     private String fullName;
 
     @Column(name = "employee_no", nullable = false, unique = true)
@@ -48,16 +74,51 @@ public class Employee {
     private String notes;
 
     /**
-     * A personnel attribute, not a payroll rule and not a language.
-     *
-     * <p>Nothing in the calculation path reads this. Which categories an employee
-     * may use and what coefficient applies comes from their compensation scheme
-     * (see {@code employee_compensation_scheme_history}); which language their
-     * documents are in comes from {@link #preferredLocale}. It was used once, by
-     * the {@code 2026-07-27-02} migration, to seed the initial scheme periods.
+     * Optional contact address. The only one of the three columns added by
+     * {@code 2026-09-19-01} that this application shows or edits.
      */
-    @Column(name = "is_foreigner", nullable = false)
-    private boolean foreigner;
+    @Column(name = "email", length = 255)
+    private String email;
+
+    /**
+     * Personal identification number, 13 digits.
+     *
+     * <p>Held so payroll can eventually produce a tax filing. Deliberately NOT
+     * carried on any DTO: the employee list is visible to every administrator,
+     * and who may read a JMBG is a decision nobody has made yet. Put it on a
+     * screen only together with that decision.
+     */
+    @Column(name = "jmbg", length = 13)
+    private String jmbg;
+
+    /**
+     * Account a salary is paid into. Same access reasoning as {@link #jmbg} —
+     * stored, not exposed.
+     */
+    @Column(name = "bank_account", length = 34)
+    private String bankAccount;
+
+    /**
+     * Every compensation-scheme period this employee has had.
+     *
+     * <p>Mapped so "what kind of worker is this" can be answered by a JOIN rather
+     * than by a column. Since {@code 2026-09-19-03} there is no
+     * {@code is_foreigner} or {@code works_in_commercial}: the scheme is the only
+     * source, and the traits the screens show are derived from it.
+     */
+    @OneToMany(mappedBy = "employee", fetch = FetchType.LAZY)
+    private Set<EmployeeCompensationSchemeHistory> compensationSchemePeriods = new HashSet<>();
+
+    /**
+     * Every spell this employee has spent heading a department.
+     *
+     * <p>Mapped so a correlated subquery can reach it through {@code correlate()}.
+     * Comparing {@code head.get("employee")} to the outer root instead produced
+     * "Could not locate TableGroup" at runtime — Hibernate 6 cannot resolve that
+     * shape inside a constructor select.
+     */
+    @OneToMany(mappedBy = "employee", fetch = FetchType.LAZY)
+    private Set<DepartmentHeadPeriod> departmentHeadPeriods = new HashSet<>();
 
     /**
      * Language for documents produced FOR this employee, currently the payroll
@@ -96,8 +157,6 @@ public class Employee {
     @JoinColumn(name = "default_work_category_id")
     private WorkCodeCategory defaultWorkCategory;
 
-    @Column(name = "works_in_commercial", nullable = false)
-    private boolean worksInCommercial = false;
 
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;
@@ -134,12 +193,16 @@ public class Employee {
             this.employeeNo = request.getEmployeeNo();
         }
 
-        if (!Objects.equals(this.fullName, request.getFullName())) {
-            this.fullName = request.getFullName();
+        if (!Objects.equals(this.firstName, request.getFirstName())) {
+            this.firstName = request.getFirstName();
         }
 
-        if (!Objects.equals(this.foreigner, request.getForeigner())) {
-            this.foreigner = request.getForeigner();
+        if (!Objects.equals(this.lastName, request.getLastName())) {
+            this.lastName = request.getLastName();
+        }
+
+        if (!Objects.equals(this.email, request.getEmail())) {
+            this.email = request.getEmail();
         }
 
         if (!Objects.equals(this.transportAllowanceRsd, request.getTransportAllowanceRsd())) {
@@ -167,9 +230,6 @@ public class Employee {
             this.hourlyRate = request.getHourlyRate();
         }
 
-        if (!Objects.equals(this.worksInCommercial, request.getWorksInCommercial())) {
-            this.worksInCommercial = request.getWorksInCommercial() != null ? request.getWorksInCommercial() : this.worksInCommercial;
-        }
     }
 
 

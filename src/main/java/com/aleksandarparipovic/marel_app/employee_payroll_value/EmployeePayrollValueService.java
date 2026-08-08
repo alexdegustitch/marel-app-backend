@@ -41,6 +41,7 @@ import java.util.Set;
 public class EmployeePayrollValueService {
 
     private final EmployeePayrollValueHistoryRepository historyRepository;
+    private final com.aleksandarparipovic.marel_app.recalc_queue.AffectedMonthsRecalculator recalculator;
     private final EmployeePayrollValueDefinitionRepository definitionRepository;
     private final EmployeeRepository employeeRepository;
 
@@ -156,8 +157,18 @@ public class EmployeePayrollValueService {
         if (numericValue.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("Vrednost ne može biti negativna.");
         }
-        return changePeriod(employeeId, code, "NUMERIC", numericValue, null,
+        EmployeePayrollValueHistory changed = changePeriod(employeeId, code, "NUMERIC", numericValue, null,
                 effectiveFrom, note, changedBy);
+
+        // These values PRICE work: a rate or an entitlement changed from a past
+        // date leaves the old numbers on payslips already calculated. Locked
+        // months are left alone and the change stands regardless — the caller
+        // reads recalculationResult() to tell the user which were skipped.
+        recalculator.recalculate(
+                changed.getEmployee(), effectiveFrom, null,
+                "Vrednost " + code + " promenjena od " + effectiveFrom);
+
+        return changed;
     }
 
     /**

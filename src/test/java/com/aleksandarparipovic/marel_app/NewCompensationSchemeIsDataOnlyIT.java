@@ -105,9 +105,9 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
                 .orElseGet(() -> departmentRepository.saveAndFlush(
                         Department.builder().name("IT-DEPT-" + n).active(true).build()));
         return employeeRepository.saveAndFlush(Employee.builder()
-                .department(department).fullName("Sezonac " + n).employeeNo("IT-SEZ-EMP-" + n)
-                .employmentStartDate(LocalDate.of(2020, 1, 1)).foreigner(false).active(true)
-                .normGraceDays(30).transportAllowanceMode("AUTO").worksInCommercial(false)
+                .department(department).firstName("Sezonac").lastName("Broj " + n).employeeNo("IT-SEZ-EMP-" + n)
+                .employmentStartDate(LocalDate.of(2020, 1, 1)).active(true)
+                .normGraceDays(30).transportAllowanceMode("AUTO")
                 .preferredLocale("sr-Latn").build());
     }
 

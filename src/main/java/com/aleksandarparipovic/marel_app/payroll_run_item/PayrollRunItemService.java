@@ -537,7 +537,8 @@ public class PayrollRunItemService {
                 summary,
                 categories,
                 adjustments,
-                permissions
+                permissions,
+                locale
         );
     }
 

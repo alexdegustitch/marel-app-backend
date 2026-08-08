@@ -31,8 +31,23 @@ public class RecalcQueueService {
     @Transactional
     public void enqueueDailyJob(WorkShift workShift, String reason) {
         em.createNativeQuery(
+                        // TWO unique indexes guard this table and only ONE can be an
+                        // ON CONFLICT target: uq_daily_report_shift on work_shift_id,
+                        // and uq_daily_queue_pending on (employee_id, work_date)
+                        // WHERE status = 'PENDING'. An employee with two shifts on
+                        // one day therefore blew up on the second insert — the
+                        // conflict was on a DIFFERENT row than the target.
+                        //
+                        // The SELECT ... WHERE NOT EXISTS skips the insert when this
+                        // employee-day is already queued by another shift. That is
+                        // not a workaround for the index, it is what the index means:
+                        // the daily recalculation rebuilds the whole DAY, so a second
+                        // job for the same day would recompute the same thing twice.
                         "INSERT INTO daily_report_recalc_queue (employee_id, work_shift_id, work_date, reason, status, requested_at, retry_count, last_error, claimed_at, claimed_by, version) " +
-                                "VALUES (?1, ?2, ?3, ?4, 'PENDING', NOW(), 0, NULL, NULL, NULL, 1) " +
+                                "SELECT ?1, ?2, ?3, ?4, 'PENDING', NOW(), 0, NULL, NULL, NULL, 1 " +
+                                "WHERE NOT EXISTS (SELECT 1 FROM daily_report_recalc_queue q " +
+                                "                  WHERE q.employee_id = ?1 AND q.work_date = ?3 " +
+                                "                    AND q.status = 'PENDING' AND q.work_shift_id <> ?2) " +
                                 "ON CONFLICT (work_shift_id) DO UPDATE SET " +
                                 "reason = EXCLUDED.reason, " +
                                 "requested_at = NOW(), " +

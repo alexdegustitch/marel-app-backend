@@ -15,6 +15,9 @@ public class EmployeeDetailDto {
 
     private final Long id;
     private final String employeeNo;
+    private final String firstName;
+    private final String lastName;
+    /** Derived from the two parts by the database; never sent back on a write. */
     private final String fullName;
 
     private final Long departmentId;
@@ -24,8 +27,25 @@ public class EmployeeDetailDto {
     private final LocalDate employmentEndDate;
     private final LocalDate probationEndDate;
     private final boolean active;
-    private final boolean foreigner;
     private final Integer normGraceDays;
+
+    /**
+     * Whether the employment start date may still be moved — false once any WORK
+     * log exists for the employee.
+     *
+     * <p>Sent so the screen can state the reason in place instead of offering an
+     * edit the server will refuse. The server stays the authority: this is a
+     * hint, not the check.
+     */
+    private final boolean employmentStartEditable;
+    /** Whether probation is still running, and therefore still editable. */
+    private final boolean probationEditable;
+    /**
+     * The shortest probation that can still be set: the days already served.
+     * Anything less would retroactively un-probation days already worked. Null
+     * when probation is not editable at all.
+     */
+    private final Integer minNormGraceDays;
 
     private final BigDecimal transportAllowanceRsd;
     private final String transportAllowanceMode;
@@ -41,7 +61,18 @@ public class EmployeeDetailDto {
     private final Long defaultWorkCategoryId;
     private final String defaultWorkCategoryName;
     private final String defaultWorkCategoryNo;
-    private final boolean worksInCommercial;
+    private final String email;
+
+    /**
+     * The scheme in force today. The client decides what badge a code earns —
+     * naming a scheme in Java is what the business rules forbid (§10).
+     * allowsPerformanceBonus is the DATA that says whether a bonus category means
+     * anything for this employee, so a scheme added tomorrow behaves correctly
+     * with no code change.
+     */
+    private final String schemeCode;
+    private final String schemeName;
+    private final Boolean allowsPerformanceBonus;
     /** Document language. Never derived from {@code foreigner}. */
     private final String preferredLocale;
 
@@ -78,8 +109,23 @@ public class EmployeeDetailDto {
     }
 
     public EmployeeDetailDto(Employee e) {
+        this(e, true);
+    }
+
+    public EmployeeDetailDto(Employee e, boolean employmentStartEditable) {
+        this.employmentStartEditable = employmentStartEditable;
+
+        LocalDate today = LocalDate.now();
+        LocalDate probationEnd = e.getProbationEndDate();
+        this.probationEditable = probationEnd != null && !probationEnd.isBefore(today);
+        this.minNormGraceDays = this.probationEditable && e.getEmploymentStartDate() != null
+                ? (int) Math.max(0, java.time.temporal.ChronoUnit.DAYS.between(e.getEmploymentStartDate(), today))
+                : null;
+
         this.id = e.getId();
         this.employeeNo = e.getEmployeeNo();
+        this.firstName = e.getFirstName();
+        this.lastName = e.getLastName();
         this.fullName = e.getFullName();
 
         this.departmentId = e.getDepartment() != null ? e.getDepartment().getId() : null;
@@ -89,7 +135,6 @@ public class EmployeeDetailDto {
         this.employmentEndDate = e.getEmploymentEndDate();
         this.probationEndDate = e.getProbationEndDate();
         this.active = e.isActive();
-        this.foreigner = e.isForeigner();
         this.preferredLocale = e.getPreferredLocale();
         this.normGraceDays = e.getNormGraceDays();
 
@@ -113,7 +158,16 @@ public class EmployeeDetailDto {
         this.defaultWorkCategoryId = e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getId() : null;
         this.defaultWorkCategoryName = e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getCategoryName() : null;
         this.defaultWorkCategoryNo = e.getDefaultWorkCategory() != null ? e.getDefaultWorkCategory().getCategoryNo() : null;
-        this.worksInCommercial = e.isWorksInCommercial();
+        this.email = e.getEmail();
+
+        var openScheme = e.getCompensationSchemePeriods() == null ? null :
+                e.getCompensationSchemePeriods().stream()
+                        .filter(h -> h.getValidUntil() == null && h.getArchivedAt() == null)
+                        .findFirst()
+                        .orElse(null);
+        this.schemeCode = openScheme == null ? null : openScheme.getCompensationScheme().getCode();
+        this.schemeName = openScheme == null ? null : openScheme.getCompensationScheme().getName();
+        this.allowsPerformanceBonus = openScheme == null ? null : openScheme.getCompensationScheme().getAllowsPerformanceBonus();
 
         this.notes = e.getNotes();
         this.createdAt = e.getCreatedAt();

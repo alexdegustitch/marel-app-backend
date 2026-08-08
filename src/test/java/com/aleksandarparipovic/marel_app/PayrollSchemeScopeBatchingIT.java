@@ -109,7 +109,6 @@ class PayrollSchemeScopeBatchingIT extends AbstractIntegrationTest {
                 .inRun(run)
                 .scheme(com.aleksandarparipovic.marel_app.compensation_scheme
                         .CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT)
-                .foreigner(true)
                 .denyAdjustment("MEAL_ALLOWANCE", "TRANSPORT_ALLOWANCE")
                 .build();
 
@@ -131,7 +130,6 @@ class PayrollSchemeScopeBatchingIT extends AbstractIntegrationTest {
         var scenario = fixture.scenario()
                 .scheme(com.aleksandarparipovic.marel_app.compensation_scheme
                         .CompensationSchemeCodes.FOREIGN_FIXED_COEFFICIENT)
-                .foreigner(true)
                 .denyAdjustment("MEAL_ALLOWANCE")
                 .build();
 
