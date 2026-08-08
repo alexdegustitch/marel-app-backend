@@ -447,7 +447,15 @@ public class EmployeeService {
         Employee employee = repository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
 
-        if (req.getEmployeeNo() != null) employee.setEmployeeNo(req.getEmployeeNo());
+        // Assigned once, at creation. It is the identifier the shifts, records and
+        // payroll of this employee are filed under, and the screens print it as
+        // the thing you look somebody up by — so it is not a field that gets
+        // corrected later. Unchanged is still accepted: the employee screen
+        // sends the whole form on every save.
+        if (req.getEmployeeNo() != null && !req.getEmployeeNo().equals(employee.getEmployeeNo())) {
+            throw new IllegalArgumentException(
+                    "Šifra radnika se ne menja — dodeljuje se pri kreiranju radnika.");
+        }
         if (req.getFirstName() != null) employee.setFirstName(req.getFirstName());
         if (req.getLastName() != null) employee.setLastName(req.getLastName());
         if (req.getTransportAllowanceRsd() != null) employee.setTransportAllowanceRsd(req.getTransportAllowanceRsd());
