@@ -2,9 +2,13 @@ package com.aleksandarparipovic.marel_app.payroll_run_item;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.Immutable;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.Map;
 
 /**
  * One step of the handover between the shop floor and payroll.
@@ -25,6 +29,16 @@ import java.time.OffsetDateTime;
  */
 @Entity
 @Table(name = "payroll_run_item_handovers")
+/*
+ * Immutable to Hibernate as well as to the database.
+ *
+ * Without this, dirty checking issues an UPDATE for this row at the next flush
+ * in the same transaction — the jsonb Map cannot be compared cheaply, so it is
+ * treated as changed every time — and the append-only trigger rejects it. The
+ * trigger was doing its job; the mapping was the one making a promise it should
+ * never have made.
+ */
+@Immutable
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
@@ -62,6 +76,18 @@ public class PayrollRunItemHandover {
 
     @Column(name = "net_payable_amount")
     private BigDecimal netPayableAmount;
+
+    /**
+     * The lines as they stood: {@code {"lines":[{"c":code,"a":amount,...}]}}.
+     *
+     * <p>Payroll's question is not only "was the total different" but "which
+     * line moved after I submitted", and two totals cannot answer that. Short
+     * keys because jsonb repeats them in every row.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "payload", columnDefinition = "jsonb")
+    @Builder.Default
+    private Map<String, Object> payload = Map.of();
 
     /** Why it was sent back. Meaningful on RETURNED, optional on SUBMITTED. */
     @Column(name = "note")

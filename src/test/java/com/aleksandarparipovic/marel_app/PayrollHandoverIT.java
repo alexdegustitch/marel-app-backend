@@ -93,6 +93,22 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("the record carries every line, not only the totals")
+    void payloadCarriesTheLines() {
+        var scenario = fixture.scenario().build();
+        Long id = scenario.item().getId();
+
+        payrollRunItemService.submit(id, null);
+
+        // Payroll's question is "which line moved after I submitted", and two
+        // totals cannot answer it.
+        Object lines = handoversOf(id).getFirst().getPayload().get("lines");
+        assertThat(lines).isInstanceOf(List.class);
+        assertThat((List<?>) lines).isNotEmpty();
+        assertThat(((List<?>) lines).getFirst().toString()).contains("c=");
+    }
+
+    @Test
     @DisplayName("a month cannot be locked before it has been handed over")
     void lockRequiresTheHandover() {
         var scenario = fixture.scenario().build();

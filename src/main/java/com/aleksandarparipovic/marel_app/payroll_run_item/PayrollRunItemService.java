@@ -57,6 +57,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -539,8 +540,33 @@ public class PayrollRunItemService {
                         h.getStatusAfter(),
                         amounts ? h.getTotalNetEarnings() : null,
                         amounts ? h.getNetPayableAmount() : null,
+                        // The lines are amounts too — withholding the totals and
+                        // shipping the breakdown would hand back what was hidden.
+                        amounts ? h.getPayload() : Map.of(),
                         h.getNote()))
                 .toList();
+    }
+
+    /**
+     * Every adjustment line as it stands right now.
+     *
+     * <p>Copied, not referenced: the lines keep being recalculated afterwards,
+     * and the whole purpose of the record is to answer "which line moved after
+     * I handed it over".
+     */
+    private Map<String, Object> handoverPayload(PayrollRunItem item) {
+        List<Map<String, Object>> lines =
+                payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId()).stream()
+                        .map(a -> {
+                            Map<String, Object> line = new LinkedHashMap<>();
+                            line.put("c", a.getPayrollAdjustmentCategory().getCode());
+                            line.put("a", a.getAmount());
+                            line.put("q", a.getQuantity());
+                            line.put("u", a.getUnitAmount());
+                            return line;
+                        })
+                        .toList();
+        return Map.of("lines", lines);
     }
 
     /** Who did it, for the screen. Null id or a removed user reads as unknown. */
@@ -567,6 +593,7 @@ public class PayrollRunItemService {
                 .statusAfter(after)
                 .totalNetEarnings(item.getTotalNetEarnings())
                 .netPayableAmount(item.getNetPayableAmount())
+                .payload(handoverPayload(item))
                 .note(note == null || note.isBlank() ? null : note.trim())
                 .build());
     }
