@@ -597,16 +597,18 @@ public class PayrollRunItemService {
          * renamed, would produce a screen showing something that was never
          * submitted — precisely what the record exists to prevent.
          *
-         * Stored at TRUE values. getDetails does not apply the visibility policy
-         * (masking happens where responses are built), so a handover made by
-         * somebody who cannot see amounts still records the real ones. Who may
-         * read them back is decided on read, as everywhere else.
+         * STORED AT TRUE VALUES, which is why it is built with field access off.
+         * A supervisor who cannot see every line still hands over the whole
+         * payroll; recording only their half would make the record useless to
+         * payroll and would quietly shrink what they are later shown to have
+         * submitted. Who may read it back is decided on read, as everywhere else.
          */
         try {
             Long monthlyReportId = item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null;
             if (monthlyReportId != null) {
                 payload.put("detail", SNAPSHOT_MAPPER.convertValue(
-                        getDetails(monthlyReportId), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+                        getDetails(monthlyReportId, null, false),
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
             }
         } catch (RuntimeException ex) {
             // A handover must not fail because its snapshot could not be built.
@@ -771,6 +773,20 @@ public class PayrollRunItemService {
      */
     @Transactional
     public PayrollRunItemDetailResponse getDetails(Long monthlyReportId, String requestedLocale) {
+        return getDetails(monthlyReportId, requestedLocale, true);
+    }
+
+    /**
+     * @param applyFieldAccess false builds the document as payroll would see it,
+     *                         whoever is asking. Exactly one caller wants that:
+     *                         the handover snapshot, which must record what was
+     *                         handed over rather than what the person handing it
+     *                         over happened to be shown. Who may read that record
+     *                         back is decided on read, as everywhere else.
+     */
+    @Transactional
+    protected PayrollRunItemDetailResponse getDetails(Long monthlyReportId, String requestedLocale,
+                                                     boolean applyFieldAccess) {
         PayrollRunItem item = payrollRunItemRepository.findByMonthlyReport_Id(monthlyReportId)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found for monthlyReportId: " + monthlyReportId));
 
@@ -855,7 +871,9 @@ public class PayrollRunItemService {
          * The hidden lines never leave the server; this is not the screen
          * choosing to draw less.
          */
-        if (payrollVisibilityPolicy.isRestrictedUser()) {
+        boolean partialView = false;
+
+        if (applyFieldAccess && payrollVisibilityPolicy.isRestrictedUser()) {
             Map<String, PayrollFieldAccessService.Access> access = fieldAccessService.accessForCurrentUser();
 
             List<PayrollAdjustment> visibleEntities =
@@ -869,6 +887,9 @@ public class PayrollRunItemService {
             java.util.Set<String> visibleCodes = visibleEntities.stream()
                     .map(a -> a.getPayrollAdjustmentCategory().getCode())
                     .collect(java.util.stream.Collectors.toSet());
+
+            long shownBefore = adjustments.stream()
+                    .mapToLong(section -> section.getAdjustments().size()).sum();
 
             adjustments = adjustments.stream()
                     .map(section -> new PayrollAdjustmentSectionDto(
@@ -904,6 +925,14 @@ public class PayrollRunItemService {
                     new PayrollFieldAccessService.Access(false, false)).canView()) {
                 summary.setHourlyRate(null);
             }
+
+            // Said only when something was actually withheld. A role granted
+            // everything is not shown a warning about nothing.
+            long shownAfter = adjustments.stream()
+                    .mapToLong(section -> section.getAdjustments().size()).sum();
+            partialView = shownAfter < shownBefore
+                    || summary.getNetPayableAmount() == null
+                    || summary.getTotalNetEarnings() == null;
         }
 
         return new PayrollRunItemDetailResponse(
@@ -911,7 +940,8 @@ public class PayrollRunItemService {
                 categories,
                 adjustments,
                 permissions,
-                locale
+                locale,
+                partialView
         );
     }
 

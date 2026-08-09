@@ -58,8 +58,10 @@ public class FrozenPayrollView {
         // ── Lines ────────────────────────────────────────────────────────────
         List<Map<String, Object>> keptSections = new ArrayList<>();
         List<PayrollTotals.Line> visibleLines = new ArrayList<>();
+        long shownBefore = 0;
 
         for (Map<String, Object> section : maps(detail.get("adjustments"))) {
+            shownBefore += maps(section.get("adjustments")).size();
             List<Map<String, Object>> kept = maps(section.get("adjustments")).stream()
                     .filter(line -> access.getOrDefault(text(line.get("categoryCode")), DENIED).canView())
                     .toList();
@@ -106,6 +108,11 @@ public class FrozenPayrollView {
         if (!access.getOrDefault(PayrollFieldAccessService.FIELD_HOURLY_RATE, DENIED).canView()) {
             summary.put("hourlyRate", null);
         }
+
+        // Said only when something was actually withheld from THIS reader.
+        out.put("partialView", visibleLines.size() < shownBefore
+                || summary.get("netPayableAmount") == null
+                || summary.get("totalNetEarnings") == null);
 
         if (visibleStatus != null) {
             summary.put("status", visibleStatus);

@@ -233,6 +233,28 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
                 .isEqualByComparingTo("7777.00");
     }
 
+    @Test
+    @DisplayName("a supervisor hands over the whole payroll, not the half they can see")
+    void snapshotRecordsEverything() {
+        var scenario = fixture.scenario().build();
+        Long itemId = scenario.item().getId();
+
+        signedInAs("admin");
+        service.set("OTHER", "supervisor", true, true);
+
+        // Submitted BY the restricted reader — the case where the record could
+        // silently shrink to whatever their own screen showed.
+        signedInAs("supervisor");
+        payrollRunItemService.submit(itemId, "predato");
+
+        signedInAs("admin");
+        Long handoverId = payrollRunItemService.getHandovers(itemId).get(0).id();
+        var snapshot = payrollRunItemService.getHandoverSnapshot(handoverId).orElseThrow();
+
+        // A line the submitter cannot see is in the record all the same.
+        assertThat(visibleCodes(snapshot)).contains("MEAL_ALLOWANCE", "OTHER");
+    }
+
     private void setAmount(Long itemId, Long adjustmentId, String amount) {
         var patch = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest();
         var line = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto();

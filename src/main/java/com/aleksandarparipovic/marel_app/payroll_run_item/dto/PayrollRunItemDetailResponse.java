@@ -26,5 +26,18 @@ public class PayrollRunItemDetailResponse {
      * back together.
      */
     private final String resolvedLocale;
+
+    /**
+     * Whether this response is missing something the payroll actually contains.
+     *
+     * <p>True when per-line access dropped a line or withheld a headline figure.
+     * The totals on such a response are still correct arithmetic — the same
+     * expression with fewer terms — but they are not the payroll's totals, and
+     * the screen has to say so next to every one of them rather than let
+     * somebody quote a figure as the amount payable.
+     *
+     * <p>False, not absent, for payroll's own roles: they see everything.
+     */
+    private final boolean partialView;
 }
 
