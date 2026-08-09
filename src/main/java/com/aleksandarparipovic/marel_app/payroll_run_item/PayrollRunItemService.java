@@ -2113,66 +2113,14 @@ public class PayrollRunItemService {
         List<PayrollRunItemCategory> categories = payrollRunItemCategoryRepository
                 .findByPayrollRunItemIdWithWorkCodeCategory(item.getId());
 
-        // ── totalNetEarnings ──────────────────────────────────────────────────
-        BigDecimal categoriesSum = categories.stream()
-                .map(c -> c.getAmount() != null ? c.getAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // The arithmetic lives in PayrollTotals so a filtered view can evaluate
+        // the SAME expression over fewer lines. Two call sites, one formula.
+        PayrollTotals totals = PayrollTotals.of(categories, adjustments, item.getPreviousNetPayableAmount());
 
-        // EVERY EARNING COMES FROM ITS ADJUSTMENT ROW, ONCE.
-        //
-        // Meal and transport used to be added from item columns as well, with their
-        // adjustment rows excluded by code so the money was not counted twice. That
-        // is the double bookkeeping this phase ends: the row is the source, the
-        // columns are a mirror kept for one cycle and dropped in phase 7.
-        //
-        // Summed by IMPACT, not by section. GROSS_PLUS is exactly
-        // {MEAL_ALLOWANCE, TRANSPORT_ALLOWANCE, FIXED_SALARY, MONTHLY_BONUS, OTHER,
-        // POSITIVE_NEGATIVE_CORRECTION} — the same money as before, reached without
-        // the special cases, and without depending on which section a category was
-        // moved into for display.
-        BigDecimal earningsSum = adjustments.stream()
-                .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                        && IMPACT_GROSS_PLUS.equals(a.getPayrollAdjustmentCategory().getImpactCode()))
-                .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        BigDecimal totalNetEarnings = categoriesSum
-                .add(earningsSum)
-                .setScale(2, RoundingMode.HALF_UP);
-        item.setTotalNetEarnings(totalNetEarnings);
-
-        // total_deductions_amount is gone. It summed every DEDUCTION_MINUS line,
-        // which put PAID_PART_2 — money already paid OUT to the employee — and
-        // PHONE_CURRENT_MONTH — which is charged next month, not this one — beside
-        // the two real deductions. Displayed nowhere, which is why it was never
-        // questioned. "Ukupna odbijanja" is a figure the business defines, and then
-        // it is one sum over the lines, computed where it is shown.
-
-        // ── previouslyPaidAmount ──────────────────────────────────────────────
-        //
-        // STILL FILTERED BY SECTION, and deliberately so. Switching this side to
-        // impact codes as well would pull in PHONE_CURRENT_MONTH and
-        // PAID_PREVIOUS_PERIOD, which reach no total today — the current month's
-        // phone is deducted NEXT month as PHONE_PREVIOUS_MONTH, and
-        // PAID_PREVIOUS_PERIOD is a display mirror. Making either start reducing
-        // somebody's pay is a business decision, not a refactor. See OPEN-12.
-        BigDecimal previouslyPaid = adjustments.stream()
-                .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                        && SECTION_SETTLEMENTS.equalsIgnoreCase(
-                                a.getPayrollAdjustmentCategory().getSectionCode()))
-                .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
-        item.setPreviouslyPaidAmount(previouslyPaid);
-
-        // ── currentBalanceAmount ──────────────────────────────────────────────
-        BigDecimal currentBalance = totalNetEarnings.subtract(previouslyPaid).setScale(2, RoundingMode.HALF_UP);
-        item.setCurrentBalanceAmount(currentBalance);
-
-        // ── netPayableAmount ──────────────────────────────────────────────────
-        BigDecimal prevNetPayable = item.getPreviousNetPayableAmount() != null
-                ? item.getPreviousNetPayableAmount() : BigDecimal.ZERO;
-        item.setNetPayableAmount(prevNetPayable.add(currentBalance).setScale(2, RoundingMode.HALF_UP));
+        item.setTotalNetEarnings(totals.totalNetEarnings());
+        item.setPreviouslyPaidAmount(totals.previouslyPaidAmount());
+        item.setCurrentBalanceAmount(totals.currentBalanceAmount());
+        item.setNetPayableAmount(totals.netPayableAmount());
 
         writeDerivedSettlementLines(item);
     }
