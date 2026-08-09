@@ -255,6 +255,83 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         assertThat(visibleCodes(snapshot)).contains("MEAL_ALLOWANCE", "OTHER");
     }
 
+    /*
+     * The third write rule: a line somebody may READ and must not CHANGE. The
+     * other two need no configuration — what you cannot see you cannot write,
+     * and a handed-over payroll is closed — so this is the only one the settings
+     * screen has to say out loud.
+     */
+    @Test
+    @DisplayName("a line granted for reading only arrives locked and refuses the write")
+    void seeingIsNotEditing() {
+        var scenario = fixture.scenario().build();
+        Long monthlyReportId = scenario.monthlyReport().getId();
+        Long itemId = scenario.item().getId();
+        Long otherId = scenario.adjustment("OTHER").getId();
+
+        signedInAs("admin");
+        service.set("OTHER", "supervisor", true, false);
+
+        signedInAs("supervisor");
+
+        // The screen is told, so nobody types into a field that cannot save.
+        var line = payrollRunItemService.getDetails(monthlyReportId).getAdjustments().stream()
+                .flatMap(s -> s.getAdjustments().stream())
+                .filter(a -> "OTHER".equals(a.getCategoryCode()))
+                .findFirst().orElseThrow();
+        assertThat(line.getEditableInput()).isEqualTo("NONE");
+        assertThat(line.getAllowTotalOverride()).isFalse();
+
+        // And the server refuses it anyway, loudly. A silent success would be
+        // the worst of the three answers.
+        assertThatThrownBy(() -> setAmount(itemId, otherId, "4321.00"))
+                .hasMessageContaining("OTHER");
+
+        // Granted for editing, the same line goes through.
+        signedInAs("admin");
+        service.set("OTHER", "supervisor", true, true);
+        signedInAs("supervisor");
+        setAmount(itemId, otherId, "4321.00");
+
+        signedInAs("admin");
+        assertThat(payrollRunItemService.getDetails(monthlyReportId).getAdjustments().stream()
+                .flatMap(s -> s.getAdjustments().stream())
+                .filter(a -> "OTHER".equals(a.getCategoryCode()))
+                .findFirst().orElseThrow().getAmount())
+                .isEqualByComparingTo("4321.00");
+    }
+
+    @Test
+    @DisplayName("the two item-level figures follow the same rule as a line")
+    void itemLevelFiguresAreGatedToo() throws Exception {
+        var scenario = fixture.scenario().build();
+        Long monthlyReportId = scenario.monthlyReport().getId();
+        Long itemId = scenario.item().getId();
+
+        signedInAs("admin");
+        // Readable, and not editable. The case sloj C exists for.
+        service.set(PayrollFieldAccessService.FIELD_HOURLY_RATE, "supervisor", true, false);
+        service.set(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS, "supervisor", true, false);
+
+        signedInAs("supervisor");
+        var permissions = payrollRunItemService.getDetails(monthlyReportId).getPermissions();
+        assertThat(permissions.isCanEditHourlyRate()).isFalse();
+        assertThat(permissions.isCanEditTotalNetEarnings()).isFalse();
+
+        // The item-level total is patchable in its own right — refusing it on the
+        // lines would have left this door open while the other was watched.
+        var patch = org.springframework.http.converter.json.Jackson2ObjectMapperBuilder.json().build()
+                .readValue("{\"totalNetEarnings\":1.00}",
+                        com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest.class);
+        assertThatThrownBy(() -> payrollRunItemService.patch(itemId, patch))
+                .hasMessageContaining("ukupnu zaradu");
+
+        // Payroll is not asked.
+        signedInAs("admin");
+        assertThat(payrollRunItemService.getDetails(monthlyReportId).getPermissions()
+                .isCanEditTotalNetEarnings()).isTrue();
+    }
+
     private void setAmount(Long itemId, Long adjustmentId, String amount) {
         var patch = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest();
         var line = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto();

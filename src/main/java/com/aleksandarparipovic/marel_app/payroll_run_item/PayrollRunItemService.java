@@ -96,6 +96,9 @@ public class PayrollRunItemService {
     private final PayrollRunItemHandoverRepository handoverRepository;
     private final FrozenPayrollView frozenPayrollView;
 
+    private static final PayrollFieldAccessService.Access DENIED_ACCESS =
+            new PayrollFieldAccessService.Access(false, false);
+
     /**
      * Turns the detail response into storable JSON.
      *
@@ -811,6 +814,12 @@ public class PayrollRunItemService {
         // on a document somebody is paid from. Only empty rows are dropped.
         PayrollSchemeScope scope = scopeFor(item);
 
+        // Resolved once for the whole response — never once per line.
+        Map<String, PayrollFieldAccessService.Access> lineAccess =
+                applyFieldAccess && payrollVisibilityPolicy.isRestrictedUser()
+                        ? fieldAccessService.accessForCurrentUser()
+                        : Map.of();
+
         List<PayrollRunItemCategoryDetailDto> categories =
                 payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId())
                         .stream()
@@ -830,7 +839,15 @@ public class PayrollRunItemService {
                         .filter(a -> scope.allowsAdjustmentCategory(
                                 a.getPayrollAdjustmentCategory().getId()))
                         .map(a -> new PayrollAdjustmentDetailDto(a, adjustmentNames,
-                                scope.componentConfig(a.getPayrollAdjustmentCategory().getId())))
+                                scope.componentConfig(a.getPayrollAdjustmentCategory().getId()),
+                                // A line this reader may read but not change
+                                // arrives read-only, so the refusal never has to
+                                // happen after somebody has typed into it.
+                                !applyFieldAccess
+                                        || !payrollVisibilityPolicy.isRestrictedUser()
+                                        || lineAccess.getOrDefault(
+                                                a.getPayrollAdjustmentCategory().getCode(),
+                                                DENIED_ACCESS).canEdit()))
                         .collect(java.util.stream.Collectors.groupingBy(
                                 dto -> dto.getSectionCode() != null ? dto.getSectionCode() : ""
                         ))
@@ -874,7 +891,7 @@ public class PayrollRunItemService {
         boolean partialView = false;
 
         if (applyFieldAccess && payrollVisibilityPolicy.isRestrictedUser()) {
-            Map<String, PayrollFieldAccessService.Access> access = fieldAccessService.accessForCurrentUser();
+            Map<String, PayrollFieldAccessService.Access> access = lineAccess;
 
             List<PayrollAdjustment> visibleEntities =
                     payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId()).stream()
@@ -1096,6 +1113,7 @@ public class PayrollRunItemService {
                 // only the client honours is a rule anybody with the API can ignore.
                 EffectiveComponentConfig config = patchScope.componentConfig(
                         adj.getPayrollAdjustmentCategory().getId());
+                refuseUneditableLine(adj, adjPatch);
                 applyAdjustmentPatch(adj, adjPatch, config);
 
                 adj.setUpdatedAt(OffsetDateTime.now());
@@ -1438,9 +1456,42 @@ public class PayrollRunItemService {
         if (!payrollVisibilityPolicy.isRestrictedUser()) {
             return;
         }
-        if (req.isHourlyRatePresent()) {
+        if (req.isHourlyRatePresent()
+                && !fieldAccessService.accessTo(PayrollFieldAccessService.FIELD_HOURLY_RATE).canEdit()) {
             throw new ConflictException(
                     "Nemate pravo da menjate satnicu na obračunu.");
+        }
+        // The total is patchable from the item, so refusing it on the lines is
+        // not enough — this door was open while the other was being watched.
+        if (req.getTotalNetEarnings() != null
+                && !fieldAccessService.accessTo(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS).canEdit()) {
+            throw new ConflictException(
+                    "Nemate pravo da menjate ukupnu zaradu na obračunu.");
+        }
+    }
+
+    /**
+     * Refuse a change to a line this reader may see but not change.
+     *
+     * <p>The third and last of the write rules. The other two need no
+     * configuration: what somebody cannot see they cannot write, and a payroll
+     * that has been handed over is closed. This one is the remainder — the
+     * hourly rate a supervisor must READ to make sense of the month and must not
+     * touch — and it is the only one that has to be told, per line and per role,
+     * from the settings screen.
+     *
+     * <p>Refused LOUDLY. The screen already arrives with these lines locked, so
+     * reaching here means somebody went around it, and a silent success would be
+     * the worst of the three answers.
+     */
+    private void refuseUneditableLine(PayrollAdjustment adj, AdjustmentPatchDto patch) {
+        if (!payrollVisibilityPolicy.isRestrictedUser() || !changesTheLine(patch)) {
+            return;
+        }
+        String code = adj.getPayrollAdjustmentCategory().getCode();
+        if (!fieldAccessService.accessTo(code).canEdit()) {
+            throw new ConflictException(
+                    "Nemate pravo da menjate stavku " + code + " na obračunu.");
         }
     }
 
@@ -1591,6 +1642,20 @@ public class PayrollRunItemService {
      * total and a correction were both refused — the same defect the user reported
      * twice, reopened by a new field. The tests caught it; the review did not.
      */
+    /**
+     * Wider than {@link #touchesAValue}, deliberately.
+     *
+     * <p>Clearing an override puts the system amount back, and switching a line
+     * off takes it out of the totals. Neither carries a number in the request and
+     * both change what the employee is paid, so a rule about who may change a
+     * line has to count them. A note does not.
+     */
+    private static boolean changesTheLine(AdjustmentPatchDto patch) {
+        return touchesAValue(patch)
+                || Boolean.TRUE.equals(patch.getClearOverride())
+                || patch.getIsApplied() != null;
+    }
+
     private static boolean touchesAValue(AdjustmentPatchDto patch) {
         return patch.getAmount() != null || patch.getQuantity() != null
                 || patch.getUnitAmount() != null || patch.getCorrectionAmount() != null
@@ -1928,8 +1993,16 @@ public class PayrollRunItemService {
         return new PayrollRunItemPermissionsDto(
                 isAdmin,           // canEditAdjustments
                 isAdmin,           // canLock
-                isAdmin || isSupervisor  // canApprove
+                isAdmin || isSupervisor,  // canApprove
+                mayEditItemField(PayrollFieldAccessService.FIELD_HOURLY_RATE),
+                mayEditItemField(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS)
         );
+    }
+
+    /** Payroll edits its own figures; everybody else is told, per role, per field. */
+    private boolean mayEditItemField(String fieldCode) {
+        return !payrollVisibilityPolicy.isRestrictedUser()
+                || fieldAccessService.accessTo(fieldCode).canEdit();
     }
 
     // ─── Private helpers ────────────────────────────────────────────────────

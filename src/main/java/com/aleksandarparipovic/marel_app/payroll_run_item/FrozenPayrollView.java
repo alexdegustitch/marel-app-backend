@@ -64,6 +64,10 @@ public class FrozenPayrollView {
             shownBefore += maps(section.get("adjustments")).size();
             List<Map<String, Object>> kept = maps(section.get("adjustments")).stream()
                     .filter(line -> access.getOrDefault(text(line.get("categoryCode")), DENIED).canView())
+                    // The record was written with every line editable, because it
+                    // was written as payroll sees it. Editability is the reader's
+                    // question, so it is answered here rather than replayed.
+                    .map(line -> readOnlyUnlessAllowed(line, access))
                     .toList();
             if (kept.isEmpty()) {
                 // An empty section is a heading with nothing under it, which
@@ -123,6 +127,18 @@ public class FrozenPayrollView {
             out.put("permissions", permissions);
         }
         return out;
+    }
+
+    private static Map<String, Object> readOnlyUnlessAllowed(
+            Map<String, Object> line, Map<String, PayrollFieldAccessService.Access> access) {
+
+        if (access.getOrDefault(text(line.get("categoryCode")), DENIED).canEdit()) {
+            return line;
+        }
+        Map<String, Object> copy = new LinkedHashMap<>(line);
+        copy.put("editableInput", "NONE");
+        copy.put("allowTotalOverride", false);
+        return copy;
     }
 
     // ── Reading JSON that has been through a database ────────────────────────

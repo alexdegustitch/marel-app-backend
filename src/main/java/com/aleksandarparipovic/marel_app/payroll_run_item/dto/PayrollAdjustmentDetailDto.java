@@ -111,6 +111,22 @@ public class PayrollAdjustmentDetailDto {
     public PayrollAdjustmentDetailDto(PayrollAdjustment a,
                                       java.util.Map<Long, String> translations,
                                       EffectiveComponentConfig config) {
+        this(a, translations, config, true);
+    }
+
+    /**
+     * @param editableByReader whether THIS reader may change the line, which is a
+     *                         different question from whether the line is editable
+     *                         at all. False lowers the line to read-only before it
+     *                         is sent, so the screen draws a value instead of an
+     *                         input. The server refuses the write regardless; this
+     *                         is so nobody types into a field that was never going
+     *                         to save.
+     */
+    public PayrollAdjustmentDetailDto(PayrollAdjustment a,
+                                      java.util.Map<Long, String> translations,
+                                      EffectiveComponentConfig config,
+                                      boolean editableByReader) {
         PayrollAdjustmentCategory cat = a.getPayrollAdjustmentCategory();
 
         this.id = a.getId();
@@ -135,9 +151,12 @@ public class PayrollAdjustmentDetailDto {
         this.visibleInUi = config != null ? config.visibleInUi() : cat.getVisibleInUi();
         this.visibleInPdf = config != null ? config.visibleInPdf() : cat.getVisibleInPdf();
         this.showWhenZero = config != null ? config.showWhenZero() : cat.getShowWhenZero();
-        this.editableInput = config != null ? config.editableInput() : cat.getEditableInput();
-        this.allowTotalOverride =
-                config != null ? config.allowTotalOverride() : cat.getAllowTotalOverride();
+        this.editableInput = !editableByReader
+                ? "NONE"
+                : (config != null ? config.editableInput() : cat.getEditableInput());
+        this.allowTotalOverride = editableByReader
+                && Boolean.TRUE.equals(
+                        config != null ? config.allowTotalOverride() : cat.getAllowTotalOverride());
         this.requiredManualInput =
                 config != null ? config.requiredManualInput() : cat.getRequiredManualInput();
         this.calculationMode = config != null ? config.calculationMode() : "INHERIT";
