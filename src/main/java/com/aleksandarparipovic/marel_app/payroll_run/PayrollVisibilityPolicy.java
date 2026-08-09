@@ -79,6 +79,25 @@ public class PayrollVisibilityPolicy {
                 .anyMatch(PayrollVisibilityPolicy::isPrivileged);
     }
 
+    /**
+     * The role names the caller actually holds, without the ROLE_ prefix and in
+     * lower case — the spelling the database uses. Exposed because per-field
+     * access is keyed by role name, and re-deriving it elsewhere is how
+     * hasRole('ADMIN') came to be checked against ROLE_admin for years.
+     */
+    public java.util.Set<String> currentRoleNames() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return Set.of();
+        }
+        return authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .filter(java.util.Objects::nonNull)
+                .map(a -> a.toLowerCase())
+                .map(a -> a.startsWith("role_") ? a.substring("role_".length()) : a)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
     private static boolean isPrivileged(String authority) {
         if (authority == null) return false;
         String role = authority.toLowerCase();

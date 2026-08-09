@@ -64,5 +64,13 @@ public enum AppPermission {
      * <p>Payroll's step, and only theirs — locking is what turns a calculated
      * month into a record of what was paid.
      */
-    PAYROLL_LOCK
+    PAYROLL_LOCK,
+
+    /**
+     * Decide which payroll lines each role may see and change.
+     *
+     * <p>Payroll's own, and nobody else's: this is the control over who sees
+     * salaries, so granting it is granting the ability to grant.
+     */
+    PAYROLL_ACCESS_CONFIGURE
 }
