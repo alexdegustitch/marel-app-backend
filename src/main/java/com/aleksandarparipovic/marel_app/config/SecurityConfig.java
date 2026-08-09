@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.config;
 import com.aleksandarparipovic.marel_app.auth.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -48,6 +49,24 @@ public class SecurityConfig {
                         .requestMatchers("/api/roles/**").hasRole("admin")
                         .anyRequest().authenticated()
                 )
+                /*
+                 * 401 FOR "WHO ARE YOU", 403 FOR "NOT YOU".
+                 *
+                 * Spring's default entry point answers 403 to an unauthenticated
+                 * request, so both cases arrived at the browser as the same
+                 * status and the client could not tell them apart. It guessed,
+                 * and guessed the expensive way: lacking ONE permission logged
+                 * the user out of the whole application, because a refusal was
+                 * indistinguishable from an expired session.
+                 *
+                 * With these two separated, the client's rule becomes the plain
+                 * one — refresh the session on 401, show a refusal on 403.
+                 */
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint((request, response, authException) ->
+                                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized"))
+                        .accessDeniedHandler((request, response, deniedException) ->
+                                response.sendError(HttpServletResponse.SC_FORBIDDEN, "Forbidden")))
                 .addFilterBefore(
                         jwtAuthenticationFilter,
                         org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class
