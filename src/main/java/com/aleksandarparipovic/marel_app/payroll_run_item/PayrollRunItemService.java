@@ -86,6 +86,7 @@ public class PayrollRunItemService {
     private final AppSettingService appSettingService;
     private final EntityReferenceProvider referenceProvider;
     private final CurrentUserService currentUserService;
+    private final com.aleksandarparipovic.marel_app.payroll_run.PayrollVisibilityPolicy payrollVisibilityPolicy;
     private final com.aleksandarparipovic.marel_app.employee_payroll_run_item_update.EmployeePayrollRunItemUpdateService payrollRunItemUpdateService;
     private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
     private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
@@ -155,6 +156,14 @@ public class PayrollRunItemService {
         return payrollRunItemRepository.findRecentByEmployeeId(employeeId, PageRequest.of(0, size))
                 .stream()
                 .map(RecentPayrollSummaryDto::new)
+                // Same rule as the payroll list: the employee page shows the
+                // very same figure, so hiding it in one place only would be a
+                // curtain rather than a permission.
+                .map(dto -> payrollVisibilityPolicy.canSeeAmounts()
+                        ? dto
+                        : new RecentPayrollSummaryDto(
+                                dto.id(), dto.monthlyReportId(), dto.period(),
+                                payrollVisibilityPolicy.visibleStatus(dto.status()), null, null))
                 .toList();
     }
 

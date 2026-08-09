@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.payroll_run;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunInfoDto;
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunInfoMasked;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class PayrollRunService {
     private final PayrollRunRepository payrollRunRepository;
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final CurrentUserService currentUserService;
+    private final PayrollVisibilityPolicy payrollVisibilityPolicy;
 
     // ── new query endpoints ──────────────────────────────────────────────
 
@@ -41,7 +43,16 @@ public class PayrollRunService {
     public Page<PayrollRunInfoDto> getPagedByYearAndMonth(int year, int month, String globalSearch, String status, Pageable pageable) {
         String search = (globalSearch == null || globalSearch.isBlank()) ? null : globalSearch;
         String statusFilter = (status == null || status.isBlank()) ? null : status;
-        return payrollRunItemRepository.findPagedByYearAndMonth(year, month, search, statusFilter, pageable);
+        Page<PayrollRunInfoDto> page =
+                payrollRunItemRepository.findPagedByYearAndMonth(year, month, search, statusFilter, pageable);
+
+        // Withheld in the RESPONSE, not by the screen: a figure the browser
+        // never receives cannot be read out of the network tab.
+        if (payrollVisibilityPolicy.canSeeAmounts()) {
+            return page;
+        }
+        return page.map(row -> PayrollRunInfoMasked.withoutAmounts(
+                row, payrollVisibilityPolicy.visibleStatus(row.getStatus())));
     }
 
     // ── existing ─────────────────────────────────────────────────────────
