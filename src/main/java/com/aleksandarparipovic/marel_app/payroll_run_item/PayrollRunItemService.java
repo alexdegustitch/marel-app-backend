@@ -62,6 +62,7 @@ import java.util.Objects;
 import java.util.Optional;
 import org.springframework.data.domain.PageRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemHandoverDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 
@@ -72,6 +73,8 @@ public class PayrollRunItemService {
 
     private static final String STATUS_LOCKED = "LOCKED";
     private static final String STATUS_DRAFT = "DRAFT";
+    /** "Spreman" — handed over by the shop floor, not yet frozen by payroll. */
+    private static final String STATUS_APPROVED = "APPROVED";
     private static final String DEFAULT_CURRENCY = "RSD";
     private static final int DEFAULT_CALC_VERSION = 1;
 
@@ -87,6 +90,8 @@ public class PayrollRunItemService {
     private final EntityReferenceProvider referenceProvider;
     private final CurrentUserService currentUserService;
     private final com.aleksandarparipovic.marel_app.payroll_run.PayrollVisibilityPolicy payrollVisibilityPolicy;
+    private final PayrollRunItemHandoverRepository handoverRepository;
+    private final com.aleksandarparipovic.marel_app.user.UserRepository userRepository;
     private final com.aleksandarparipovic.marel_app.employee_payroll_run_item_update.EmployeePayrollRunItemUpdateService payrollRunItemUpdateService;
     private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
     private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
@@ -383,6 +388,15 @@ public class PayrollRunItemService {
             return item;
         }
 
+        // The chain is DRAFT -> APPROVED -> LOCKED. Payroll freezes what the shop
+        // floor handed over; freezing a draft would make permanent a month nobody
+        // has said is finished.
+        if (!STATUS_APPROVED.equals(item.getStatus())) {
+            throw new ConflictException(
+                    "Obračun se zaključava tek kada bude predat. Trenutno stanje: "
+                            + item.getStatus() + ".");
+        }
+
         // Recalculate first. Locking a stale item would freeze figures that were
         // already out of date at the moment they became permanent.
         item = getForPayrollAccess(id);
@@ -427,6 +441,136 @@ public class PayrollRunItemService {
                 .toList();
     }
 
+    /**
+     * Hand the month over to payroll: DRAFT → APPROVED, "spreman".
+     *
+     * <p>Recalculates and checks required inputs FIRST, for the same reason
+     * {@link #lock} does: the figures recorded as "what was handed over" have to
+     * be the ones that were actually true, not ones that went stale before
+     * anybody looked. Handing over a stale month would put a number into the
+     * audit record that never existed.
+     *
+     * <p>Idempotent — handing over an already-handed-over month is not an error
+     * and does not add a second row, otherwise a double-clicked button would
+     * invent a handover that never happened.
+     */
+    @Transactional
+    public PayrollRunItem submit(Long id, String note) {
+        markHumanDecision(id);
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        if (STATUS_APPROVED.equals(item.getStatus())) {
+            return item;
+        }
+        if (STATUS_LOCKED.equals(item.getStatus())) {
+            throw new ConflictException("Zaključan obračun se ne može ponovo predati.");
+        }
+
+        item = getForPayrollAccess(id);
+
+        List<String> pending = pendingRequiredInputs(item);
+        if (!pending.isEmpty()) {
+            throw new ConflictException(
+                    "Obračun se ne može predati dok se ne unesu obavezne stavke: "
+                            + String.join(", ", pending) + ".");
+        }
+
+        String before = item.getStatus();
+        item.setStatus(STATUS_APPROVED);
+        item.setUpdatedAt(OffsetDateTime.now());
+        PayrollRunItem saved = payrollRunItemRepository.save(item);
+
+        recordHandover(saved, PayrollRunItemHandover.EVENT_SUBMITTED, before, STATUS_APPROVED, note);
+        log.info("PayrollRunItem {} submitted by user {}", id, currentUserService.getCurrentUserId());
+        return saved;
+    }
+
+    /**
+     * Send it back for correction: APPROVED → DRAFT.
+     *
+     * <p>The inverse of {@link #submit} and a row of its own, so the sequence
+     * "handed over, returned, handed over again" survives. It does NOT erase the
+     * earlier handover — that record is what a later argument is settled with.
+     */
+    @Transactional
+    public PayrollRunItem returnToDraft(Long id, String note) {
+        markHumanDecision(id);
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        if (STATUS_DRAFT.equals(item.getStatus())) {
+            return item;
+        }
+        if (!STATUS_APPROVED.equals(item.getStatus())) {
+            throw new ConflictException(
+                    "Na doradu se vraća samo predat obračun. Trenutno stanje: "
+                            + item.getStatus() + ".");
+        }
+
+        item.setStatus(STATUS_DRAFT);
+        item.setNeedsRecalculation(true);
+        item.setUpdatedAt(OffsetDateTime.now());
+        PayrollRunItem saved = payrollRunItemRepository.save(item);
+
+        recordHandover(saved, PayrollRunItemHandover.EVENT_RETURNED, STATUS_APPROVED, STATUS_DRAFT, note);
+        log.info("PayrollRunItem {} returned to draft by user {}", id, currentUserService.getCurrentUserId());
+        return saved;
+    }
+
+    /**
+     * Every handover step, newest first.
+     *
+     * <p>The same visibility rule as the live payroll applies here: a stored
+     * record of an amount is still the amount, so a reader who may not see what
+     * a month is worth does not get it back through its history.
+     */
+    @Transactional(readOnly = true)
+    public List<PayrollRunItemHandoverDto> getHandovers(Long payrollRunItemId) {
+        boolean amounts = payrollVisibilityPolicy.canSeeAmounts();
+        return handoverRepository.findByPayrollRunItemIdOrderByOccurredAtDesc(payrollRunItemId).stream()
+                .map(h -> new PayrollRunItemHandoverDto(
+                        h.getId(),
+                        h.getEvent(),
+                        h.getActorId(),
+                        actorName(h.getActorId()),
+                        h.getOccurredAt(),
+                        h.getStatusBefore(),
+                        h.getStatusAfter(),
+                        amounts ? h.getTotalNetEarnings() : null,
+                        amounts ? h.getNetPayableAmount() : null,
+                        h.getNote()))
+                .toList();
+    }
+
+    /** Who did it, for the screen. Null id or a removed user reads as unknown. */
+    private String actorName(Long actorId) {
+        if (actorId == null) return null;
+        return userRepository.findById(actorId)
+                .map(com.aleksandarparipovic.marel_app.user.User::getFullName)
+                .orElse(null);
+    }
+
+    /**
+     * Append one step, with the figures as they stand at this instant.
+     *
+     * <p>The totals are copied rather than referenced: the item keeps moving
+     * afterwards, and the whole point of the row is to say what it said now.
+     */
+    private void recordHandover(PayrollRunItem item, String event, String before, String after, String note) {
+        handoverRepository.save(PayrollRunItemHandover.builder()
+                .payrollRunItemId(item.getId())
+                .event(event)
+                .actorId(currentUserService.getCurrentUserId())
+                .occurredAt(OffsetDateTime.now())
+                .statusBefore(before)
+                .statusAfter(after)
+                .totalNetEarnings(item.getTotalNetEarnings())
+                .netPayableAmount(item.getNetPayableAmount())
+                .note(note == null || note.isBlank() ? null : note.trim())
+                .build());
+    }
+
     /** Undo a lock. Separate operation, separate permission, separate audit entry. */
     @Transactional
     public PayrollRunItem unlock(Long id) {
@@ -438,9 +582,14 @@ public class PayrollRunItemService {
             return item;
         }
 
+        // Back to APPROVED, not DRAFT: unlocking undoes exactly one step, the lock.
+        // Dropping to DRAFT would also silently undo the supervisor's handover,
+        // which is a different decision with a different owner — that is what
+        // returnToDraft is for.
+        //
         // needs_recalculation, not a recalculation here: unlocking says the month is
         // open again, and what it should now say is decided by whoever opens it.
-        item.setStatus(STATUS_DRAFT);
+        item.setStatus(STATUS_APPROVED);
         item.setLockedAt(null);
         item.setLockedBy(null);
         item.setNeedsRecalculation(true);
@@ -630,6 +779,21 @@ public class PayrollRunItemService {
         if (STATUS_LOCKED.equals(item.getStatus())) {
             throw new IllegalStateException("PayrollRunItem " + id + " is LOCKED and cannot be edited");
         }
+
+        // LAYER B — once handed over, the shop floor is done with it. Payroll may
+        // still correct an APPROVED month; the supervisor who submitted it may
+        // not, because they have already said it is finished. Sending it back
+        // (return-to-draft) is how they get it again.
+        if (STATUS_APPROVED.equals(item.getStatus()) && payrollVisibilityPolicy.isRestrictedUser()) {
+            throw new ConflictException(
+                    "Obračun je predat i više se ne menja. Vratite ga na doradu da biste ga menjali.");
+        }
+
+        // LAYER A — what a caller may not SEE, they may not WRITE. The amounts are
+        // already withheld from the response for these roles; accepting them on
+        // the way in would let somebody set a figure they cannot read, which is a
+        // worse hole than the one hiding it closed.
+        refuseHiddenMoneyEdits(req);
 
         // ── 1. Simple fields (no cascade) ────────────────────────────────────
         if (req.getNote() != null) {
@@ -1013,6 +1177,28 @@ public class PayrollRunItemService {
      * through here first. A new field on the request cannot quietly reopen it
      * without being added to this list.
      */
+    /**
+     * Refuse money edits from a caller who may not see money.
+     *
+     * <p>Refused LOUDLY rather than ignored: a supervisor who types an hourly
+     * rate and gets a silent success believes it was saved. The same rule the
+     * employee number follows.
+     *
+     * <p>The list is the item-level money fields the patch accepts. It is short
+     * because almost everything else is edited on its own adjustment line, and
+     * those lines are governed by the visibility of their category — which is
+     * the configurable layer still to come.
+     */
+    private void refuseHiddenMoneyEdits(PayrollRunItemPatchRequest req) {
+        if (!payrollVisibilityPolicy.isRestrictedUser()) {
+            return;
+        }
+        if (req.isHourlyRatePresent()) {
+            throw new ConflictException(
+                    "Nemate pravo da menjate satnicu na obračunu.");
+        }
+    }
+
     private void refuseEditsToExcludedCategories(PayrollRunItem item, PayrollRunItemPatchRequest req) {
         // Nothing left: meal, transport and the bonus are all edited on their
         // lines, and applyAdjustmentPatch refuses a category the scheme excludes

@@ -65,4 +65,47 @@ class PayrollVisibilityPolicyTest {
         assertThat(policy.canSeeAmounts()).isFalse();
         assertThat(policy.visibleStatus("LOCKED")).isEqualTo("APPROVED");
     }
+
+    /*
+     * The two questions need OPPOSITE defaults, and conflating them broke the
+     * system's own work: recalculation, payroll initialisation and every
+     * integration test call the service with no SecurityContext, so a write
+     * guard built on canSeeAmounts() refused them as "a user without the right".
+     */
+    @Test
+    @DisplayName("the system is not a user without rights — write guards let it through")
+    void systemCallsAreNotRestrictedUsers() {
+        SecurityContextHolder.clearContext();
+
+        assertThat(policy.hasAuthenticatedUser()).isFalse();
+        assertThat(policy.isRestrictedUser()).isFalse();
+        // Masking still hides, which is the harmless default.
+        assertThat(policy.canSeeAmounts()).isFalse();
+    }
+
+    @Test
+    @DisplayName("a signed-in supervisor IS a restricted user")
+    void supervisorIsRestricted() {
+        signedInAs("supervisor");
+        assertThat(policy.isRestrictedUser()).isTrue();
+    }
+
+    @Test
+    @DisplayName("payroll is never a restricted user")
+    void payrollIsNotRestricted() {
+        signedInAs("admin");
+        assertThat(policy.isRestrictedUser()).isFalse();
+    }
+
+    @Test
+    @DisplayName("an anonymous token is not a signed-in user")
+    void anonymousIsNotAUser() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.AnonymousAuthenticationToken(
+                        "key", "anonymous",
+                        List.of(new SimpleGrantedAuthority("ROLE_ANONYMOUS"))));
+
+        assertThat(policy.hasAuthenticatedUser()).isFalse();
+        assertThat(policy.isRestrictedUser()).isFalse();
+    }
 }

@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemDeta
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemResponse;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemHandoverDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -114,6 +115,42 @@ public class PayrollRunItemController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<PayrollRunItemResponse> lock(@PathVariable Long id) {
         return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.lock(id)));
+    }
+
+    /**
+     * Hand the month over to payroll — "spreman".
+     *
+     * <p>Supervisors as well as admins: this is the shop floor saying its work is
+     * done, and the supervisor is the one who knows. Payroll's own step is the
+     * lock, which stays admin-only.
+     */
+    @PostMapping("/{id}/submit")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR', 'DEVELOPER')")
+    public ResponseEntity<PayrollRunItemResponse> submit(
+            @PathVariable Long id,
+            @RequestBody(required = false) HandoverRequest request) {
+        String note = request == null ? null : request.note();
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.submit(id, note)));
+    }
+
+    /** Send it back for correction. Same people who may hand it over. */
+    @PostMapping("/{id}/return-to-draft")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR', 'DEVELOPER')")
+    public ResponseEntity<PayrollRunItemResponse> returnToDraft(
+            @PathVariable Long id,
+            @RequestBody(required = false) HandoverRequest request) {
+        String note = request == null ? null : request.note();
+        return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.returnToDraft(id, note)));
+    }
+
+    /** Every handover step of one item, newest first. */
+    @GetMapping("/{id}/handovers")
+    public ResponseEntity<List<PayrollRunItemHandoverDto>> handovers(@PathVariable Long id) {
+        return ResponseEntity.ok(payrollRunItemService.getHandovers(id));
+    }
+
+    /** Optional note; on a return it is the reason. */
+    public record HandoverRequest(String note) {
     }
 
     /** Reopen a frozen item. Separate permission, separate audit entry. */

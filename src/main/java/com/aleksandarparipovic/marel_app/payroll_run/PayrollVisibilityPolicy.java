@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.payroll_run;
 
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -39,6 +40,33 @@ public class PayrollVisibilityPolicy {
     /** Reported instead of LOCKED to anyone who may not know about the lock. */
     static final String LOCKED = "LOCKED";
     static final String APPROVED = "APPROVED";
+
+    /**
+     * Whether a real signed-in user is behind this call.
+     *
+     * <p>Matters because the two questions this class answers need OPPOSITE
+     * defaults. Hiding a figure when nobody is signed in is harmless, so
+     * {@link #canSeeAmounts()} fails closed. REFUSING A WRITE on the same
+     * grounds is not harmless: recalculation jobs, payroll initialisation and
+     * tests all call the service with no SecurityContext, and treating them as
+     * "a user without the right" would refuse the system its own work. HTTP
+     * entry is already gated by {@code @PreAuthorize}; by the time a call has
+     * no principal at all, it is our own code.
+     */
+    public boolean hasAuthenticatedUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null
+                && authentication.isAuthenticated()
+                && !(authentication instanceof AnonymousAuthenticationToken);
+    }
+
+    /**
+     * A signed-in caller who may not see payroll amounts — the predicate write
+     * guards use. False for the system, false for payroll itself.
+     */
+    public boolean isRestrictedUser() {
+        return hasAuthenticatedUser() && !canSeeAmounts();
+    }
 
     /** Whether the current user may see payroll amounts and the locked state. */
     public boolean canSeeAmounts() {
