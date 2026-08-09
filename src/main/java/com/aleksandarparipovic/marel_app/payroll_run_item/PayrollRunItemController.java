@@ -73,11 +73,22 @@ public class PayrollRunItemController {
      *               It selects display names only; every amount is identical in
      *               every locale.
      */
+    /*
+     * The response is Object because one of the two bodies is a stored document.
+     *
+     * A reader who has handed this payroll over gets the copy they submitted,
+     * replayed from the handover record rather than rebuilt from live rows. It
+     * serialises to the same shape as the live response — same fields, same
+     * names — so the client cannot tell them apart, which is the intent.
+     */
     @GetMapping("/by-monthly-report/{monthlyReportId}/details")
-    public ResponseEntity<PayrollRunItemDetailResponse> getDetails(
+    public ResponseEntity<Object> getDetails(
             @PathVariable Long monthlyReportId,
             @RequestParam(required = false) String locale) {
-        return ResponseEntity.ok(payrollRunItemService.getDetails(monthlyReportId, locale));
+        return payrollRunItemService.frozenDetails(monthlyReportId)
+                .<ResponseEntity<Object>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.ok(
+                        payrollRunItemService.getDetails(monthlyReportId, locale)));
     }
 
     /**

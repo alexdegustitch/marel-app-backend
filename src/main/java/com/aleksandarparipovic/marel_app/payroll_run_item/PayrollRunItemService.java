@@ -94,6 +94,7 @@ public class PayrollRunItemService {
     private final com.aleksandarparipovic.marel_app.payroll_run.PayrollVisibilityPolicy payrollVisibilityPolicy;
     private final com.aleksandarparipovic.marel_app.payroll_field_access.PayrollFieldAccessService fieldAccessService;
     private final PayrollRunItemHandoverRepository handoverRepository;
+    private final FrozenPayrollView frozenPayrollView;
 
     /**
      * Turns the detail response into storable JSON.
@@ -620,6 +621,59 @@ public class PayrollRunItemService {
     private static int lineCount(PayrollRunItemHandover h) {
         Object lines = h.getPayload().get("lines");
         return lines instanceof List<?> list ? list.size() : 0;
+    }
+
+    /**
+     * What a restricted reader gets once the payroll is no longer theirs to change.
+     *
+     * <p>The owner's rule: after a handover a supervisor always opens the payroll
+     * AS THEY SUBMITTED IT, and nothing is recalculated for them. So this serves
+     * the stored document, passed through the same per-line filter as the live
+     * view, with the totals re-evaluated over the lines that survive it. Back in
+     * DRAFT the frozen view stops applying and the live filtered one takes over
+     * again, which is the same rule read from the other end.
+     *
+     * <p>Empty means "no frozen view applies" and the caller should serve the
+     * live response: payroll itself always sees live figures, a DRAFT has not
+     * been handed over yet, and a handover recorded before snapshots existed has
+     * nothing to replay. Falling back is deliberate — a payroll that cannot be
+     * replayed should still open.
+     *
+     * <p>NOT A DIFFERENT SET OF NUMBERS FROM THE ONE THEY SUBMITTED. There is no
+     * marker saying something changed afterwards; whether it did is payroll's
+     * business, and the supervisor's screen is a clean picture of their own
+     * handover.
+     *
+     * <p>One consequence worth stating: the snapshot carries the display names in
+     * the language it was submitted in, so {@code ?locale=} cannot be honoured
+     * here. The document stays internally consistent — {@code resolvedLocale}
+     * travels with it and the renderer follows that — it simply comes out in the
+     * language of the handover.
+     */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public Optional<Map<String, Object>> frozenDetails(Long monthlyReportId) {
+        if (!payrollVisibilityPolicy.isRestrictedUser()) {
+            return Optional.empty();
+        }
+        PayrollRunItem item = payrollRunItemRepository.findByMonthlyReport_Id(monthlyReportId).orElse(null);
+        if (item == null
+                || (!STATUS_APPROVED.equals(item.getStatus()) && !STATUS_LOCKED.equals(item.getStatus()))) {
+            return Optional.empty();
+        }
+
+        // The last SUBMITTED step, not the last step: a return to draft followed
+        // by a fresh submission replaces the picture, and a RETURNED row is not
+        // one somebody handed over.
+        return handoverRepository.findByPayrollRunItemIdOrderByOccurredAtDesc(item.getId()).stream()
+                .filter(h -> PayrollRunItemHandover.EVENT_SUBMITTED.equals(h.getEvent()))
+                .findFirst()
+                .map(h -> h.getPayload().get("detail"))
+                .filter(Map.class::isInstance)
+                .map(detail -> frozenPayrollView.filtered(
+                        (Map<String, Object>) detail,
+                        payrollVisibilityPolicy.visibleStatus(item.getStatus()),
+                        resolvePermissions()));
     }
 
     /**

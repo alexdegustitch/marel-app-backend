@@ -165,6 +165,111 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
                 .isEqualByComparingTo(new java.math.BigDecimal("5000.00"));
     }
 
+    /*
+     * The owner's rule, stated twice from two ends: after a handover a
+     * supervisor always opens the payroll as they submitted it, and nothing is
+     * recalculated for them; back in DRAFT they see the live figures again,
+     * filtered to their lines.
+     */
+    @Test
+    @DisplayName("once handed over, a supervisor keeps seeing what they submitted")
+    void handedOverIsFrozen() {
+        var scenario = fixture.scenario().build();
+        Long monthlyReportId = scenario.monthlyReport().getId();
+        Long itemId = scenario.item().getId();
+
+        signedInAs("admin");
+        service.set("OTHER", "supervisor", true, false);
+        service.set(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS, "supervisor", true, false);
+
+        setAmount(itemId, scenario.adjustment("OTHER").getId(), "1000.00");
+        payrollRunItemService.submit(itemId, "predato");
+
+        var liveBefore = payrollRunItemService.getDetails(monthlyReportId)
+                .getSummary().getTotalNetEarnings();
+
+        signedInAs("supervisor");
+        var atHandover = total(payrollRunItemService.frozenDetails(monthlyReportId).orElseThrow());
+
+        // Payroll keeps working after the handover — which is exactly the case
+        // the frozen view exists for.
+        signedInAs("admin");
+        setAmount(itemId, scenario.adjustment("OTHER").getId(), "7777.00");
+        // The live payroll really did move, or the assertions below prove nothing.
+        assertThat(payrollRunItemService.getDetails(monthlyReportId).getSummary().getTotalNetEarnings())
+                .isNotEqualByComparingTo(liveBefore);
+
+        signedInAs("supervisor");
+        var frozen = payrollRunItemService.frozenDetails(monthlyReportId);
+        assertThat(frozen).isPresent();
+
+        assertThat(lineAmount(frozen.get(), "OTHER"))
+                .isEqualByComparingTo("1000.00");
+        // Not merely the line: the total they handed over is the one they keep.
+        assertThat(total(frozen.get())).isEqualByComparingTo(atHandover);
+
+        // Still only their lines. Freezing is not a way around the filter.
+        assertThat(visibleCodes(frozen.get())).containsOnly("OTHER");
+
+        // A lock applied afterwards is not theirs to learn about.
+        signedInAs("admin");
+        payrollRunItemService.lock(itemId);
+        signedInAs("supervisor");
+        assertThat(summaryOf(payrollRunItemService.frozenDetails(monthlyReportId).orElseThrow())
+                .get("status")).isEqualTo("APPROVED");
+
+        // Back in draft, the frozen view stops applying and they see live
+        // figures again — filtered to the same lines.
+        signedInAs("admin");
+        payrollRunItemService.unlock(itemId);
+        payrollRunItemService.returnToDraft(itemId, "vraceno");
+
+        signedInAs("supervisor");
+        assertThat(payrollRunItemService.frozenDetails(monthlyReportId)).isEmpty();
+        assertThat(payrollRunItemService.getDetails(monthlyReportId).getAdjustments().stream()
+                .flatMap(s -> s.getAdjustments().stream())
+                .filter(a -> "OTHER".equals(a.getCategoryCode()))
+                .findFirst().orElseThrow().getAmount())
+                .isEqualByComparingTo("7777.00");
+    }
+
+    private void setAmount(Long itemId, Long adjustmentId, String amount) {
+        var patch = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest();
+        var line = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto();
+        line.setId(adjustmentId);
+        line.setAmount(new java.math.BigDecimal(amount));
+        patch.setAdjustments(java.util.List.of(line));
+        payrollRunItemService.patch(itemId, patch);
+    }
+
+    private static java.math.BigDecimal total(java.util.Map<String, Object> detail) {
+        return new java.math.BigDecimal(String.valueOf(summaryOf(detail).get("totalNetEarnings")));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, Object> summaryOf(java.util.Map<String, Object> detail) {
+        return (java.util.Map<String, Object>) detail.get("summary");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.stream.Stream<java.util.Map<String, Object>> lines(
+            java.util.Map<String, Object> detail) {
+        return ((List<java.util.Map<String, Object>>) detail.get("adjustments")).stream()
+                .flatMap(s -> ((List<java.util.Map<String, Object>>) s.get("adjustments")).stream());
+    }
+
+    private static List<String> visibleCodes(java.util.Map<String, Object> detail) {
+        return lines(detail).map(l -> String.valueOf(l.get("categoryCode"))).toList();
+    }
+
+    private static java.math.BigDecimal lineAmount(java.util.Map<String, Object> detail, String code) {
+        return lines(detail)
+                .filter(l -> code.equals(l.get("categoryCode")))
+                .findFirst()
+                .map(l -> new java.math.BigDecimal(String.valueOf(l.get("amount"))))
+                .orElseThrow();
+    }
+
     @Test
     @DisplayName("payroll's own roles cannot be given a row")
     void payrollRolesAreNotConfigurable() {

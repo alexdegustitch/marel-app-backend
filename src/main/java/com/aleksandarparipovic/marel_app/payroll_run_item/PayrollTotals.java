@@ -6,6 +6,7 @@ import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunIte
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Collection;
+import java.util.List;
 
 /**
  * The one expression that turns lines into totals.
@@ -36,6 +37,14 @@ public record PayrollTotals(
     private static final String IMPACT_GROSS_PLUS = "GROSS_PLUS";
     private static final String SECTION_SETTLEMENTS = "SETTLEMENTS";
 
+    /**
+     * One line, reduced to what the formula actually reads.
+     *
+     * <p>Lets the same arithmetic run over a REPLAYED handover, where there are
+     * no entities left — only what the record kept.
+     */
+    public record Line(String impactCode, String sectionCode, boolean applied, BigDecimal amount) {}
+
     public static PayrollTotals of(Collection<PayrollRunItemCategory> categories,
                                    Collection<PayrollAdjustment> adjustments,
                                    BigDecimal previousNetPayable) {
@@ -44,24 +53,39 @@ public record PayrollTotals(
                 .map(c -> c.getAmount() != null ? c.getAmount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
+        List<Line> lines = adjustments.stream()
+                .map(a -> new Line(
+                        a.getPayrollAdjustmentCategory().getImpactCode(),
+                        a.getPayrollAdjustmentCategory().getSectionCode(),
+                        Boolean.TRUE.equals(a.getIsApplied()),
+                        a.getAmount()))
+                .toList();
+
+        return ofValues(categoriesSum, lines, previousNetPayable);
+    }
+
+    /** The formula itself. Everything else here is an adapter onto it. */
+    public static PayrollTotals ofValues(BigDecimal categoriesSum,
+                                         Collection<Line> lines,
+                                         BigDecimal previousNetPayable) {
+
+        BigDecimal base = categoriesSum != null ? categoriesSum : BigDecimal.ZERO;
+
         // Summed by IMPACT, not by section, so a category moved between sections
         // for display cannot change what somebody is paid.
-        BigDecimal earningsSum = adjustments.stream()
-                .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                        && IMPACT_GROSS_PLUS.equals(a.getPayrollAdjustmentCategory().getImpactCode()))
-                .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
+        BigDecimal earningsSum = lines.stream()
+                .filter(l -> l.applied() && IMPACT_GROSS_PLUS.equals(l.impactCode()))
+                .map(l -> l.amount() != null ? l.amount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal totalNetEarnings = categoriesSum.add(earningsSum).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal totalNetEarnings = base.add(earningsSum).setScale(2, RoundingMode.HALF_UP);
 
         // Still filtered by SECTION, deliberately: switching this side to impact
         // codes would pull in lines that reach no total today, and making one of
         // them start reducing somebody's pay is a business decision.
-        BigDecimal previouslyPaid = adjustments.stream()
-                .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                        && SECTION_SETTLEMENTS.equalsIgnoreCase(
-                                a.getPayrollAdjustmentCategory().getSectionCode()))
-                .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
+        BigDecimal previouslyPaid = lines.stream()
+                .filter(l -> l.applied() && SECTION_SETTLEMENTS.equalsIgnoreCase(l.sectionCode()))
+                .map(l -> l.amount() != null ? l.amount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
 
