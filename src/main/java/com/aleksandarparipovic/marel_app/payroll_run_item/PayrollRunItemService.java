@@ -64,6 +64,7 @@ import java.util.Optional;
 import org.springframework.data.domain.PageRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemHandoverDto;
+import com.aleksandarparipovic.marel_app.payroll_field_access.PayrollFieldAccessService;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 
@@ -91,6 +92,7 @@ public class PayrollRunItemService {
     private final EntityReferenceProvider referenceProvider;
     private final CurrentUserService currentUserService;
     private final com.aleksandarparipovic.marel_app.payroll_run.PayrollVisibilityPolicy payrollVisibilityPolicy;
+    private final com.aleksandarparipovic.marel_app.payroll_field_access.PayrollFieldAccessService fieldAccessService;
     private final PayrollRunItemHandoverRepository handoverRepository;
 
     /**
@@ -786,6 +788,68 @@ public class PayrollRunItemService {
         if (item.getPeriod() != null) {
             summary.setMaxEfficiencyPercent(appSettingService.getMaxEfficiencyPercentOn(
                     item.getPeriod().withDayOfMonth(item.getPeriod().lengthOfMonth())));
+        }
+
+        /*
+         * A READER WHO MAY NOT SEE EVERY LINE GETS TOTALS THAT MATCH WHAT THEY SEE.
+         *
+         * Not a second rule: PayrollTotals is the same expression the engine
+         * evaluates, given fewer terms. If a = X + Y - Z and Y is not theirs,
+         * they get a = X - Z — a figure they can check by adding up the screen,
+         * instead of one that hangs there unexplained.
+         *
+         * The hidden lines never leave the server; this is not the screen
+         * choosing to draw less.
+         */
+        if (payrollVisibilityPolicy.isRestrictedUser()) {
+            Map<String, PayrollFieldAccessService.Access> access = fieldAccessService.accessForCurrentUser();
+
+            List<PayrollAdjustment> visibleEntities =
+                    payrollAdjustmentRepository.findByPayrollRunItemIdWithCategory(item.getId()).stream()
+                            .filter(a -> scope.allowsAdjustmentCategory(a.getPayrollAdjustmentCategory().getId()))
+                            .filter(a -> access.getOrDefault(
+                                    a.getPayrollAdjustmentCategory().getCode(),
+                                    new PayrollFieldAccessService.Access(false, false)).canView())
+                            .toList();
+
+            java.util.Set<String> visibleCodes = visibleEntities.stream()
+                    .map(a -> a.getPayrollAdjustmentCategory().getCode())
+                    .collect(java.util.stream.Collectors.toSet());
+
+            adjustments = adjustments.stream()
+                    .map(section -> new PayrollAdjustmentSectionDto(
+                            section.getSectionCode(),
+                            section.getSectionOrder(),
+                            section.getAdjustments().stream()
+                                    .filter(a -> visibleCodes.contains(a.getCategoryCode()))
+                                    .toList()))
+                    .filter(section -> !section.getAdjustments().isEmpty())
+                    .toList();
+
+            PayrollTotals visible = PayrollTotals.of(
+                    payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId()),
+                    visibleEntities,
+                    item.getPreviousNetPayableAmount());
+
+            summary.setTotalNetEarnings(visible.totalNetEarnings());
+            summary.setPreviouslyPaidAmount(visible.previouslyPaidAmount());
+            summary.setCurrentBalanceAmount(visible.currentBalanceAmount());
+            summary.setNetPayableAmount(visible.netPayableAmount());
+
+            // The two headline figures are themselves configurable: a role may be
+            // allowed to read the lines and still not the payout.
+            if (!access.getOrDefault(PayrollFieldAccessService.FIELD_NET_PAYABLE,
+                    new PayrollFieldAccessService.Access(false, false)).canView()) {
+                summary.setNetPayableAmount(null);
+            }
+            if (!access.getOrDefault(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS,
+                    new PayrollFieldAccessService.Access(false, false)).canView()) {
+                summary.setTotalNetEarnings(null);
+            }
+            if (!access.getOrDefault(PayrollFieldAccessService.FIELD_HOURLY_RATE,
+                    new PayrollFieldAccessService.Access(false, false)).canView()) {
+                summary.setHourlyRate(null);
+            }
         }
 
         return new PayrollRunItemDetailResponse(

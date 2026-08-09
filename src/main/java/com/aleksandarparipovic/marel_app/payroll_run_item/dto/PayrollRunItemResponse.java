@@ -55,8 +55,18 @@ public class PayrollRunItemResponse {
     private final Integer totalPayrollMinutes;
 
     // ── Rate & base pay ──────────────────────────────────────────────────────
-    private final BigDecimal totalNetEarnings;
-    private final BigDecimal hourlyRate;
+    /*
+     * Adjustable ONLY on the response, never on the entity.
+     *
+     * A reader who may not see every line gets totals evaluated over the lines
+     * they may see. That figure belongs to the answer, not to the payroll — the
+     * item in the database keeps the real ones, and writing them here would
+     * flush a filtered total into the record itself.
+     */
+    @Setter
+    private BigDecimal totalNetEarnings;
+    @Setter
+    private BigDecimal hourlyRate;
     private final BigDecimal hourlyRateSystem;
     private final Boolean hourlyRateOverridden;
 
@@ -67,10 +77,13 @@ public class PayrollRunItemResponse {
     // ── Bonus components ─────────────────────────────────────────────────────
 
     // ── Calculated summary totals ─────────────────────────────────────────────
-    private final BigDecimal previouslyPaidAmount;
+    @Setter
+    private BigDecimal previouslyPaidAmount;
     private final BigDecimal previousNetPayableAmount;
-    private final BigDecimal currentBalanceAmount;
-    private final BigDecimal netPayableAmount;
+    @Setter
+    private BigDecimal currentBalanceAmount;
+    @Setter
+    private BigDecimal netPayableAmount;
 
     // ── Metadata ─────────────────────────────────────────────────────────────
     private final String status;
