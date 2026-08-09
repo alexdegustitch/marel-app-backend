@@ -89,6 +89,21 @@ public class PayrollAdjustmentDetailDto {
     private final String note;
     private final Boolean isApplied;
 
+    /**
+     * The line is on the payroll, and its figures are not this reader's to see.
+     *
+     * <p>THE LINE ITSELF IS NOT A SECRET. Somebody who works a month should be
+     * able to see that a bonus exists on their payroll without being shown what
+     * it is worth, and a screen that silently drops the row invents a payroll
+     * with fewer lines than the real one. So the row stays, with its name and
+     * its place, and the amounts arrive null.
+     *
+     * <p>The client must render "no value" here rather than a zero: a hidden
+     * figure and a figure that is nothing are different facts about somebody's
+     * pay.
+     */
+    private final boolean valueHidden;
+
     private final Long createdById;
     private final Long editedById;
     private final OffsetDateTime editedAt;
@@ -111,7 +126,7 @@ public class PayrollAdjustmentDetailDto {
     public PayrollAdjustmentDetailDto(PayrollAdjustment a,
                                       java.util.Map<Long, String> translations,
                                       EffectiveComponentConfig config) {
-        this(a, translations, config, true);
+        this(a, translations, config, true, false);
     }
 
     /**
@@ -126,7 +141,8 @@ public class PayrollAdjustmentDetailDto {
     public PayrollAdjustmentDetailDto(PayrollAdjustment a,
                                       java.util.Map<Long, String> translations,
                                       EffectiveComponentConfig config,
-                                      boolean editableByReader) {
+                                      boolean editableByReader,
+                                      boolean valueHidden) {
         PayrollAdjustmentCategory cat = a.getPayrollAdjustmentCategory();
 
         this.id = a.getId();
@@ -161,19 +177,24 @@ public class PayrollAdjustmentDetailDto {
                 config != null ? config.requiredManualInput() : cat.getRequiredManualInput();
         this.calculationMode = config != null ? config.calculationMode() : "INHERIT";
 
-        this.systemQuantity = a.getSystemQuantity();
-        this.quantity = a.getQuantity();
-        this.systemUnitAmount = a.getSystemUnitAmount();
-        this.unitAmount = a.getUnitAmount();
-        this.systemAmount = a.getSystemAmount();
-        this.amount = a.getAmount();
-        this.correctionAmount = a.getCorrectionAmount();
-        this.systemCorrectionAmount = a.getSystemCorrectionAmount();
+        // Withheld on the server, not hidden on the screen: a figure the browser
+        // never receives cannot be read out of the network tab.
+        this.valueHidden = valueHidden;
+        this.systemQuantity = valueHidden ? null : a.getSystemQuantity();
+        this.quantity = valueHidden ? null : a.getQuantity();
+        this.systemUnitAmount = valueHidden ? null : a.getSystemUnitAmount();
+        this.unitAmount = valueHidden ? null : a.getUnitAmount();
+        this.systemAmount = valueHidden ? null : a.getSystemAmount();
+        this.amount = valueHidden ? null : a.getAmount();
+        this.correctionAmount = valueHidden ? null : a.getCorrectionAmount();
+        this.systemCorrectionAmount = valueHidden ? null : a.getSystemCorrectionAmount();
         this.isOverridden = a.getIsOverridden();
         this.overrideReason = a.getOverrideReason();
         this.hasManualInput = a.getHasManualInput();
         this.status = a.getStatus();
-        this.calculationInputs = a.getCalculationInputs();
+        // The inputs carry the figures the amount was built from, so withholding
+        // the result while sending its terms would hide nothing at all.
+        this.calculationInputs = valueHidden ? null : a.getCalculationInputs();
         this.note = a.getNote();
         this.isApplied = a.getIsApplied();
 

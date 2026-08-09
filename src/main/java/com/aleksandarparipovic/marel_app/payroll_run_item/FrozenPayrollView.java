@@ -58,31 +58,35 @@ public class FrozenPayrollView {
         // ── Lines ────────────────────────────────────────────────────────────
         List<Map<String, Object>> keptSections = new ArrayList<>();
         List<PayrollTotals.Line> visibleLines = new ArrayList<>();
-        long shownBefore = 0;
+        boolean hidAValue = false;
 
         for (Map<String, Object> section : maps(detail.get("adjustments"))) {
-            shownBefore += maps(section.get("adjustments")).size();
-            List<Map<String, Object>> kept = maps(section.get("adjustments")).stream()
-                    .filter(line -> access.getOrDefault(text(line.get("categoryCode")), DENIED).canView())
-                    // The record was written with every line editable, because it
-                    // was written as payroll sees it. Editability is the reader's
-                    // question, so it is answered here rather than replayed.
-                    .map(line -> readOnlyUnlessAllowed(line, access))
-                    .toList();
-            if (kept.isEmpty()) {
-                // An empty section is a heading with nothing under it, which
-                // reads as "there was nothing here" rather than "not for you".
-                continue;
-            }
-            Map<String, Object> copy = new LinkedHashMap<>(section);
-            copy.put("adjustments", kept);
-            keptSections.add(copy);
+            List<Map<String, Object>> lines = new ArrayList<>();
 
-            kept.forEach(line -> visibleLines.add(new PayrollTotals.Line(
-                    text(line.get("impactCode")),
-                    text(line.get("sectionCode")),
-                    Boolean.TRUE.equals(line.get("isApplied")),
-                    decimal(line.get("amount")))));
+            for (Map<String, Object> line : maps(section.get("adjustments"))) {
+                PayrollFieldAccessService.Access allowed =
+                        access.getOrDefault(text(line.get("categoryCode")), DENIED);
+
+                if (allowed.canView()) {
+                    // Counted into the totals, so the figures add up against the
+                    // rows this reader can actually read.
+                    visibleLines.add(new PayrollTotals.Line(
+                            text(line.get("impactCode")),
+                            text(line.get("sectionCode")),
+                            Boolean.TRUE.equals(line.get("isApplied")),
+                            decimal(line.get("amount"))));
+                } else {
+                    hidAValue = true;
+                }
+                // The record was written as payroll sees it — every line whole and
+                // editable. What this reader may see and change is answered here
+                // rather than replayed.
+                lines.add(forReader(line, allowed));
+            }
+
+            Map<String, Object> copy = new LinkedHashMap<>(section);
+            copy.put("adjustments", lines);
+            keptSections.add(copy);
         }
         out.put("adjustments", keptSections);
 
@@ -114,7 +118,7 @@ public class FrozenPayrollView {
         }
 
         // Said only when something was actually withheld from THIS reader.
-        out.put("partialView", visibleLines.size() < shownBefore
+        out.put("partialView", hidAValue
                 || summary.get("netPayableAmount") == null
                 || summary.get("totalNetEarnings") == null);
 
@@ -129,17 +133,32 @@ public class FrozenPayrollView {
         return out;
     }
 
-    private static Map<String, Object> readOnlyUnlessAllowed(
-            Map<String, Object> line, Map<String, PayrollFieldAccessService.Access> access) {
-
-        if (access.getOrDefault(text(line.get("categoryCode")), DENIED).canEdit()) {
+    /** The stored line as this reader may have it: named always, valued sometimes. */
+    private static Map<String, Object> forReader(Map<String, Object> line,
+                                                 PayrollFieldAccessService.Access allowed) {
+        if (allowed.canView() && allowed.canEdit()) {
             return line;
         }
         Map<String, Object> copy = new LinkedHashMap<>(line);
-        copy.put("editableInput", "NONE");
-        copy.put("allowTotalOverride", false);
+
+        if (!allowed.canEdit()) {
+            copy.put("editableInput", "NONE");
+            copy.put("allowTotalOverride", false);
+        }
+        if (!allowed.canView()) {
+            // The row keeps its name and its place; the figures do not travel.
+            for (String field : WITHHELD_FIELDS) {
+                copy.put(field, null);
+            }
+            copy.put("valueHidden", true);
+        }
         return copy;
     }
+
+    private static final List<String> WITHHELD_FIELDS = List.of(
+            "amount", "systemAmount", "quantity", "systemQuantity",
+            "unitAmount", "systemUnitAmount", "correctionAmount",
+            "systemCorrectionAmount", "calculationInputs");
 
     // ── Reading JSON that has been through a database ────────────────────────
     //

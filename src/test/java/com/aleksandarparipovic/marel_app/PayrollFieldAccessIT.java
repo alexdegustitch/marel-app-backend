@@ -116,13 +116,25 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         signedInAs("supervisor");
         var filtered = payrollRunItemService.getDetails(monthlyReportId);
 
-        int visibleLineCount = filtered.getAdjustments().stream()
+        // THE LINES ARE ALL STILL THERE. Somebody should be able to see that a
+        // bonus exists on their payroll without being shown what it is worth,
+        // and a screen missing rows is a different document, not a safer one.
+        int shownLineCount = filtered.getAdjustments().stream()
                 .mapToInt(section -> section.getAdjustments().size()).sum();
-        assertThat(visibleLineCount).isLessThan(fullLineCount);
-        assertThat(filtered.getAdjustments().stream()
+        assertThat(shownLineCount).isEqualTo(fullLineCount);
+
+        // What went is the figures, and only on the lines not granted.
+        var lines = filtered.getAdjustments().stream()
                 .flatMap(section -> section.getAdjustments().stream())
-                .map(a -> a.getCategoryCode()))
-                .containsOnly("MEAL_ALLOWANCE");
+                .collect(java.util.stream.Collectors.toMap(a -> a.getCategoryCode(), a -> a, (x, y) -> x));
+
+        assertThat(lines.get("MEAL_ALLOWANCE").isValueHidden()).isFalse();
+        assertThat(lines.get("OTHER").isValueHidden()).isTrue();
+        assertThat(lines.get("OTHER").getAmount()).isNull();
+        assertThat(lines.get("OTHER").getUnitAmount()).isNull();
+        assertThat(lines.get("OTHER").getCalculationInputs()).isNull();
+        // The name is not the secret.
+        assertThat(lines.get("OTHER").getCategoryDisplayName()).isNotBlank();
 
         // The headline figures are configurable in their own right, and nothing
         // was granted for them.
@@ -208,8 +220,11 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         // Not merely the line: the total they handed over is the one they keep.
         assertThat(total(frozen.get())).isEqualByComparingTo(atHandover);
 
-        // Still only their lines. Freezing is not a way around the filter.
-        assertThat(visibleCodes(frozen.get())).containsOnly("OTHER");
+        // Every line is still listed, and the ones not theirs carry no figures.
+        // Freezing is not a way around the filter, in either direction.
+        assertThat(visibleCodes(frozen.get())).contains("OTHER", "MEAL_ALLOWANCE");
+        assertThat(lineOf(frozen.get(), "MEAL_ALLOWANCE").get("amount")).isNull();
+        assertThat(lineOf(frozen.get(), "MEAL_ALLOWANCE").get("valueHidden")).isEqualTo(true);
 
         // A lock applied afterwards is not theirs to learn about.
         signedInAs("admin");
@@ -388,6 +403,13 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
 
     private static List<String> visibleCodes(java.util.Map<String, Object> detail) {
         return lines(detail).map(l -> String.valueOf(l.get("categoryCode"))).toList();
+    }
+
+    private static java.util.Map<String, Object> lineOf(
+            java.util.Map<String, Object> detail, String code) {
+        return lines(detail)
+                .filter(l -> code.equals(l.get("categoryCode")))
+                .findFirst().orElseThrow();
     }
 
     private static java.math.BigDecimal lineAmount(java.util.Map<String, Object> detail, String code) {

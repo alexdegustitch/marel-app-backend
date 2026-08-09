@@ -843,11 +843,10 @@ public class PayrollRunItemService {
                                 // A line this reader may read but not change
                                 // arrives read-only, so the refusal never has to
                                 // happen after somebody has typed into it.
-                                !applyFieldAccess
-                                        || !payrollVisibilityPolicy.isRestrictedUser()
-                                        || lineAccess.getOrDefault(
-                                                a.getPayrollAdjustmentCategory().getCode(),
-                                                DENIED_ACCESS).canEdit()))
+                                mayEditLine(applyFieldAccess, lineAccess, a),
+                                // And one they may not read at all keeps its
+                                // place on the payroll, without its figures.
+                                !mayViewLine(applyFieldAccess, lineAccess, a)))
                         .collect(java.util.stream.Collectors.groupingBy(
                                 dto -> dto.getSectionCode() != null ? dto.getSectionCode() : ""
                         ))
@@ -885,10 +884,16 @@ public class PayrollRunItemService {
          * they get a = X - Z — a figure they can check by adding up the screen,
          * instead of one that hangs there unexplained.
          *
-         * The hidden lines never leave the server; this is not the screen
-         * choosing to draw less.
+         * THE LINE STAYS, ONLY ITS FIGURES GO. Dropping the row would invent a
+         * payroll with fewer lines than the real one, and somebody comparing two
+         * screens would be looking at two different documents. The row keeps its
+         * name and its place, and arrives without amounts — which the server
+         * withholds rather than the browser hiding, so nothing is left in the
+         * network tab to read.
          */
-        boolean partialView = false;
+        boolean partialView = adjustments.stream()
+                .flatMap(section -> section.getAdjustments().stream())
+                .anyMatch(PayrollAdjustmentDetailDto::isValueHidden);
 
         if (applyFieldAccess && payrollVisibilityPolicy.isRestrictedUser()) {
             Map<String, PayrollFieldAccessService.Access> access = lineAccess;
@@ -900,23 +905,6 @@ public class PayrollRunItemService {
                                     a.getPayrollAdjustmentCategory().getCode(),
                                     new PayrollFieldAccessService.Access(false, false)).canView())
                             .toList();
-
-            java.util.Set<String> visibleCodes = visibleEntities.stream()
-                    .map(a -> a.getPayrollAdjustmentCategory().getCode())
-                    .collect(java.util.stream.Collectors.toSet());
-
-            long shownBefore = adjustments.stream()
-                    .mapToLong(section -> section.getAdjustments().size()).sum();
-
-            adjustments = adjustments.stream()
-                    .map(section -> new PayrollAdjustmentSectionDto(
-                            section.getSectionCode(),
-                            section.getSectionOrder(),
-                            section.getAdjustments().stream()
-                                    .filter(a -> visibleCodes.contains(a.getCategoryCode()))
-                                    .toList()))
-                    .filter(section -> !section.getAdjustments().isEmpty())
-                    .toList();
 
             PayrollTotals visible = PayrollTotals.of(
                     payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(item.getId()),
@@ -943,11 +931,10 @@ public class PayrollRunItemService {
                 summary.setHourlyRate(null);
             }
 
-            // Said only when something was actually withheld. A role granted
-            // everything is not shown a warning about nothing.
-            long shownAfter = adjustments.stream()
-                    .mapToLong(section -> section.getAdjustments().size()).sum();
-            partialView = shownAfter < shownBefore
+            // Said when anything was actually withheld — a hidden line's figures
+            // or one of the headline totals. A role granted everything is not
+            // shown a warning about nothing.
+            partialView = partialView
                     || summary.getNetPayableAmount() == null
                     || summary.getTotalNetEarnings() == null;
         }
@@ -2014,6 +2001,22 @@ public class PayrollRunItemService {
                 mayEditItemField(PayrollFieldAccessService.FIELD_HOURLY_RATE),
                 mayEditItemField(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS)
         );
+    }
+
+    private boolean mayViewLine(boolean applyFieldAccess,
+                                Map<String, PayrollFieldAccessService.Access> access,
+                                PayrollAdjustment a) {
+        return !applyFieldAccess
+                || !payrollVisibilityPolicy.isRestrictedUser()
+                || access.getOrDefault(a.getPayrollAdjustmentCategory().getCode(), DENIED_ACCESS).canView();
+    }
+
+    private boolean mayEditLine(boolean applyFieldAccess,
+                                Map<String, PayrollFieldAccessService.Access> access,
+                                PayrollAdjustment a) {
+        return !applyFieldAccess
+                || !payrollVisibilityPolicy.isRestrictedUser()
+                || access.getOrDefault(a.getPayrollAdjustmentCategory().getCode(), DENIED_ACCESS).canEdit();
     }
 
     /** Payroll edits its own figures; everybody else is told, per role, per field. */
