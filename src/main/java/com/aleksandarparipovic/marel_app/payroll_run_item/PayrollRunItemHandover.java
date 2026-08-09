@@ -48,6 +48,13 @@ public class PayrollRunItemHandover {
     public static final String EVENT_SUBMITTED = "SUBMITTED";
     public static final String EVENT_RETURNED = "RETURNED";
 
+    /**
+     * The payroll came into being. Never stored — {@code getHandovers} derives it
+     * from the item's own created_at, because creating a payroll is not a step
+     * somebody took in the handover chain and the fact is already recorded.
+     */
+    public static final String EVENT_CREATED = "CREATED";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

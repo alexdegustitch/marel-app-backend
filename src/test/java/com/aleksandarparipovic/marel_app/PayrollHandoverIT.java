@@ -183,6 +183,37 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
         assertThat(handoversOf(scenario.item().getId())).isEmpty();
     }
 
+    /*
+     * The history has to start somewhere. Beginning it at the first submission
+     * reads as though the payroll appeared already prepared.
+     */
+    @Test
+    @DisplayName("the history begins when the payroll was created, before anything is handed over")
+    void historyStartsAtCreation() {
+        var scenario = fixture.scenario().build();
+        Long id = scenario.item().getId();
+
+        // Nothing stored yet — the table is untouched.
+        assertThat(handoversOf(id)).isEmpty();
+
+        var history = payrollRunItemService.getHandovers(id);
+        assertThat(history).hasSize(1);
+
+        var created = history.getFirst();
+        assertThat(created.event()).isEqualTo("CREATED");
+        assertThat(created.occurredAt()).isEqualTo(scenario.item().getCreatedAt());
+        // Derived, not stored: no row, so no id and nothing to open.
+        assertThat(created.id()).isNull();
+        assertThat(created.hasSnapshot()).isFalse();
+
+        // And it stays at the bottom once real steps arrive — newest first.
+        payrollRunItemService.submit(id, null);
+        var afterSubmit = payrollRunItemService.getHandovers(id);
+        assertThat(afterSubmit).hasSize(2);
+        assertThat(afterSubmit.getFirst().event()).isEqualTo("SUBMITTED");
+        assertThat(afterSubmit.getLast().event()).isEqualTo("CREATED");
+    }
+
     @Test
     @DisplayName("a locked month cannot be handed over again")
     void lockedCannotBeSubmitted() {

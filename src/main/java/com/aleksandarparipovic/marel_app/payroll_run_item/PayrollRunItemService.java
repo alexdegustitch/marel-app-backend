@@ -550,7 +550,8 @@ public class PayrollRunItemService {
     @Transactional(readOnly = true)
     public List<PayrollRunItemHandoverDto> getHandovers(Long payrollRunItemId) {
         boolean amounts = payrollVisibilityPolicy.canSeeAmounts();
-        return handoverRepository.findByPayrollRunItemIdOrderByOccurredAtDesc(payrollRunItemId).stream()
+        List<PayrollRunItemHandoverDto> steps = new java.util.ArrayList<>(
+                handoverRepository.findByPayrollRunItemIdOrderByOccurredAtDesc(payrollRunItemId).stream()
                 .map(h -> new PayrollRunItemHandoverDto(
                         h.getId(),
                         h.getEvent(),
@@ -564,7 +565,50 @@ public class PayrollRunItemService {
                         lineCount(h),
                         h.getPayload().get("detail") != null,
                         h.getNote()))
-                .toList();
+                .toList());
+
+        // The month has to start somewhere, and a history that begins at the
+        // first handover reads as though the payroll appeared already prepared.
+        creationStep(payrollRunItemId).ifPresent(steps::add);
+        return steps;
+    }
+
+    /**
+     * When the payroll came into being, as the oldest entry in its history.
+     *
+     * <p>READ, NOT WRITTEN. Creating a payroll is not a handover — nobody decided
+     * anything — and the item already records when it happened, so a row would be
+     * a second copy of a fact that is already stored. Deriving it also means every
+     * payroll already in the database has the entry today, without a backfill of
+     * a table that cannot be corrected afterwards.
+     *
+     * <p>The actor is whoever opened the RUN. The item carries no author of its
+     * own: items are created in bulk when a month is opened, so the person who
+     * opened it is the honest answer.
+     */
+    private Optional<PayrollRunItemHandoverDto> creationStep(Long payrollRunItemId) {
+        return payrollRunItemRepository.findById(payrollRunItemId)
+                .filter(item -> item.getCreatedAt() != null)
+                .map(item -> {
+                    Long actorId = item.getPayrollRun() != null && item.getPayrollRun().getCreatedBy() != null
+                            ? item.getPayrollRun().getCreatedBy().getId()
+                            : null;
+                    return new PayrollRunItemHandoverDto(
+                            // No row, so no id — and nothing to open: there is no
+                            // snapshot of a payroll at the instant it was empty.
+                            null,
+                            PayrollRunItemHandover.EVENT_CREATED,
+                            actorId,
+                            actorName(actorId),
+                            item.getCreatedAt(),
+                            null,
+                            STATUS_DRAFT,
+                            null,
+                            null,
+                            0,
+                            false,
+                            null);
+                });
     }
 
     /**
