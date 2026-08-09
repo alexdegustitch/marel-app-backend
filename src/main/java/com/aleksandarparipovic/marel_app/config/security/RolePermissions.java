@@ -30,7 +30,9 @@ public final class RolePermissions {
             "supervisor", EnumSet.of(
                     AppPermission.MANUFACTURING_TIME_REQUEST_PROCESS,
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
-                    AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE),
+                    AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
+                    // Hands the month over and takes it back; never locks it.
+                    AppPermission.PAYROLL_HANDOVER),
 
             // Commercial staff drive production orders and who gets told about them.
             "commercial", EnumSet.of(

@@ -97,6 +97,30 @@ class PayrollVisibilityPolicyTest {
         assertThat(policy.isRestrictedUser()).isFalse();
     }
 
+    /*
+     * Role names live in the database in lower case, so the authority is
+     * ROLE_admin. hasRole('ADMIN') asks for ROLE_ADMIN and never matches — which
+     * is why lock and unlock had been unreachable since they were written. The
+     * permission layer lower-cases, so it cannot be spelled wrong the same way.
+     */
+    @Test
+    @DisplayName("the permission layer matches the lower-case role names the database holds")
+    void permissionsMatchRealRoleNames() {
+        var permissions = new com.aleksandarparipovic.marel_app.config.security.PermissionService();
+
+        signedInAs("admin");
+        assertThat(permissions.has("PAYROLL_LOCK")).isTrue();
+        assertThat(permissions.has("PAYROLL_HANDOVER")).isTrue();
+
+        signedInAs("supervisor");
+        // Hands over, never locks.
+        assertThat(permissions.has("PAYROLL_HANDOVER")).isTrue();
+        assertThat(permissions.has("PAYROLL_LOCK")).isFalse();
+
+        signedInAs("commercial");
+        assertThat(permissions.has("PAYROLL_HANDOVER")).isFalse();
+    }
+
     @Test
     @DisplayName("an anonymous token is not a signed-in user")
     void anonymousIsNotAUser() {

@@ -112,7 +112,7 @@ public class PayrollRunItemController {
      * zero nobody decided on.
      */
     @PostMapping("/{id}/lock")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@perm.has('PAYROLL_LOCK')")
     public ResponseEntity<PayrollRunItemResponse> lock(@PathVariable Long id) {
         return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.lock(id)));
     }
@@ -125,7 +125,7 @@ public class PayrollRunItemController {
      * lock, which stays admin-only.
      */
     @PostMapping("/{id}/submit")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR', 'DEVELOPER')")
+    @PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
     public ResponseEntity<PayrollRunItemResponse> submit(
             @PathVariable Long id,
             @RequestBody(required = false) HandoverRequest request) {
@@ -135,7 +135,7 @@ public class PayrollRunItemController {
 
     /** Send it back for correction. Same people who may hand it over. */
     @PostMapping("/{id}/return-to-draft")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERVISOR', 'DEVELOPER')")
+    @PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
     public ResponseEntity<PayrollRunItemResponse> returnToDraft(
             @PathVariable Long id,
             @RequestBody(required = false) HandoverRequest request) {
@@ -155,7 +155,7 @@ public class PayrollRunItemController {
 
     /** Reopen a frozen item. Separate permission, separate audit entry. */
     @PostMapping("/{id}/unlock")
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("@perm.has('PAYROLL_LOCK')")
     public ResponseEntity<PayrollRunItemResponse> unlock(@PathVariable Long id) {
         return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.unlock(id)));
     }

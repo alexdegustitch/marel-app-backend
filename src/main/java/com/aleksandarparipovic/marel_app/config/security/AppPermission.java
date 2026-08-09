@@ -48,5 +48,21 @@ public enum AppPermission {
      * writes to every unlocked item, so it belongs to whoever owns the payroll —
      * RolePermissions grants it to admin and developer and to nobody else.
      */
-    PAYROLL_MAINTENANCE_RECALCULATE
+    PAYROLL_MAINTENANCE_RECALCULATE,
+
+    /**
+     * Hand a payroll month over as finished, or send it back for correction.
+     *
+     * <p>The shop floor's own step: the supervisor is the one who knows whether
+     * the month's work is complete, so they hold this and payroll does too.
+     */
+    PAYROLL_HANDOVER,
+
+    /**
+     * Freeze a handed-over month, or reopen it.
+     *
+     * <p>Payroll's step, and only theirs — locking is what turns a calculated
+     * month into a record of what was paid.
+     */
+    PAYROLL_LOCK
 }
