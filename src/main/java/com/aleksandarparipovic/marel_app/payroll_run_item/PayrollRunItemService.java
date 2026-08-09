@@ -45,8 +45,6 @@ import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunIte
 import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -64,6 +62,7 @@ import java.util.Optional;
 import org.springframework.data.domain.PageRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.RecentPayrollSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemHandoverDto;
+import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.payroll_field_access.PayrollFieldAccessService;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
@@ -95,6 +94,7 @@ public class PayrollRunItemService {
     private final com.aleksandarparipovic.marel_app.payroll_field_access.PayrollFieldAccessService fieldAccessService;
     private final PayrollRunItemHandoverRepository handoverRepository;
     private final FrozenPayrollView frozenPayrollView;
+    private final com.aleksandarparipovic.marel_app.config.security.PermissionService permissionService;
 
     private static final PayrollFieldAccessService.Access DENIED_ACCESS =
             new PayrollFieldAccessService.Access(false, false);
@@ -678,7 +678,7 @@ public class PayrollRunItemService {
                 .map(detail -> frozenPayrollView.filtered(
                         (Map<String, Object>) detail,
                         payrollVisibilityPolicy.visibleStatus(item.getStatus()),
-                        resolvePermissions()));
+                        resolvePermissions(item)));
     }
 
     /**
@@ -866,7 +866,7 @@ public class PayrollRunItemService {
                         .sorted(java.util.Comparator.comparingInt(PayrollAdjustmentSectionDto::getSectionOrder))
                         .toList();
 
-        PayrollRunItemPermissionsDto permissions = resolvePermissions();
+        PayrollRunItemPermissionsDto permissions = resolvePermissions(item);
 
         PayrollRunItemResponse summary = new PayrollRunItemResponse(item);
         // Resolved at the period's LAST day, matching how MonthlyRecalcService caps
@@ -1983,17 +1983,34 @@ public class PayrollRunItemService {
                 .orElse(true);
     }
 
-    private PayrollRunItemPermissionsDto resolvePermissions() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        boolean isAdmin = auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-        boolean isSupervisor = auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPERVISOR"));
+    /**
+     * What this reader may DO to this payroll.
+     *
+     * <p>Answered by capability, not by a role name. It used to compare
+     * authorities against {@code ROLE_ADMIN} while they are issued as
+     * {@code ROLE_<lowercase>}, so all three flags were permanently false — the
+     * same mismatch that had quietly disabled lock and unlock. Nothing on the
+     * client read them, so nothing behaved wrongly; it was a trap for whoever
+     * wired them up first.
+     */
+    private PayrollRunItemPermissionsDto resolvePermissions(PayrollRunItem item) {
+        // The same permissions the endpoints themselves are guarded by, so the
+        // screen cannot offer a button the server will refuse.
+        boolean canLock = permissionService.hasPermission(AppPermission.PAYROLL_LOCK);
+        boolean canApprove = permissionService.hasPermission(AppPermission.PAYROLL_HANDOVER);
+
+        // Editing is not one permission: a payroll is open or closed by status,
+        // and within an open one a restricted reader may still have no line of
+        // their own. Both have to hold.
+        boolean openForEditing = item != null && STATUS_DRAFT.equals(item.getStatus());
+        boolean mayChangeSomething = !payrollVisibilityPolicy.isRestrictedUser()
+                || fieldAccessService.accessForCurrentUser().values().stream()
+                        .anyMatch(PayrollFieldAccessService.Access::canEdit);
 
         return new PayrollRunItemPermissionsDto(
-                isAdmin,           // canEditAdjustments
-                isAdmin,           // canLock
-                isAdmin || isSupervisor,  // canApprove
+                openForEditing && mayChangeSomething,
+                canLock,
+                canApprove,
                 mayEditItemField(PayrollFieldAccessService.FIELD_HOURLY_RATE),
                 mayEditItemField(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS)
         );

@@ -332,6 +332,35 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
                 .isCanEditTotalNetEarnings()).isTrue();
     }
 
+    @Test
+    @DisplayName("what the screen is told it may do matches what the server allows")
+    void permissionsAreAnsweredByCapability() {
+        var scenario = fixture.scenario().build();
+        Long monthlyReportId = scenario.monthlyReport().getId();
+
+        signedInAs("admin");
+        var forPayroll = payrollRunItemService.getDetails(monthlyReportId).getPermissions();
+        // These were all false for everybody, always: the check compared
+        // authorities against ROLE_ADMIN while they are issued lowercase.
+        assertThat(forPayroll.isCanLock()).isTrue();
+        assertThat(forPayroll.isCanApprove()).isTrue();
+        assertThat(forPayroll.isCanEditAdjustments()).isTrue();
+
+        signedInAs("supervisor");
+        var forSupervisor = payrollRunItemService.getDetails(monthlyReportId).getPermissions();
+        // May hand over, may not lock — and with nothing granted, has no line to
+        // change, so the screen is not put into edit mode over an empty payroll.
+        assertThat(forSupervisor.isCanApprove()).isTrue();
+        assertThat(forSupervisor.isCanLock()).isFalse();
+        assertThat(forSupervisor.isCanEditAdjustments()).isFalse();
+
+        signedInAs("admin");
+        service.set("OTHER", "supervisor", true, true);
+        signedInAs("supervisor");
+        assertThat(payrollRunItemService.getDetails(monthlyReportId).getPermissions()
+                .isCanEditAdjustments()).isTrue();
+    }
+
     private void setAmount(Long itemId, Long adjustmentId, String amount) {
         var patch = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest();
         var line = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto();
