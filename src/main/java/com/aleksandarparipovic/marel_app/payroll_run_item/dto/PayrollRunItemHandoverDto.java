@@ -2,7 +2,6 @@ package com.aleksandarparipovic.marel_app.payroll_run_item.dto;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
-import java.util.Map;
 
 /**
  * One handover step as reported to the caller.
@@ -21,8 +20,14 @@ public record PayrollRunItemHandoverDto(
         String statusAfter,
         BigDecimal totalNetEarnings,
         BigDecimal netPayableAmount,
-        /** The lines as handed over. Empty for a reader who may not see amounts. */
-        Map<String, Object> payload,
+        /** How many lines the snapshot holds. */
+        int lineCount,
+        /**
+         * Whether a full snapshot of the payroll was captured. False for
+         * handovers recorded before snapshots existed — those can still say who
+         * and when, just not what the screen looked like.
+         */
+        boolean hasSnapshot,
         String note
 ) {
 }

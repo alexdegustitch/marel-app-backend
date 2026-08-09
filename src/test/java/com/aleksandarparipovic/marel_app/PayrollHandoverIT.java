@@ -109,6 +109,26 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("the record holds the whole payroll as it stood, not just its amounts")
+    @SuppressWarnings("unchecked")
+    void payloadCarriesTheWholeResponse() {
+        var scenario = fixture.scenario().build();
+        Long id = scenario.item().getId();
+
+        payrollRunItemService.submit(id, null);
+
+        /*
+         * "As I handed it over" cannot be rebuilt by pouring stored amounts into
+         * the live structure — a line added afterwards, or a category renamed,
+         * would show something that was never submitted.
+         */
+        Object detail = handoversOf(id).getFirst().getPayload().get("detail");
+        assertThat(detail).isInstanceOf(java.util.Map.class);
+        java.util.Set<String> keys = ((java.util.Map<String, ?>) detail).keySet();
+        assertThat(keys).contains("summary", "adjustments", "categories");
+    }
+
+    @Test
     @DisplayName("a month cannot be locked before it has been handed over")
     void lockRequiresTheHandover() {
         var scenario = fixture.scenario().build();

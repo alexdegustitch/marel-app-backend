@@ -92,6 +92,21 @@ public class PayrollRunItemService {
     private final CurrentUserService currentUserService;
     private final com.aleksandarparipovic.marel_app.payroll_run.PayrollVisibilityPolicy payrollVisibilityPolicy;
     private final PayrollRunItemHandoverRepository handoverRepository;
+
+    /**
+     * Turns the detail response into storable JSON.
+     *
+     * <p>Its own instance rather than the context's: this runs inside a write
+     * that must not depend on which Jackson configuration a given context has,
+     * and the shape stored has to stay stable for as long as the records live.
+     * Dates as ISO strings, so a snapshot read years from now does not depend on
+     * a serialisation setting that has since changed.
+     */
+    private static final com.fasterxml.jackson.databind.ObjectMapper SNAPSHOT_MAPPER =
+            com.fasterxml.jackson.databind.json.JsonMapper.builder()
+                    .addModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                    .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                    .build();
     private final com.aleksandarparipovic.marel_app.user.UserRepository userRepository;
     private final com.aleksandarparipovic.marel_app.employee_payroll_run_item_update.EmployeePayrollRunItemUpdateService payrollRunItemUpdateService;
     private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
@@ -540,9 +555,8 @@ public class PayrollRunItemService {
                         h.getStatusAfter(),
                         amounts ? h.getTotalNetEarnings() : null,
                         amounts ? h.getNetPayableAmount() : null,
-                        // The lines are amounts too — withholding the totals and
-                        // shipping the breakdown would hand back what was hidden.
-                        amounts ? h.getPayload() : Map.of(),
+                        lineCount(h),
+                        h.getPayload().get("detail") != null,
                         h.getNote()))
                 .toList();
     }
@@ -566,7 +580,63 @@ public class PayrollRunItemService {
                             return line;
                         })
                         .toList();
-        return Map.of("lines", lines);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("v", 2);
+        payload.put("lines", lines);
+
+        /*
+         * THE WHOLE RESPONSE, not just the amounts.
+         *
+         * The rule is that a supervisor sees the payroll AS THEY HANDED IT OVER,
+         * and that cannot be assembled by pouring stored amounts back into the
+         * live structure: a line added after the handover, or a category
+         * renamed, would produce a screen showing something that was never
+         * submitted — precisely what the record exists to prevent.
+         *
+         * Stored at TRUE values. getDetails does not apply the visibility policy
+         * (masking happens where responses are built), so a handover made by
+         * somebody who cannot see amounts still records the real ones. Who may
+         * read them back is decided on read, as everywhere else.
+         */
+        try {
+            Long monthlyReportId = item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null;
+            if (monthlyReportId != null) {
+                payload.put("detail", SNAPSHOT_MAPPER.convertValue(
+                        getDetails(monthlyReportId), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+            }
+        } catch (RuntimeException ex) {
+            // A handover must not fail because its snapshot could not be built.
+            // The step itself is the thing being recorded; losing the detail
+            // costs the frozen view, losing the row costs the audit trail.
+            log.warn("Handover snapshot for item {} could not be captured: {}", item.getId(), ex.toString());
+        }
+        return payload;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int lineCount(PayrollRunItemHandover h) {
+        Object lines = h.getPayload().get("lines");
+        return lines instanceof List<?> list ? list.size() : 0;
+    }
+
+    /**
+     * The payroll exactly as it stood at one handover.
+     *
+     * <p>Serves the STORED response, never a rebuilt one. Returns empty for a
+     * handover recorded before snapshots existed, and for a reader who may not
+     * see amounts — a stored payroll is still a payroll, and until per-line
+     * access is configurable the blunt rule stands.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Map<String, Object>> getHandoverSnapshot(Long handoverId) {
+        if (!payrollVisibilityPolicy.canSeeAmounts()) {
+            return Optional.empty();
+        }
+        return handoverRepository.findById(handoverId)
+                .map(h -> h.getPayload().get("detail"))
+                .filter(Map.class::isInstance)
+                .map(d -> (Map<String, Object>) d);
     }
 
     /** Who did it, for the screen. Null id or a removed user reads as unknown. */

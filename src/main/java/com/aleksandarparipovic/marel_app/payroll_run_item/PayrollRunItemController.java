@@ -14,6 +14,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/payroll-run-items")
@@ -147,6 +148,15 @@ public class PayrollRunItemController {
     @GetMapping("/{id}/handovers")
     public ResponseEntity<List<PayrollRunItemHandoverDto>> handovers(@PathVariable Long id) {
         return ResponseEntity.ok(payrollRunItemService.getHandovers(id));
+    }
+
+    /** The payroll exactly as it stood at one handover. */
+    @GetMapping("/{id}/handovers/{handoverId}/snapshot")
+    public ResponseEntity<Map<String, Object>> handoverSnapshot(
+            @PathVariable Long id, @PathVariable Long handoverId) {
+        return payrollRunItemService.getHandoverSnapshot(handoverId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     /** Optional note; on a return it is the reason. */
