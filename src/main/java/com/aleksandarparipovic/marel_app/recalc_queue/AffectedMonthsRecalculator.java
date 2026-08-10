@@ -41,6 +41,7 @@ import java.util.List;
 public class AffectedMonthsRecalculator {
 
     private final RecalcQueueService recalcQueueService;
+    private final com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository payrollRunItemRepository;
 
     @PersistenceContext
     private EntityManager em;
@@ -99,6 +100,29 @@ public class AffectedMonthsRecalculator {
                 continue;
             }
             recalcQueueService.enqueueMonthlyJob(employee, month.getYear(), month.getMonthValue(), reason);
+
+            /*
+             * AND TELL THE PAYROLL ITSELF, not only the monthly report.
+             *
+             * The queued job rebuilds the REPORT. A payroll item re-prices when
+             * it next notices it is stale, and until now the only thing that made
+             * it notice was the report's version moving. A change that leaves the
+             * report identical — a rate, an entitlement, anything that prices work
+             * rather than measures it — need not move that version at all, and
+             * then the payroll went on showing the old figure indefinitely.
+             *
+             * Flagged rather than recalculated here: the item re-prices on the
+             * next read, which every list already does, and doing it inside the
+             * caller's transaction would make saving a rate wait on every month
+             * the employee has.
+             */
+            int marked = payrollRunItemRepository.markNeedsRecalculationByEmployeeAndMonth(
+                    employee.getId(), month.getYear(), month.getMonthValue());
+            if (marked > 0) {
+                log.debug("Employee {}: {} payroll item(s) for {} flagged for repricing",
+                        employee.getId(), marked, month);
+            }
+
             recalculated.add(month);
         }
 

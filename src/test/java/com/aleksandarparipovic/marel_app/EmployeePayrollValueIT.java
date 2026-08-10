@@ -42,6 +42,7 @@ class EmployeePayrollValueIT extends AbstractIntegrationTest {
     @Autowired private EmployeePayrollValueDefinitionRepository definitionRepository;
     @Autowired private PayrollScenarioFixture fixture;
     @Autowired private EntityManager entityManager;
+    @Autowired private com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository payrollRunItemRepository;
 
     private Employee anEmployee() {
         return fixture.scenario().build().employee();
@@ -490,6 +491,30 @@ class EmployeePayrollValueIT extends AbstractIntegrationTest {
     // it was entered from the 2nd instead — leaving 400 covering a single day and
     // August priced at it, because a month takes the rate in force on its first
     // day.
+
+    /*
+     * The complaint this closes: a rate written on the employee page did not
+     * reach the payroll. The queued job rebuilds the monthly REPORT, and the
+     * payroll item only re-prices when it notices it is stale — which, for a
+     * change that leaves the report identical, it never did.
+     */
+    @Test
+    @DisplayName("changing a value flags the payroll of every month it reaches")
+    void changingAValueFlagsThePayroll() {
+        var scenario = fixture.scenario().build();
+        var item = scenario.item();
+        assertThat(item.getNeedsRecalculation()).isFalse();
+
+        valueService.changeValue(scenario.employee().getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("450.00"),
+                item.getPeriod().withDayOfMonth(1), null, null);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(payrollRunItemRepository.findById(item.getId()).orElseThrow()
+                .getNeedsRecalculation()).isTrue();
+    }
 
     @Test
     @DisplayName("a period can be corrected without moving when it applies")

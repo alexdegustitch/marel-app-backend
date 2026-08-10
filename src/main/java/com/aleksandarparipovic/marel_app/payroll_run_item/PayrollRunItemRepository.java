@@ -171,6 +171,27 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
     int markNeedsRecalculationByEmployeeId(@Param("employeeId") Long employeeId);
 
     /**
+     * One employee, one month.
+     *
+     * <p>The precise version of the two above, for a dated change that names the
+     * months it touched. Marking every month of an employee would reprice ones
+     * the change could not have reached.
+     */
+    @Modifying
+    @Query("""
+        UPDATE PayrollRunItem pri
+        SET pri.needsRecalculation = true
+        WHERE pri.employee.id = :employeeId
+          AND YEAR(pri.period) = :year
+          AND MONTH(pri.period) = :month
+          AND pri.status != 'LOCKED'
+          AND pri.archivedAt IS NULL
+        """)
+    int markNeedsRecalculationByEmployeeAndMonth(@Param("employeeId") Long employeeId,
+                                                 @Param("year") int year,
+                                                 @Param("month") int month);
+
+    /**
      * @deprecated Retroactive repricing — do not use. Writing a rate onto items
      * this way overwrites months the rate was never in force for, which is the
      * defect employee_payroll_value_history exists to close. Record the rate with
