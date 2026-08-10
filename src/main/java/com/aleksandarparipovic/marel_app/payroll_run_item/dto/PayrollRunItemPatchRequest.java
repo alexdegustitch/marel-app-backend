@@ -1,7 +1,6 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item.dto;
 
 import com.fasterxml.jackson.annotation.JsonSetter;
-import com.fasterxml.jackson.annotation.Nulls;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -59,7 +58,20 @@ public class PayrollRunItemPatchRequest {
 
 
 
-    @JsonSetter(value = "hourlyRate", nulls = Nulls.AS_EMPTY)
+    /**
+     * An explicit {@code null} means RESET — take the system rate again.
+     *
+     * <p>Which is why {@code Nulls.AS_EMPTY} is not used here, and was the bug:
+     * for a BigDecimal, Jackson's "empty" value is ZERO, so a reset arrived as a
+     * typed-in 0. The payroll then recorded an hourly rate of zero and marked it
+     * OVERRIDDEN — the opposite of what the button says — and the employee's real
+     * rate was left sitting unused in hourly_rate_system.
+     *
+     * <p>The presence flag is what distinguishes this from a field that was never
+     * sent, so null can keep its own meaning here instead of being coerced into a
+     * number that means something else.
+     */
+    @JsonSetter("hourlyRate")
     public void setHourlyRate(BigDecimal v) {
         this.hourlyRate = v;
         this.hourlyRatePresent = true;

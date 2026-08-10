@@ -51,6 +51,7 @@ class EmployeeHourlyRateHistoryIT extends AbstractIntegrationTest {
     @Autowired private PayrollRunItemRepository itemRepository;
     @Autowired private PayrollScenarioFixture fixture;
     @Autowired private EntityManager entityManager;
+    @Autowired private com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemService payrollRunItemService;
     /** The test context has no web layer, so no auto-configured mapper either. */
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
@@ -237,5 +238,48 @@ class EmployeeHourlyRateHistoryIT extends AbstractIntegrationTest {
         assertThat(valueService.numericValueOn(employeeId, EmployeePayrollValueCodes.HOURLY_RATE,
                 LocalDate.of(2026, 9, 1))).hasValueSatisfying(
                         v -> assertThat(v).isEqualByComparingTo("777.00"));
+    }
+
+    /*
+     * "Reset" must mean the employee's own rate, not zero.
+     *
+     * The button sends an explicit null, and the service reads null as "take the
+     * system rate again". Between the two sat @JsonSetter(nulls = AS_EMPTY),
+     * whose empty value for a BigDecimal is ZERO — so the reset arrived as a
+     * typed-in 0, the payroll recorded zero, and marked it OVERRIDDEN, which is
+     * the opposite of what was asked. Read through the same mapper the web layer
+     * uses, because the defect lived in the deserialisation and not in either
+     * side's own logic.
+     */
+    @Test
+    @DisplayName("resetting the hourly rate takes the employee's rate, not zero")
+    void resettingTheRateTakesTheSystemValue() throws Exception {
+        var scenario = fixture.scenario().build();
+        Long itemId = scenario.item().getId();
+        Long employeeId = scenario.employee().getId();
+
+        valueService.changeValue(employeeId, EmployeePayrollValueCodes.HOURLY_RATE,
+                new java.math.BigDecimal("500.00"),
+                scenario.item().getPeriod().withDayOfMonth(1), null, null);
+
+        var mapper = org.springframework.http.converter.json.Jackson2ObjectMapperBuilder.json().build();
+
+        // Typed in: an override, as before.
+        payrollRunItemService.patch(itemId, mapper.readValue("{\"hourlyRate\":300.00}",
+                com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest.class));
+        entityManager.flush();
+        entityManager.clear();
+        var overridden = itemRepository.findById(itemId).orElseThrow();
+        assertThat(overridden.getHourlyRate()).isEqualByComparingTo("300.00");
+        assertThat(overridden.getHourlyRateOverridden()).isTrue();
+
+        // Reset: back to the employee's own rate, and no longer an override.
+        payrollRunItemService.patch(itemId, mapper.readValue("{\"hourlyRate\":null}",
+                com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest.class));
+        entityManager.flush();
+        entityManager.clear();
+        var reset = itemRepository.findById(itemId).orElseThrow();
+        assertThat(reset.getHourlyRate()).isEqualByComparingTo("500.00");
+        assertThat(reset.getHourlyRateOverridden()).isFalse();
     }
 }
