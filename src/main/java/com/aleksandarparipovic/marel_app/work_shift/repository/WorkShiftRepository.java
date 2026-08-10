@@ -55,6 +55,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
                 MAX(ws.last_activity_at)          AS last_activity
             FROM work_shifts ws
             WHERE ws.supervisor_id = :userId
+              AND ws.archived_at IS NULL
               AND ws.start_at >= make_date(CAST(:year AS int), 1, 1)
               AND ws.start_at <  make_date(CAST(:year AS int) + 1, 1, 1)
             GROUP BY ws.employee_id, date_trunc('month', ws.start_at)
@@ -109,7 +110,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
                    eb.bonus_category_id,
                    MAX(ws.last_activity_at) AS updateTime
             FROM employees e
-            JOIN work_shifts ws ON ws.employee_id = e.id
+            JOIN work_shifts ws ON ws.employee_id = e.id AND ws.archived_at IS NULL
             JOIN employees_bonus_history eb ON eb.employee_id = e.id
             WHERE ws.start_at >= :monthStart
               AND ws.start_at < :monthEnd
@@ -127,7 +128,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             countQuery = """
         SELECT COUNT(DISTINCT e.id)
         FROM employees e
-        JOIN work_shifts ws ON ws.employee_id = e.id
+        JOIN work_shifts ws ON ws.employee_id = e.id AND ws.archived_at IS NULL
         JOIN employees_bonus_history eb ON eb.employee_id = e.id
         WHERE ws.start_at >= :monthStart
           AND ws.start_at < :monthEnd
@@ -166,6 +167,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     AND ws.start_at >= :monthStart
     AND ws.start_at < :monthEnd
     AND ws.is_active = true
+    AND ws.archived_at IS NULL
     ORDER BY ws.start_at DESC
     """, nativeQuery = true)
     List<WorkShiftDetailInfo> getShiftsForMonth(
@@ -178,6 +180,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     FROM work_shifts ws
     WHERE ws.employee_record_id = :employeeRecordId
       AND ws.is_active = true
+      AND ws.archived_at IS NULL
     ORDER BY ws.start_at DESC
     """, nativeQuery = true)
     List<Long> getShiftsForEmployeeRecord(@Param("employeeRecordId") Long employeeRecordId);
@@ -187,6 +190,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     FROM work_shifts ws
     WHERE ws.employee_record_id = :employeeRecordId
       AND ws.is_active = true
+      AND ws.archived_at IS NULL
       AND ws.work_date BETWEEN :fromDate AND :toDate
     ORDER BY ws.start_at DESC
     """, nativeQuery = true)
@@ -201,6 +205,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     FROM work_shifts ws
     WHERE ws.employee_record_id = :employeeRecordId
       AND ws.is_active = true
+      AND ws.archived_at IS NULL
       AND ws.work_date = :workDate
     ORDER BY ws.start_at DESC
     """, nativeQuery = true)
@@ -209,7 +214,15 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
             @Param("workDate") LocalDate workDate
     );
 
-    List<WorkShift> findByEmployee_IdAndWorkDateIn(Long employeeId, List<LocalDate> workDates);
+    /**
+     * Shifts on given dates — WITHDRAWN ONES EXCLUDED.
+     *
+     * <p>This feeds the weekend-bonus recheck. A shift taken back is not work
+     * somebody did, so counting it would keep paying a bonus for a day that no
+     * longer exists.
+     */
+    List<WorkShift> findByEmployee_IdAndWorkDateInAndArchivedAtIsNull(Long employeeId,
+                                                                     List<LocalDate> workDates);
 
     /**
      * One employee's active shifts on or after a date.

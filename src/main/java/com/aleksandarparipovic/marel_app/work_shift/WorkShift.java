@@ -94,6 +94,20 @@ public class WorkShift {
     @Column(name = "is_active")
     private Boolean isActive = true;
 
+    /**
+     * When the shift was withdrawn, and by whom. NULL means live.
+     *
+     * <p>Withdrawn rather than deleted: the work logs on it are what somebody was
+     * paid for, and they stay readable. The two constraints that keep shifts from
+     * overlapping now count live rows only, so a mistake taken back does not
+     * block its own correction.
+     */
+    @Column(name = "archived_at")
+    private OffsetDateTime archivedAt;
+
+    @Column(name = "archived_by")
+    private Long archivedBy;
+
     // 🔥 optimistic locking
     @Version
     @Column(name = "version", nullable = false)

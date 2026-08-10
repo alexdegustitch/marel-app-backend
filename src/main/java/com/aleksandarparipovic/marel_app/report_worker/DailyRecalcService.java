@@ -140,6 +140,36 @@ public class DailyRecalcService {
         Employee employee = employeeRepository.findById(employeeId)
                 .orElseThrow(() -> new IllegalStateException("Employee not found: " + employeeId));
 
+        /*
+         * A WITHDRAWN SHIFT BUILDS NOTHING.
+         *
+         * Archiving already removes the daily report and requeues the month, so
+         * this is the guard for every other way a job can arrive here — a work
+         * log touched before the shift was taken back, a cascade from the weekend
+         * recheck, a job that was already queued. Without it, any of those would
+         * rebuild the report from the shift's own logs and quietly put the hours
+         * back into the month.
+         */
+        if (workShift.getArchivedAt() != null) {
+            reportRepo.findByWorkShiftId(workShift.getId()).ifPresent(stale -> {
+                categoryRepo.deleteAllByDailyReportId(stale.getId());
+                reportRepo.delete(stale);
+            });
+
+            queueRepo.findByIdForUpdate(jobId).ifPresent(job -> {
+                job.setStatus("DONE");
+                job.setProcessedAt(OffsetDateTime.now());
+                job.setClaimedAt(null);
+                job.setClaimedBy(null);
+                queueRepo.save(job);
+            });
+
+            recalcQueueService.enqueueMonthlyJob(employee, workDate.getYear(), workDate.getMonthValue(),
+                    "WORK_SHIFT_ARCHIVED");
+            log.info("Daily job {} skipped: work shift {} is archived", jobId, workShiftId);
+            return true;
+        }
+
         EmployeeRecord monthlyRecord = employeeRecordService.getOrCreateMonthlyRecord(employeeId, workDate);
         if (workShift.getEmployeeRecord() == null
                 || !monthlyRecord.getId().equals(workShift.getEmployeeRecord().getId())) {
@@ -470,7 +500,7 @@ public class DailyRecalcService {
         if (day != DayOfWeek.SATURDAY) {
             targets.add(workDate.with(DayOfWeek.SATURDAY));
         }
-        List<WorkShift> weekendShifts = workShiftRepository.findByEmployee_IdAndWorkDateIn(employeeId, targets);
+        List<WorkShift> weekendShifts = workShiftRepository.findByEmployee_IdAndWorkDateInAndArchivedAtIsNull(employeeId, targets);
         for (WorkShift weekendShift : weekendShifts) {
             // Skip if already queued/running: re-enqueuing a PENDING/IN_PROGRESS job bumps its
             // version while it's mid-flight, which can race with that job's own completion and

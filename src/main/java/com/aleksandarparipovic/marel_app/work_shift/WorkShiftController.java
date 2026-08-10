@@ -7,6 +7,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -89,4 +90,39 @@ public class WorkShiftController {
 
 
 
+
+    /**
+     * Withdraw a whole shift.
+     *
+     * <p>Its own permission: taking a shift back removes a day of work from what
+     * somebody is paid, which is a heavier decision than correcting the hours on
+     * it. Refused while the month's payroll is locked.
+     */
+    @PreAuthorize("@perm.has('WORK_SHIFT_ARCHIVE')")
+    @PostMapping("/{id}/archive")
+    public ResponseEntity<Void> archiveShift(@PathVariable Long id,
+                                             @RequestParam(required = false) String reason) {
+        service.archive(id, reason);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PreAuthorize("@perm.has('WORK_SHIFT_ARCHIVE')")
+    @PostMapping("/{id}/restore")
+    public ResponseEntity<Void> restoreShift(@PathVariable Long id) {
+        service.restore(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Delete a shift that never held anything — no work logs, no absences.
+     *
+     * <p>Anything else is archived. The database agrees: the child tables are
+     * ON DELETE RESTRICT, so this cannot quietly become a way to erase work.
+     */
+    @PreAuthorize("@perm.has('WORK_SHIFT_ARCHIVE')")
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteEmptyShift(@PathVariable Long id) {
+        service.deleteEmpty(id);
+        return ResponseEntity.noContent().build();
+    }
 }

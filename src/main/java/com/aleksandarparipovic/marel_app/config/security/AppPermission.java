@@ -72,5 +72,15 @@ public enum AppPermission {
      * <p>Payroll's own, and nobody else's: this is the control over who sees
      * salaries, so granting it is granting the ability to grant.
      */
-    PAYROLL_ACCESS_CONFIGURE
+    PAYROLL_ACCESS_CONFIGURE,
+
+    /**
+     * Withdraw a whole shift, or delete one that never held anything.
+     *
+     * <p>Its own permission because it is not a correction: taking a shift back
+     * removes a day of work from what somebody is paid, which is a heavier
+     * decision than fixing the hours on it. Admin and developer hold every
+     * permission; nobody else is given this one.
+     */
+    WORK_SHIFT_ARCHIVE
 }

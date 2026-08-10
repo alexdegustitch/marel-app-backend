@@ -188,8 +188,28 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
           AND pri.archivedAt IS NULL
         """)
     int markNeedsRecalculationByEmployeeAndMonth(@Param("employeeId") Long employeeId,
-                                                 @Param("year") int year,
-                                                 @Param("month") int month);
+                                                @Param("year") int year,
+                                                @Param("month") int month);
+
+    /**
+     * Whether this employee's month is closed.
+     *
+     * <p>Asked before anything that would change what the month is built from.
+     * A locked payroll is a record of what was paid and is never recalculated,
+     * so the change is refused rather than accepted into a month that cannot
+     * follow it.
+     */
+    @Query("""
+        SELECT count(pri) FROM PayrollRunItem pri
+        WHERE pri.employee.id = :employeeId
+          AND YEAR(pri.period) = :year
+          AND MONTH(pri.period) = :month
+          AND pri.status = 'LOCKED'
+          AND pri.archivedAt IS NULL
+        """)
+    long countLockedForEmployeeAndMonth(@Param("employeeId") Long employeeId,
+                                        @Param("year") int year,
+                                        @Param("month") int month);
 
     /**
      * @deprecated Retroactive repricing — do not use. Writing a rate onto items

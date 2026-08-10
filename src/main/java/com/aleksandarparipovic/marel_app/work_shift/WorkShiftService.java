@@ -37,6 +37,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class WorkShiftService {
 
     private final WorkShiftRepository repository;
@@ -49,6 +50,11 @@ public class WorkShiftService {
     private final RecalcQueueService recalcQueueService;
     private final ApplicationEventPublisher eventPublisher;
     private final DailyReportRepository dailyReportRepository;
+    private final com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategoryRepository dailyReportCategoryRepository;
+    private final com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository payrollRunItemRepository;
+
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
 
     private static final ZoneId ZONE = ZoneId.of("Europe/Belgrade");
 
@@ -560,5 +566,160 @@ public class WorkShiftService {
             workShift.setEndAt(newEnd);
             repository.save(workShift);
         }
+    }
+
+    // ── Withdrawing a shift ──────────────────────────────────────────────────
+
+    /**
+     * Take a whole shift back.
+     *
+     * <p>ARCHIVED, NOT DELETED. The work logs on it are what somebody was paid
+     * for, and a payroll that was calculated from them has to stay explainable.
+     * The shift stops counting: its daily report goes, the month is requeued
+     * without it, and the lists that already filter on is_active stop showing it.
+     *
+     * <p>Refused when the month's payroll is LOCKED. Everywhere else in this
+     * system a locked month is skipped and the change still stands, because the
+     * change is about the employee rather than the month. This one IS about the
+     * month — the hours are what the locked payroll was built from — so accepting
+     * it would leave a record of what was paid standing beside a report that no
+     * longer supports it.
+     */
+    @Transactional
+    public void archive(Long id, String reason) {
+        WorkShift shift = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Smena ne postoji: " + id));
+
+        if (shift.getArchivedAt() != null) {
+            throw new ConflictException("Smena je već arhivirana.");
+        }
+        refuseWhenMonthIsLocked(shift);
+
+        shift.setArchivedAt(OffsetDateTime.now());
+        shift.setArchivedBy(currentUserService.getCurrentUserId());
+        // Kept in step so every query already filtering on it keeps working.
+        shift.setIsActive(false);
+        shift.setNote(appendReason(shift.getNote(), reason));
+        repository.save(shift);
+
+        dropDailyReportAndRequeueMonth(shift);
+
+        log.info("Work shift {} archived by user {} ({})", id,
+                currentUserService.getCurrentUserId(), reason != null ? reason : "bez razloga");
+    }
+
+    /**
+     * Put a withdrawn shift back.
+     *
+     * <p>The overlap and one-per-day rules count live shifts only, so restoring
+     * one whose hours have since been taken by another is refused by the
+     * database. Translated here into something readable rather than surfaced as
+     * a constraint name.
+     */
+    @Transactional
+    public void restore(Long id) {
+        WorkShift shift = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Smena ne postoji: " + id));
+
+        if (shift.getArchivedAt() == null) {
+            return;
+        }
+        refuseWhenMonthIsLocked(shift);
+
+        shift.setArchivedAt(null);
+        shift.setArchivedBy(null);
+        shift.setIsActive(true);
+        try {
+            repository.saveAndFlush(shift);
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            throw new ConflictException(
+                    "Za taj dan već postoji smena koja se preklapa sa ovom. "
+                            + "Uklonite ili pomerite nju pre vraćanja ove.");
+        }
+
+        // Rebuilt from its own logs, rather than restored from anything: the
+        // report is derived data and the logs are still there.
+        recalcQueueService.enqueueDailyJob(shift, "WORK_SHIFT_RESTORE");
+        log.info("Work shift {} restored by user {}", id, currentUserService.getCurrentUserId());
+    }
+
+    /**
+     * Delete a shift that never held anything.
+     *
+     * <p>The one case where deleting destroys no history: no work logs, no
+     * absences, nothing that reached a payroll. Anything else is archived, and
+     * the database enforces that too — the child tables are ON DELETE RESTRICT.
+     */
+    @Transactional
+    public void deleteEmpty(Long id) {
+        WorkShift shift = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Smena ne postoji: " + id));
+
+        refuseWhenMonthIsLocked(shift);
+
+        long children = countChildren(id);
+        if (children > 0) {
+            throw new ConflictException(
+                    "Smena ima unete radne naloge ili odsustva i ne može se obrisati. "
+                            + "Arhivirajte je — unosi ostaju zabeleženi.");
+        }
+
+        dailyReportRepository.findByWorkShiftId(id).ifPresent(dailyReportRepository::delete);
+        repository.delete(shift);
+        log.info("Empty work shift {} deleted by user {}", id, currentUserService.getCurrentUserId());
+    }
+
+    /** Work logs, absences and compensations — the three that block a delete. */
+    private long countChildren(Long shiftId) {
+        Number count = (Number) entityManager.createNativeQuery("""
+                SELECT (SELECT count(*) FROM work_logs WHERE work_shift_id = :id)
+                     + (SELECT count(*) FROM absence_records WHERE work_shift_id = :id)
+                     + (SELECT count(*) FROM absence_compensations WHERE work_shift_id = :id)
+                """)
+                .setParameter("id", shiftId)
+                .getSingleResult();
+        return count != null ? count.longValue() : 0L;
+    }
+
+    private void refuseWhenMonthIsLocked(WorkShift shift) {
+        LocalDate date = shift.getWorkDate();
+        if (date == null || shift.getEmployee() == null) {
+            return;
+        }
+        long locked = payrollRunItemRepository.countLockedForEmployeeAndMonth(
+                shift.getEmployee().getId(), date.getYear(), date.getMonthValue());
+        if (locked > 0) {
+            throw new ConflictException(
+                    "Obračun za " + date.getMonthValue() + "/" + date.getYear()
+                            + " je zaključan. Otključajte ga pre nego što uklonite smenu.");
+        }
+    }
+
+    /**
+     * The day stops existing for the reports, and the month is told.
+     *
+     * <p>The daily report is derived from the shift, so a withdrawn shift leaves
+     * it with no subject; the monthly report sums daily reports, so removing it
+     * is what takes the hours out of the month.
+     */
+    private void dropDailyReportAndRequeueMonth(WorkShift shift) {
+        dailyReportRepository.findByWorkShiftId(shift.getId()).ifPresent(report -> {
+            dailyReportCategoryRepository.deleteAllByDailyReportId(report.getId());
+            dailyReportRepository.delete(report);
+        });
+        if (shift.getEmployee() != null && shift.getWorkDate() != null) {
+            recalcQueueService.enqueueMonthlyJob(shift.getEmployee(),
+                    shift.getWorkDate().getYear(), shift.getWorkDate().getMonthValue(),
+                    "WORK_SHIFT_ARCHIVED");
+        }
+    }
+
+    /** Keeps the reason with the shift, since there is no column for one. */
+    private static String appendReason(String note, String reason) {
+        if (reason == null || reason.isBlank()) {
+            return note;
+        }
+        String stamp = "Arhivirano: " + reason.trim();
+        return note == null || note.isBlank() ? stamp : note + " | " + stamp;
     }
 }
