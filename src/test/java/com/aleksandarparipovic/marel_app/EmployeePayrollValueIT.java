@@ -482,4 +482,111 @@ class EmployeePayrollValueIT extends AbstractIntegrationTest {
                 .validUntil(until)
                 .build();
     }
+
+    // ── Correcting what a period says, and withdrawing one entered by mistake ──
+    //
+    // Both were missing, and their absence is what produced the case this came
+    // from: a rate typed as 400 for August could not be made 450 for August, so
+    // it was entered from the 2nd instead — leaving 400 covering a single day and
+    // August priced at it, because a month takes the rate in force on its first
+    // day.
+
+    @Test
+    @DisplayName("a period can be corrected without moving when it applies")
+    void correctingKeepsTheDates() {
+        Employee employee = anEmployee();
+        var period = valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("400.00"),
+                LocalDate.of(2026, 8, 1), null, null);
+
+        var corrected = valueService.correctPeriod(employee.getId(), period.getId(),
+                new BigDecimal("450.00"), null, "greška pri unosu", null);
+
+        assertThat(corrected.getValidFrom()).isEqualTo(LocalDate.of(2026, 8, 1));
+        assertThat(corrected.getNumericValue()).isEqualByComparingTo("450.00");
+
+        // What was believed before is still readable — archived, not overwritten.
+        entityManager.flush();
+        entityManager.clear();
+        var old = historyRepository.findById(period.getId()).orElseThrow();
+        assertThat(old.getArchivedAt()).isNotNull();
+        assertThat(old.getNumericValue()).isEqualByComparingTo("400.00");
+
+        // And the corrected figure is the one in force on that date.
+        assertThat(valueService.numericValueOn(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, LocalDate.of(2026, 8, 1)))
+                .contains(new BigDecimal("450.000000"));
+    }
+
+    @Test
+    @DisplayName("removing a period hands its days to a neighbour, never leaving a hole")
+    void removingLeavesNoGap() {
+        Employee employee = anEmployee();
+        var first = valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("400.00"),
+                LocalDate.of(2026, 8, 1), null, null);
+        valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("450.00"),
+                LocalDate.of(2026, 8, 2), null, null);
+
+        // Exactly the owner's case: withdraw the one-day 400.
+        valueService.removePeriod(employee.getId(), first.getId(), null);
+        entityManager.flush();
+        entityManager.clear();
+
+        // The 450 moved back to cover the 1st — the employee is not left without
+        // a rate on a day they worked.
+        assertThat(valueService.numericValueOn(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, LocalDate.of(2026, 8, 1)))
+                .contains(new BigDecimal("450.000000"));
+        assertThat(historyRepository.findById(first.getId()).orElseThrow().getArchivedAt())
+                .isNotNull();
+    }
+
+    @Test
+    @DisplayName("removing the last period extends the one before it")
+    void removingExtendsThePredecessor() {
+        Employee employee = anEmployee();
+        valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("400.00"),
+                LocalDate.of(2026, 8, 1), null, null);
+        var second = valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("450.00"),
+                LocalDate.of(2026, 9, 1), null, null);
+
+        valueService.removePeriod(employee.getId(), second.getId(), null);
+        entityManager.flush();
+        entityManager.clear();
+
+        // September falls back to 400 rather than to nothing.
+        assertThat(valueService.numericValueOn(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, LocalDate.of(2026, 9, 15)))
+                .contains(new BigDecimal("400.000000"));
+    }
+
+    @Test
+    @DisplayName("one employee's period cannot be touched through another's URL")
+    void periodsBelongToTheirEmployee() {
+        Employee employee = anEmployee();
+        Employee other = anEmployee();
+        var period = valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("400.00"),
+                LocalDate.of(2026, 8, 1), null, null);
+
+        assertThatThrownBy(() -> valueService.removePeriod(other.getId(), period.getId(), null))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("a period cannot be withdrawn twice")
+    void removingIsNotRepeatable() {
+        Employee employee = anEmployee();
+        var period = valueService.changeValue(employee.getId(),
+                EmployeePayrollValueCodes.HOURLY_RATE, new BigDecimal("400.00"),
+                LocalDate.of(2026, 8, 1), null, null);
+
+        valueService.removePeriod(employee.getId(), period.getId(), null);
+        assertThatThrownBy(() -> valueService.removePeriod(employee.getId(), period.getId(), null))
+                .isInstanceOf(ConflictException.class);
+    }
 }

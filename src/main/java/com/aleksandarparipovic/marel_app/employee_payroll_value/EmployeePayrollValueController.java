@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.employee_payroll_value;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.ChangeEmployeePayrollValueRequest;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.CorrectEmployeePayrollValueRequest;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.EmployeePayrollValueDefinitionDto;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.dto.EmployeePayrollValueDto;
 import jakarta.validation.Valid;
@@ -97,5 +98,46 @@ public class EmployeePayrollValueController {
                         currentUserService.getCurrentUserId());
 
         return ResponseEntity.ok(new EmployeePayrollValueDto(created));
+    }
+
+    /**
+     * Correct what a period says, without moving when it applies.
+     *
+     * <p>PUT, and it does NOT overwrite: the old row is archived and a corrected
+     * one takes its place, so the history still shows what was believed before.
+     * That is the difference between a correction and a rewrite, and payroll
+     * needs to be able to tell them apart.
+     */
+    @PutMapping("/{historyId}")
+    public ResponseEntity<EmployeePayrollValueDto> correct(
+            @PathVariable Long employeeId,
+            @PathVariable Long historyId,
+            @Valid @RequestBody CorrectEmployeePayrollValueRequest request
+    ) {
+        EmployeePayrollValueHistory corrected = valueService.correctPeriod(
+                employeeId,
+                historyId,
+                request.getNumericValue(),
+                request.getBooleanValue(),
+                request.getNote(),
+                currentUserService.getCurrentUserId());
+
+        return ResponseEntity.ok(new EmployeePayrollValueDto(corrected));
+    }
+
+    /**
+     * Withdraw a period entered by mistake.
+     *
+     * <p>Archived, not deleted, and the dates it covered are handed to a
+     * neighbour so the employee is not left with NO value on those days — which
+     * would be a different statement from the one being withdrawn.
+     */
+    @DeleteMapping("/{historyId}")
+    public ResponseEntity<Void> remove(
+            @PathVariable Long employeeId,
+            @PathVariable Long historyId
+    ) {
+        valueService.removePeriod(employeeId, historyId, currentUserService.getCurrentUserId());
+        return ResponseEntity.noContent().build();
     }
 }

@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -191,8 +192,152 @@ public class EmployeePayrollValueService {
                                                   LocalDate effectiveFrom,
                                                   String note,
                                                   Long changedBy) {
-        return changePeriod(employeeId, code, "BOOLEAN", null, value,
+        EmployeePayrollValueHistory changed = changePeriod(employeeId, code, "BOOLEAN", null, value,
                 effectiveFrom, note, changedBy);
+
+        // An entitlement prices work exactly as a rate does — transport is paid or
+        // it is not — so a dated change to one has the same consequence for months
+        // already calculated. This was missing while changeValue had it, which
+        // meant granting or withdrawing transport left the old payslips standing.
+        recalculator.recalculate(
+                changed.getEmployee(), effectiveFrom, null,
+                "Vrednost " + code + " promenjena od " + effectiveFrom);
+
+        return changed;
+    }
+
+    /**
+     * Correct what a period SAYS, leaving when it applies alone.
+     *
+     * <p>The history is kept for auditing, so the old row is archived rather than
+     * overwritten: what was believed before stays readable, and
+     * {@code ex_epvh_no_overlap} already ignores archived rows, so the corrected
+     * period can occupy the same dates. An UPDATE would leave no trace that the
+     * figure was ever something else.
+     *
+     * <p>DATES ARE NOT EDITED HERE. Moving a period is removing one and adding
+     * another — it changes which months are repriced and how the neighbours are
+     * bounded, and the two operations that already do that are the ones to use.
+     */
+    @Transactional
+    public EmployeePayrollValueHistory correctPeriod(Long employeeId,
+                                                     Long historyId,
+                                                     BigDecimal numericValue,
+                                                     Boolean booleanValue,
+                                                     String note,
+                                                     Long changedBy) {
+        EmployeePayrollValueHistory period = livePeriod(employeeId, historyId);
+
+        if ("NUMERIC".equals(period.getValueType())) {
+            if (numericValue == null) {
+                throw new IllegalArgumentException("Vrednost je obavezna.");
+            }
+            if (numericValue.compareTo(BigDecimal.ZERO) < 0) {
+                throw new IllegalArgumentException("Vrednost ne može biti negativna.");
+            }
+        } else if (booleanValue == null) {
+            throw new IllegalArgumentException("Vrednost je obavezna.");
+        }
+
+        LocalDate from = period.getValidFrom();
+        LocalDate until = period.getValidUntil();
+
+        period.setArchivedAt(OffsetDateTime.now());
+        historyRepository.saveAndFlush(period);
+
+        EmployeePayrollValueHistory corrected = historyRepository.save(
+                EmployeePayrollValueHistory.builder()
+                        .employee(period.getEmployee())
+                        .definition(period.getDefinition())
+                        .valueType(period.getValueType())
+                        .numericValue("NUMERIC".equals(period.getValueType()) ? numericValue : null)
+                        .booleanValue("BOOLEAN".equals(period.getValueType()) ? booleanValue : null)
+                        .validFrom(from)
+                        .validUntil(until)
+                        .note(note != null ? note : period.getNote())
+                        .createdBy(changedBy)
+                        .build());
+
+        log.info("Employee {} value {} corrected for [{} .. {}] (archived {}, new {})",
+                employeeId, period.getDefinition().getCode(), from,
+                until == null ? "open" : until, period.getId(), corrected.getId());
+
+        recalculator.recalculate(
+                period.getEmployee(), from, until,
+                "Ispravljena vrednost " + period.getDefinition().getCode() + " od " + from);
+
+        return corrected;
+    }
+
+    /**
+     * Take a period out, and leave no hole where it was.
+     *
+     * <p>A period entered by mistake is not deleted: it is archived, so the
+     * record still says somebody once believed it. What its dates covered is
+     * handed to a neighbour — the one before it extends forward, or failing that
+     * the one after it starts earlier — because a gap would mean the employee has
+     * NO value on those days, which is a different statement from the one being
+     * withdrawn.
+     */
+    @Transactional
+    public void removePeriod(Long employeeId, Long historyId, Long changedBy) {
+        EmployeePayrollValueHistory period = livePeriod(employeeId, historyId);
+
+        LocalDate from = period.getValidFrom();
+        LocalDate until = period.getValidUntil();
+
+        List<EmployeePayrollValueHistory> periods =
+                historyRepository.lockPeriodsFor(employeeId, period.getDefinition().getId());
+
+        EmployeePayrollValueHistory predecessor = periods.stream()
+                .filter(p -> !p.getId().equals(historyId))
+                .filter(p -> p.getValidFrom().isBefore(from))
+                .max(Comparator.comparing(EmployeePayrollValueHistory::getValidFrom))
+                .orElse(null);
+        EmployeePayrollValueHistory successor = periods.stream()
+                .filter(p -> !p.getId().equals(historyId))
+                .filter(p -> p.getValidFrom().isAfter(from))
+                .min(Comparator.comparing(EmployeePayrollValueHistory::getValidFrom))
+                .orElse(null);
+
+        // Archived first: the neighbour is about to occupy these dates, and the
+        // overlap constraint counts the row until it is out of the way.
+        period.setArchivedAt(OffsetDateTime.now());
+        historyRepository.saveAndFlush(period);
+
+        if (predecessor != null) {
+            predecessor.setValidUntil(until);
+            historyRepository.saveAndFlush(predecessor);
+        } else if (successor != null) {
+            successor.setValidFrom(from);
+            historyRepository.saveAndFlush(successor);
+        }
+
+        log.info("Employee {} value {} period [{} .. {}] removed (history id {}); {}",
+                employeeId, period.getDefinition().getCode(), from, until == null ? "open" : until,
+                historyId,
+                predecessor != null ? "previous period extended"
+                        : successor != null ? "next period moved back" : "no neighbour to cover it");
+
+        recalculator.recalculate(
+                period.getEmployee(), from, until,
+                "Uklonjena vrednost " + period.getDefinition().getCode() + " od " + from);
+    }
+
+    /** One period of this employee's, still in force — not somebody else's, not archived. */
+    private EmployeePayrollValueHistory livePeriod(Long employeeId, Long historyId) {
+        EmployeePayrollValueHistory period = historyRepository.findById(historyId)
+                .orElseThrow(() -> new EntityNotFoundException("Period ne postoji: " + historyId));
+
+        // Checked rather than trusted from the path: the id alone would let one
+        // employee's period be edited through another employee's URL.
+        if (!period.getEmployee().getId().equals(employeeId)) {
+            throw new EntityNotFoundException("Period ne pripada ovom zaposlenom.");
+        }
+        if (period.getArchivedAt() != null) {
+            throw new ConflictException("Taj period je već uklonjen.");
+        }
+        return period;
     }
 
     /**
