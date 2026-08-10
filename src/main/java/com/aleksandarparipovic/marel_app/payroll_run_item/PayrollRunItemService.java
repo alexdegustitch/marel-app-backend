@@ -1291,6 +1291,14 @@ public class PayrollRunItemService {
                 cat.setEffectiveMinutes(BigDecimal.ZERO);
                 cat.setAmount(BigDecimal.ZERO);
                 cat.setBonusAmount(BigDecimal.ZERO);
+                // THE RATE FOLLOWS THE ITEM HERE TOO. It used to be the one field
+                // this branch left alone, so a row kept whatever rate it was last
+                // written with: 0 for rows created while the item had no rate, and
+                // an old figure for rows that once had activity. The payroll then
+                // showed 500 at the top and 380 beside a category, which reads as
+                // a fault rather than as the leftover it was. No money moves —
+                // the amount is zero on both sides of this line.
+                cat.setHourlyRate(categoryRate(cat, hourlyRate));
                 cat.setUpdatedAt(now);
                 continue;
             }
@@ -1316,9 +1324,7 @@ public class PayrollRunItemService {
             cat.setEffectiveMinutes(effectiveMinutes);
 
             // ── Effective hourly rate for this category ───────────────────────
-            BigDecimal categoryHourlyRate = Boolean.TRUE.equals(wcc.getFixedHourlyRate()) && wcc.getHourlyRate() != null
-                    ? wcc.getHourlyRate()
-                    : hourlyRate;
+            BigDecimal categoryHourlyRate = categoryRate(cat, hourlyRate);
             cat.setHourlyRate(categoryHourlyRate);
 
             // ── amount = (effectiveMinutes / 60) * categoryHourlyRate ─────────
@@ -1974,6 +1980,20 @@ public class PayrollRunItemService {
      * the population loop immediately afterwards; this only has to be valid
      * enough to insert.
      */
+    /**
+     * A category's own fixed rate when it has one, otherwise the payroll's.
+     *
+     * <p>One expression for both branches of the loop above — with a copy each,
+     * the one covering categories with no activity is the one that gets
+     * forgotten, which is exactly what happened.
+     */
+    private static BigDecimal categoryRate(PayrollRunItemCategory cat, BigDecimal itemRate) {
+        var wcc = cat.getWorkCodeCategory();
+        return Boolean.TRUE.equals(wcc.getFixedHourlyRate()) && wcc.getHourlyRate() != null
+                ? wcc.getHourlyRate()
+                : itemRate;
+    }
+
     private PayrollRunItemCategory newItemCategory(PayrollRunItem item,
                                                    com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory wcc) {
         PayrollRunItemCategory cat = new PayrollRunItemCategory();

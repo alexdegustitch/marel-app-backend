@@ -52,6 +52,7 @@ class EmployeeHourlyRateHistoryIT extends AbstractIntegrationTest {
     @Autowired private PayrollScenarioFixture fixture;
     @Autowired private EntityManager entityManager;
     @Autowired private com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemService payrollRunItemService;
+    @Autowired private com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategoryRepository categoryRepository;
     /** The test context has no web layer, so no auto-configured mapper either. */
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
@@ -281,5 +282,39 @@ class EmployeeHourlyRateHistoryIT extends AbstractIntegrationTest {
         var reset = itemRepository.findById(itemId).orElseThrow();
         assertThat(reset.getHourlyRate()).isEqualByComparingTo("500.00");
         assertThat(reset.getHourlyRateOverridden()).isFalse();
+    }
+
+    /*
+     * The payroll said 500 at the top and 0 — or an old 380 — beside its
+     * categories. The branch that zeroes a category with no activity this month
+     * touched every field except the rate, so the row kept whatever it was last
+     * written with. No money was wrong; the document was.
+     */
+    @Test
+    @DisplayName("a category with no activity still carries the rate the payroll is on")
+    void emptyCategoriesFollowTheItemRate() throws Exception {
+        var scenario = fixture.scenario().build();
+        Long itemId = scenario.item().getId();
+        Long employeeId = scenario.employee().getId();
+
+        valueService.changeValue(employeeId, EmployeePayrollValueCodes.HOURLY_RATE,
+                new java.math.BigDecimal("500.00"),
+                scenario.item().getPeriod().withDayOfMonth(1), null, null);
+
+        var mapper = org.springframework.http.converter.json.Jackson2ObjectMapperBuilder.json().build();
+        payrollRunItemService.patch(itemId, mapper.readValue("{\"hourlyRate\":null}",
+                com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest.class));
+        entityManager.flush();
+        entityManager.clear();
+
+        var categories = categoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(itemId);
+        assertThat(categories).isNotEmpty();
+
+        // Every row without its own fixed rate reads what the payroll reads.
+        assertThat(categories.stream()
+                .filter(c -> !Boolean.TRUE.equals(c.getWorkCodeCategory().getFixedHourlyRate()))
+                .map(c -> c.getHourlyRate()))
+                .isNotEmpty()
+                .allSatisfy(rate -> assertThat(rate).isEqualByComparingTo("500.00"));
     }
 }
