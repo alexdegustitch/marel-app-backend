@@ -1061,6 +1061,7 @@ public class PayrollRunItemService {
     private static final String CAT_CODE_TRANSPORT     = "TRANSPORT_ALLOWANCE";
     private static final String CAT_CODE_BONUS         = "MONTHLY_BONUS";
     private static final String CAT_CODE_FIXED_SALARY  = "FIXED_SALARY";
+    private static final String CAT_CODE_PHONE_CURRENT_MONTH = "PHONE_CURRENT_MONTH";
     private static final String SECTION_SETTLEMENTS    = "SETTLEMENTS";
     private static final String SECTION_ADDITIONS      = "ADDITIONS";
 
@@ -1804,6 +1805,50 @@ public class PayrollRunItemService {
      * is_overridden the same way, which mislabelled ordinary recalculations as
      * human decisions and is what 2026-08-12-01 had to undo.
      */
+    /**
+     * A line whose figure is the employee's, not this month's.
+     *
+     * <p>The value in force for THIS month becomes the line's system amount, so a
+     * fixed salary agreed once applies every month by itself. A figure somebody
+     * typed on the payroll wins and is left exactly as it is — the same rule the
+     * meal price follows, and the reason a person's decision is never overwritten
+     * by a sweep.
+     *
+     * <p>WITH NO VALUE CONFIGURED THE LINE IS NOT TOUCHED. That is what makes
+     * introducing this rule safe on months already calculated: an employee who has
+     * no value keeps whatever the line says, so nobody's phone charge is quietly
+     * zeroed by the arrival of a rule.
+     */
+    private void applyEmployeeValueToLine(PayrollRunItem item, LocalDate pricingDate,
+                                          String categoryCode, String valueCode) {
+        if (item.getEmployee() == null || pricingDate == null) {
+            return;
+        }
+        Optional<BigDecimal> configured = employeePayrollValueService.numericValueOn(
+                item.getEmployee().getId(), valueCode, pricingDate);
+        if (configured.isEmpty()) {
+            return;
+        }
+        BigDecimal system = configured.get().setScale(2, RoundingMode.HALF_UP);
+
+        payrollAdjustmentRepository.findByItemIdAndCategoryCode(item.getId(), categoryCode)
+                .ifPresent(line -> {
+                    // Asked against the PREVIOUS system figure, before it is
+                    // replaced: that is the only thing that says whether the
+                    // amount on the line was following the calculation or was
+                    // somebody's own.
+                    boolean human = differsFromSystem(line.getAmount(), line.getSystemAmount());
+
+                    line.setSystemAmount(system);
+                    if (!human) {
+                        line.setAmount(system);
+                    }
+                    line.setCalculatedAt(OffsetDateTime.now());
+                    line.setUpdatedAt(OffsetDateTime.now());
+                    payrollAdjustmentRepository.save(line);
+                });
+    }
+
     private static boolean differsFromSystem(BigDecimal effective, BigDecimal system) {
         if (effective == null) {
             return false;
@@ -2191,6 +2236,18 @@ public class PayrollRunItemService {
         BigDecimal mealUnitAmt = mealPriceIsHuman ? mealLine.getUnitAmount() : mealSystemRate;
         BigDecimal totalMeal = mealUnitAmt.multiply(BigDecimal.valueOf(mealCount)).setScale(2, RoundingMode.HALF_UP);
         syncAdjustment(item.getId(), "MEAL_ALLOWANCE", totalMeal, meal, mealAllowed);
+
+        // ── The two lines whose figure belongs to the EMPLOYEE ────────────────
+        //
+        // The fixed salary and the phone are dated per-employee values, and
+        // nothing read them: FIXED_LD_AMOUNT existed only as a constant and
+        // TELEPHONE_AMOUNT appeared nowhere in Java at all. Both lines were typed
+        // on the payroll every month while the figure sat on the employee's card
+        // doing nothing.
+        applyEmployeeValueToLine(item, pricingDate, CAT_CODE_FIXED_SALARY,
+                EmployeePayrollValueCodes.FIXED_LD_AMOUNT);
+        applyEmployeeValueToLine(item, pricingDate, CAT_CODE_PHONE_CURRENT_MONTH,
+                EmployeePayrollValueCodes.TELEPHONE_AMOUNT);
 
         // ── Transport allowance ───────────────────────────────────────────────
         // Same reasoning as the meal allowance above: the item column feeds the

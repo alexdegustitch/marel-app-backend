@@ -37,7 +37,20 @@ public final class EmployeePayrollValueCodes {
      */
     public static final String TRANSPORT_PER_DAY = "TRANSPORT_PER_DAY";
 
+    /**
+     * The employee's fixed salary, and their monthly phone charge.
+     *
+     * <p>Both are the SYSTEM figure for a line on the payroll — FIXED_SALARY and
+     * PHONE_CURRENT_MONTH — so an amount agreed once applies every month by
+     * itself. A figure typed on the payroll wins for that month and is left
+     * alone; an employee with no value configured keeps whatever the line says.
+     *
+     * <p>Until this was wired, both lines were typed month after month while the
+     * figure sat on the employee's card doing nothing: FIXED_LD_AMOUNT was a
+     * constant nobody called and TELEPHONE_AMOUNT appeared nowhere in Java.
+     */
     public static final String FIXED_LD_AMOUNT = "FIXED_LD_AMOUNT";
+    public static final String TELEPHONE_AMOUNT = "TELEPHONE_AMOUNT";
 
     private EmployeePayrollValueCodes() {
     }

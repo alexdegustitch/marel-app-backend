@@ -317,4 +317,89 @@ class EmployeeHourlyRateHistoryIT extends AbstractIntegrationTest {
                 .isNotEmpty()
                 .allSatisfy(rate -> assertThat(rate).isEqualByComparingTo("500.00"));
     }
+
+    /*
+     * The fixed salary and the phone are the employee's figures, dated like every
+     * other. Nothing read them: FIXED_LD_AMOUNT was a constant nobody called and
+     * TELEPHONE_AMOUNT appeared nowhere in Java, so both lines were typed on the
+     * payroll month after month while the value sat on the card doing nothing.
+     */
+    @Test
+    @DisplayName("the employee's fixed salary and phone reach their lines")
+    void employeeValuesDriveTheirLines() {
+        var scenario = fixture.scenario().build();
+        Long employeeId = scenario.employee().getId();
+        java.time.LocalDate from = scenario.item().getPeriod().withDayOfMonth(1);
+
+        valueService.changeValue(employeeId, EmployeePayrollValueCodes.FIXED_LD_AMOUNT,
+                new java.math.BigDecimal("10000.00"), from, null, null);
+        valueService.changeValue(employeeId, EmployeePayrollValueCodes.TELEPHONE_AMOUNT,
+                new java.math.BigDecimal("3200.00"), from, null, null);
+
+        var details = payrollRunItemService.getDetails(scenario.monthlyReport().getId());
+        var lines = details.getAdjustments().stream()
+                .flatMap(section -> section.getAdjustments().stream())
+                .collect(java.util.stream.Collectors.toMap(a -> a.getCategoryCode(), a -> a, (x, y) -> x));
+
+        assertThat(lines.get("FIXED_SALARY").getAmount()).isEqualByComparingTo("10000.00");
+        assertThat(lines.get("FIXED_SALARY").getSystemAmount()).isEqualByComparingTo("10000.00");
+        assertThat(lines.get("PHONE_CURRENT_MONTH").getAmount()).isEqualByComparingTo("3200.00");
+    }
+
+    @Test
+    @DisplayName("a figure typed on the payroll wins over the employee's for that month")
+    void aTypedFigureIsNotOverwritten() throws Exception {
+        var scenario = fixture.scenario().build();
+        Long employeeId = scenario.employee().getId();
+        Long itemId = scenario.item().getId();
+        java.time.LocalDate from = scenario.item().getPeriod().withDayOfMonth(1);
+
+        valueService.changeValue(employeeId, EmployeePayrollValueCodes.TELEPHONE_AMOUNT,
+                new java.math.BigDecimal("3200.00"), from, null, null);
+
+        Long phoneLineId = payrollRunItemService.getDetails(scenario.monthlyReport().getId())
+                .getAdjustments().stream()
+                .flatMap(section -> section.getAdjustments().stream())
+                .filter(a -> "PHONE_CURRENT_MONTH".equals(a.getCategoryCode()))
+                .findFirst().orElseThrow().getId();
+
+        // One month's phone is different, and that decision is a person's.
+        var patch = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest();
+        var line = new com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto();
+        line.setId(phoneLineId);
+        line.setAmount(new java.math.BigDecimal("500.00"));
+        patch.setAdjustments(java.util.List.of(line));
+        payrollRunItemService.patch(itemId, patch);
+
+        // Recalculated, and the typed figure is still there — with the employee's
+        // beside it, so the line can still say what the calculation would pay.
+        var item = itemRepository.findById(itemId).orElseThrow();
+        item.setNeedsRecalculation(true);
+        itemRepository.saveAndFlush(item);
+        entityManager.clear();
+        var after = payrollRunItemService.getDetails(scenario.monthlyReport().getId())
+                .getAdjustments().stream()
+                .flatMap(section -> section.getAdjustments().stream())
+                .filter(a -> "PHONE_CURRENT_MONTH".equals(a.getCategoryCode()))
+                .findFirst().orElseThrow();
+
+        assertThat(after.getAmount()).isEqualByComparingTo("500.00");
+        assertThat(after.getSystemAmount()).isEqualByComparingTo("3200.00");
+    }
+
+    @Test
+    @DisplayName("an employee with no value configured keeps whatever the line says")
+    void noValueLeavesTheLineAlone() {
+        var scenario = fixture.scenario().build();
+
+        // Nothing configured — introducing the rule must not zero a figure
+        // somebody entered on a month already calculated.
+        var lines = payrollRunItemService.getDetails(scenario.monthlyReport().getId())
+                .getAdjustments().stream()
+                .flatMap(section -> section.getAdjustments().stream())
+                .collect(java.util.stream.Collectors.toMap(a -> a.getCategoryCode(), a -> a, (x, y) -> x));
+
+        assertThat(lines).containsKey("PHONE_CURRENT_MONTH");
+        assertThat(lines.get("PHONE_CURRENT_MONTH").getSystemAmount()).isEqualByComparingTo("0.00");
+    }
 }
