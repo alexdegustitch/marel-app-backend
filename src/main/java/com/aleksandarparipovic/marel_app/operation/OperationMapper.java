@@ -19,6 +19,7 @@ public class OperationMapper {
         dto.setNormRequired(o.isNormRequired());
         dto.setUnitsPerProduct(o.getUnitsPerProduct());
         dto.setNormDate(o.getNormDate());
+        dto.setWorkCodeCategoryId(o.getWorkCodeCategory() != null ? o.getWorkCodeCategory().getId() : null);
         return dto;
     }
 

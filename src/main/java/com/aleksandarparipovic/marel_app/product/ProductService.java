@@ -8,10 +8,15 @@ import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductOptionDto;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationCountRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
+import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
+import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
+import com.aleksandarparipovic.marel_app.production_order_line_item.repository.ProductionOrderLineItemRepository;
+import com.aleksandarparipovic.marel_app.sample_order_line_item.repository.SampleOrderLineItemRepository;
 import com.aleksandarparipovic.marel_app.product.specification.ProductSpecifications;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
@@ -21,6 +26,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -33,6 +39,8 @@ public class ProductService {
     private final OperationRepository operationRepository;
     private final OperationMapper operationMapper;
     private final ProductMapper productMapper;
+    private final ProductionOrderLineItemRepository productionOrderLineItemRepository;
+    private final SampleOrderLineItemRepository sampleOrderLineItemRepository;
 
     @Transactional
     @CacheEvict(value = "product-options", allEntries = true)
@@ -64,6 +72,51 @@ public class ProductService {
                 .stream()
                 .map(productMapper::toDtoOption)
                 .toList();
+    }
+
+    /** One product, for the product detail page. Archived products are not served. */
+    @Transactional(readOnly = true)
+    public ProductBaseRow getProduct(Long productId) {
+        Product product = productRepository.findByIdAndArchivedAtIsNull(productId)
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+        return productMapper.toBaseRow(product);
+    }
+
+    /** The product's live operations, in name order — norms included. */
+    @Transactional(readOnly = true)
+    public List<OperationDto> getProductOperations(Long productId) {
+        requireProduct(productId);
+        return operationRepository.findByProductIdAndArchivedAtIsNull(productId)
+                .stream()
+                .map(operationMapper::toDto)
+                .sorted(Comparator.comparing(
+                        OperationDto::getOperationName,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                .toList();
+    }
+
+    /** Production orders this product appears on. */
+    @Transactional(readOnly = true)
+    public List<ProductProductionOrderRow> getProductProductionOrders(Long productId) {
+        requireProduct(productId);
+        return productionOrderLineItemRepository.findOrderRowsByProductId(productId);
+    }
+
+    /** Sample orders this product appears on. */
+    @Transactional(readOnly = true)
+    public List<ProductSampleOrderRow> getProductSampleOrders(Long productId) {
+        requireProduct(productId);
+        return sampleOrderLineItemRepository.findOrderRowsByProductId(productId);
+    }
+
+    /**
+     * A missing product must answer 404 rather than an empty list — an empty
+     * list means "this product is on no orders", which is a different fact.
+     */
+    private void requireProduct(Long productId) {
+        if (productRepository.findByIdAndArchivedAtIsNull(productId).isEmpty()) {
+            throw new EntityNotFoundException("Product not found");
+        }
     }
 
     public Page<ProductWithOperationListRow> searchAll(SearchRequest request) {

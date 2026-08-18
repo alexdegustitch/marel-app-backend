@@ -27,6 +27,9 @@ public final class ProductFieldMapper implements EntityFieldMapper<Product> {
                     Map.entry("productCode", (root, cb, jm) -> root.get("productCode")),
                     Map.entry("description", (root, cb, jm) -> root.get("description")),
                     Map.entry("active", (root, cb, jm) -> root.get("active")),
+                    // The table sends the DTO's name (`isActive`); the entity field is
+                    // `active`. Both names resolve to the same column.
+                    Map.entry("isActive", (root, cb, jm) -> root.get("active")),
                     Map.entry("createdAt", (root, cb, jm) -> root.get("createdAt")),
                     Map.entry("updatedAt", (root, cb, jm) -> root.get("updatedAt")),
                     Map.entry("archivedAt", (root, cb, jm) -> root.get("archivedAt")),
