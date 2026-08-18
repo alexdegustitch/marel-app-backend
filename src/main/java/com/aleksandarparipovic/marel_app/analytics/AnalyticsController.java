@@ -2,13 +2,16 @@ package com.aleksandarparipovic.marel_app.analytics;
 
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsFilterRequest;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeEfficiencyDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.NoteOccurrenceDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.OperationEfficiencyDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductOperationSummaryDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,10 +26,32 @@ public class AnalyticsController {
 
     private final AnalyticsQueryRepository queryRepo;
 
-    // Page 1 — Proizvod-operacija
+    /**
+     * Page 1 — Proizvod-operacija, one page at a time.
+     *
+     * <p>Paged and sorted on the server, unlike the other four: this is the one report whose
+     * row count follows the number of OPERATIONS (10–15k of them), not the number of products
+     * or employees, so it is the one that would eventually be asked to draw a table nobody's
+     * browser can hold.
+     */
     @PostMapping("/product-operation")
-    public List<ProductOperationSummaryDto> productOperation(@RequestBody AnalyticsFilterRequest filter) {
-        return queryRepo.findProductOperationSummary(filter);
+    public AnalyticsPageDto<ProductOperationSummaryDto> productOperation(@RequestBody AnalyticsFilterRequest filter) {
+        return queryRepo.findProductOperationSummaryPage(filter);
+    }
+
+    /**
+     * The work logs behind a note search — what "Detaljnije" on a page 1 row opens.
+     *
+     * <p>Takes the report's own filter, narrowed by the caller to the clicked row's product
+     * (and operation, when the report is at operation grain). Capped server-side: a two-letter
+     * note fragment matches more logs than any panel can show.
+     */
+    @PostMapping("/note-occurrences")
+    public List<NoteOccurrenceDto> noteOccurrences(
+            @RequestBody AnalyticsFilterRequest filter,
+            @RequestParam(defaultValue = "200") int limit
+    ) {
+        return queryRepo.findNoteOccurrences(filter, Math.max(1, Math.min(limit, 1000)));
     }
 
     // Page 4 — Efikasnost proizvoda. Same query/output shape as page 1 (identical spec),
@@ -66,9 +91,20 @@ public class AnalyticsController {
         return queryRepo.findDistinctProducts();
     }
 
+    /**
+     * Operations that were worked, searched on the server.
+     *
+     * <p>There are 10–15k of them, so the list is not something a select can hold:
+     * the client sends what the user typed and gets a page back. `limit` is capped
+     * here rather than trusted — an open-ended page size is a way to ask for the
+     * whole table by accident.
+     */
     @GetMapping("/filters/operations")
-    public List<AnalyticsOptionDto> distinctOperations() {
-        return queryRepo.findDistinctOperations();
+    public List<AnalyticsOptionDto> distinctOperations(
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "50") int limit
+    ) {
+        return queryRepo.findDistinctOperations(search, Math.max(1, Math.min(limit, 200)));
     }
 
     @GetMapping("/filters/employees")
