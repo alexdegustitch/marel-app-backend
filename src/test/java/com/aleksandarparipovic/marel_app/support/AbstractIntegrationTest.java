@@ -9,11 +9,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Stream;
 
 /**
  * Base for integration tests: a real PostgreSQL 18, schema built the way
@@ -27,6 +23,14 @@ import java.util.stream.Stream;
  *
  * <p>The container is started once for the whole suite. Tests are transactional
  * and roll back, so they do not observe each other's writes.
+ *
+ * <p>The schema itself is Flyway's job, not this class's. {@code @DynamicPropertySource}
+ * publishes the container's JDBC URL before the Spring context refreshes, so
+ * Spring Boot's Flyway auto-configuration migrates it at startup — same
+ * {@code src/main/resources/db/migration} scripts, same mechanism a real
+ * deployment uses. Before Flyway, this class copied a schema snapshot and 73
+ * migration scripts into the container and ran them by hand through psql; that
+ * code is gone because Flyway now does the one thing it existed to prove.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -40,7 +44,6 @@ public abstract class AbstractIntegrationTest {
 
     static {
         POSTGRES.start();
-        loadSchema();
     }
 
     @DynamicPropertySource
@@ -51,50 +54,22 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
-     * Builds the schema the way a human does: the baseline, then every migration
-     * script in filename order, each through {@code psql}.
+     * Re-run ONE archived migration script against the data a test has just seeded.
      *
-     * <p>psql rather than JDBC because these scripts are not single statements —
-     * they use dollar-quoted {@code DO $$ ... $$} blocks and function bodies that a
-     * plain {@code Statement.execute} mangles. {@code ON_ERROR_STOP=1} means a
-     * broken script fails the suite loudly instead of leaving a half-built schema.
-     *
-     * <p>The baseline is a snapshot of the schema AFTER the 2026-07-21 migrations,
-     * so re-applying them proves they are valid against the real schema and safely
-     * re-runnable. It does not re-prove the forward migration from the older
-     * schema — that was verified against a clone of the dev database and would need
-     * a pre-migration baseline to automate.
-     */
-    private static void loadSchema() {
-        try {
-            copyAndRun(Path.of("src/test/resources/db/baseline-schema.sql"), "baseline.sql");
-            // audit_trigger_fn resolves table_id/action_id by name, so without these
-            // rows every insert into an audited table fails on a NOT NULL violation.
-            copyAndRun(Path.of("src/test/resources/db/reference-data.sql"), "reference-data.sql");
-
-            for (Path script : migrationScripts()) {
-                copyAndRun(script, script.getFileName().toString());
-            }
-        } catch (Exception ex) {
-            throw new IllegalStateException("Failed to build the test schema", ex);
-        }
-    }
-
-    /**
-     * Re-run ONE migration script against the data a test has just seeded.
-     *
-     * <p>For the migrations whose whole job is to transform existing rows. Their
+     * <p>For the migrations whose whole job was to transform existing rows. Their
      * own {@code DO $$} verification blocks check whatever they find in the
-     * database they run against — which on a virgin test schema is nothing — so
-     * they can only be tested by giving them a known input and reading the output.
+     * database they run against — which on a Flyway-built schema is nothing they
+     * were meant to transform — so the only way left to test that logic is to give
+     * it a known input and read back what it produced.
      *
-     * <p>Runs through psql on its own connection, so the seeded rows must be
-     * COMMITTED: a test using this cannot be {@code @Transactional} and has to
-     * clean up after itself.
+     * <p>Reads from {@code src/main/resources/sql/archive}, not from any active
+     * migration path — these scripts do not run on their own again. Runs through
+     * psql on its own connection, so the seeded rows must be COMMITTED: a test
+     * using this cannot be {@code @Transactional} and has to clean up after itself.
      */
     protected static void runMigrationScript(String fileName) {
         try {
-            copyAndRun(Path.of("src/main/resources/sql", fileName), "rerun-" + fileName);
+            copyAndRun(Path.of("src/main/resources/sql/archive", fileName), "rerun-" + fileName);
         } catch (Exception ex) {
             throw new IllegalStateException("Failed to re-run " + fileName, ex);
         }
@@ -115,25 +90,4 @@ public abstract class AbstractIntegrationTest {
                     "Script " + name + " failed:\n" + result.getStderr());
         }
     }
-
-    /**
-     * Migration scripts in filename order — which IS their required application
-     * order. The 2026-07-21-01..09 numeric prefixes exist for exactly this reason.
-     */
-    private static List<Path> migrationScripts() throws Exception {
-        try (Stream<Path> files = Files.list(Path.of("src/main/resources/sql"))) {
-            return files
-                    .filter(path -> path.getFileName().toString().compareTo(BASELINE_CUTOFF) >= 0)
-                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
-                    .toList();
-        }
-    }
-
-    /**
-     * Scripts at or after this name are the ones NOT already folded into the
-     * baseline. Filenames are date-prefixed, so ordering them as strings orders
-     * them chronologically — which means a migration added later is picked up
-     * automatically instead of being silently skipped.
-     */
-    private static final String BASELINE_CUTOFF = "2026-07-21-";
 }

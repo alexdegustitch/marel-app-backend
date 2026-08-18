@@ -30,8 +30,8 @@ SELECT line FROM (
            || ' ' || format_type(a.atttypid, a.atttypmod)
            || CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE ' NULL' END
            || ' DEFAULT ' || COALESCE(pg_get_expr(d.adbin, d.adrelid), '-')
-           || CASE WHEN a.attidentity <> '' THEN ' IDENTITY(' || a.attidentity || ')' ELSE '' END
-           || CASE WHEN a.attgenerated <> '' THEN ' GENERATED(' || a.attgenerated || ')' ELSE '' END
+           || CASE WHEN a.attidentity <> '' THEN ' IDENTITY(' || a.attidentity::text || ')' ELSE '' END
+           || CASE WHEN a.attgenerated <> '' THEN ' GENERATED(' || a.attgenerated::text || ')' ELSE '' END
     FROM pg_attribute a
     JOIN pg_class c ON c.oid = a.attrelid
     JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -43,7 +43,7 @@ SELECT line FROM (
 
     -- contype is included so a diff says *what kind* of constraint drifted
     SELECT 'CONSTRAINT ' || rel.relname || ' ' || con.conname
-           || ' [' || con.contype || '] ' || pg_get_constraintdef(con.oid)
+           || ' [' || con.contype::text || '] ' || pg_get_constraintdef(con.oid)
     FROM pg_constraint con
     JOIN pg_class rel ON rel.oid = con.conrelid
     JOIN pg_namespace n ON n.oid = rel.relnamespace

@@ -86,6 +86,20 @@
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
+			<!-- Spring Boot 4 split FlywayAutoConfiguration out of the core
+			     autoconfigure jar into this starter; flyway-core alone on the
+			     classpath does nothing; the auto-configuration class itself has to
+			     be present for @ConditionalOnClass to find it. -->
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-flyway</artifactId>
+		</dependency>
+		<dependency>
+			<!-- Flyway 10+ moved database-specific SQL handling out of flyway-core;
+			     without this it does not recognise a PostgreSQL JDBC URL at all. -->
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
 			<optional>true</optional>

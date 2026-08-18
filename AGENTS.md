@@ -46,10 +46,11 @@
 - Preserve queue status semantics (`PENDING`, `PROCESSING`, `PROCESSED`, `FAILED`) and retry handling in `markFailed` methods.
 - If changing payroll freshness logic, keep `getForPayrollAccess()`, `getForPayrollRun()`, and `refreshIfStale()` semantics aligned (including `LOCKED` short-circuit behavior).
 - Prefer extending existing feature package patterns rather than adding cross-cutting utility layers.
-- Treat credentials in `src/main/resources/application.properties` as local/dev defaults; do not propagate them into docs, logs, or tests.
+- `src/main/resources/application.properties` holds no real credentials — every secret is `${ENV_VAR}` with no default, so a missing one fails startup loudly instead of running on a placeholder. Never hardcode a real value back into it, and never propagate one into docs, logs, or tests.
+- Migrations run through Flyway, automatically, at startup. New ones go in `src/main/resources/db/migration/` as `V<version>__<description>.sql`. The 110 scripts that built the schema by hand before Flyway was adopted are archived under `src/main/resources/sql/archive/` — folded into `V1__baseline.sql`, not reapplied, kept because most explain a real decision rather than just SQL.
 
 ## Business-Rule Documentation (Read Before Editing These Domains)
 - Before modifying user approval, manufacturing-time requests, mailing lists, production-order recipients, notifications, sessions or user preferences, read `docs/business-rules/user-requests-mailing-notifications-and-preferences.md`.
 - `docs/business-rules/IMPLEMENTATION-STATUS.md` is the record of what is implemented versus schema-only, plus remaining work and known risks. Check it before assuming an endpoint exists.
-- Schema for those domains ships as dated SQL in `src/main/resources/sql/2026-07-21-01..09-*.sql`. The numeric prefixes are load-bearing: they are the required application order.
+- Schema for those domains was originally dated SQL, `2026-07-21-01..09-*.sql` — now archived at `src/main/resources/sql/archive/`, folded into `src/main/resources/db/migration/V1__baseline.sql`. The numeric prefixes were load-bearing application order when the scripts ran by hand; they no longer run, but the filenames are kept for history.
 - `users.account_status` is the authoritative account state; `users.is_active` is derived from it by a trigger and must never be used to express a workflow decision.

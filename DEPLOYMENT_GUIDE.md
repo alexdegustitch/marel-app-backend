@@ -13,15 +13,18 @@
 
 ### Step 1: Apply Database Migration
 
-**File**: `src/main/resources/sql/2026-04-08-event-driven-recalc.sql`
+**Update, post-Flyway adoption**: this migration (originally
+`src/main/resources/sql/2026-04-08-event-driven-recalc.sql`, run by hand) is now
+folded into `src/main/resources/db/migration/V1__baseline.sql` — the schema and
+reference data that file establishes already include it. The original script is
+archived at `src/main/resources/sql/archive/2026-04-08-event-driven-recalc.sql`
+for its history, but is not applied again.
 
-**Execute in PostgreSQL**:
-```bash
-psql -U postgres -d marel_app -f src/main/resources/sql/2026-04-08-event-driven-recalc.sql
-```
-
-**Or using Spring Boot (Flyway/Liquibase if configured)**:
-The migration will auto-apply on next startup if using Spring DB migration tools.
+Flyway runs automatically at application startup and applies whatever the target
+database has not yet seen, so on a database that has never run this app there is
+nothing manual to do — starting the application performs Step 1. This section is
+kept for context on what shipped in that migration; skip straight to Step 2 on
+any deployment already using Flyway.
 
 **Verify Migration**:
 ```sql
