@@ -18,6 +18,7 @@ import jakarta.persistence.criteria.Order;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
+import org.hibernate.query.criteria.HibernateCriteriaBuilder;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -102,11 +103,38 @@ public class OperationRepositoryImpl implements OperationRepositoryCustom {
             return;
         }
 
+        /*
+         * Missing values sort LAST, in both directions.
+         *
+         * An operation with no norm, no norm date or no quantity is not a small
+         * value — it is an absent one, and a screen sorting by that column asks
+         * "which operations have the highest/lowest X", never "where do the
+         * blanks fall". Databases disagree by default (PostgreSQL puts NULLs
+         * last ascending and FIRST descending), so the precedence is stated.
+         *
+         * It is stated through Hibernate's own `asc(expr, nullsFirst)` rather
+         * than an added `CASE WHEN ... IS NULL` order key: this query is a
+         * SELECT DISTINCT, and PostgreSQL rejects any ORDER BY expression that
+         * is not in the select list — the CASE version failed on every sort.
+         */
+        HibernateCriteriaBuilder hcb = (HibernateCriteriaBuilder) cb;
+
         List<Order> orders = new ArrayList<>();
         for (Sort.Order order : sort) {
             Expression<?> sortExpression = resolveSortPath(root, cb, joinManager, order.getProperty(), productCountExpression);
-            orders.add(order.isAscending() ? cb.asc(sortExpression) : cb.desc(sortExpression));
+            orders.add(order.isAscending()
+                    ? hcb.asc(sortExpression, false)
+                    : hcb.desc(sortExpression, false));
         }
+
+        /*
+         * A stable last key. Without it, rows that tie on the sorted column (a
+         * dozen operations all at norm 40) may come back in a different order
+         * per query, and with server-side paging the same row can appear on two
+         * pages while another never appears at all. `id` is in the select list,
+         * so DISTINCT accepts it.
+         */
+        orders.add(cb.asc(root.get("id")));
         query.orderBy(orders);
     }
 
