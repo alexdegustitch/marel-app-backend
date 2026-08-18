@@ -162,4 +162,132 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         OffsetDateTime getMinStart();
         OffsetDateTime getMaxEnd();
     }
+
+    // ── The operation detail screen ─────────────────────────────────────────
+    //
+    // Three questions the operation's own page asks of the work that was done on
+    // it: who did it most recently, how much of it landed on each production
+    // order, and how it adds up month by month. All three read only ACTIVE,
+    // non-archived logs — a deactivated log is work that was withdrawn, and
+    // counting it would overstate what the factory produced.
+
+    /** The most recent work recorded on this operation, newest first. */
+    @Query(value = """
+        SELECT wl.id AS workLogId,
+               e.full_name AS employeeName,
+               ws.work_date AS workDate,
+               wl.start_at AS startAt,
+               wl.end_at AS endAt,
+               wl.duration_min AS durationMin,
+               wl.quantity AS quantity,
+               wl.scrap AS scrap,
+               po.id AS orderId,
+               po.code AS orderCode
+        FROM work_logs wl
+        JOIN work_shifts ws ON ws.id = wl.work_shift_id
+        JOIN employees e ON e.id = ws.employee_id
+        LEFT JOIN production_orders po ON po.id = wl.production_order_id
+        WHERE wl.operation_id = :operationId
+          AND wl.is_active = true
+          AND wl.archived_at IS NULL
+        ORDER BY ws.work_date DESC, wl.id DESC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<OperationWorkLogProjection> findRecentWorkForOperation(
+            @Param("operationId") Long operationId,
+            @Param("limit") int limit
+    );
+
+    /** Pieces and scrap recorded per production order for this operation. */
+    @Query(value = """
+        SELECT wl.production_order_id AS orderId,
+               COALESCE(SUM(wl.quantity), 0) AS quantity,
+               COALESCE(SUM(wl.scrap), 0) AS scrap
+        FROM work_logs wl
+        WHERE wl.operation_id = :operationId
+          AND wl.production_order_id IS NOT NULL
+          AND wl.is_active = true
+          AND wl.archived_at IS NULL
+        GROUP BY wl.production_order_id
+        """, nativeQuery = true)
+    List<OperationOrderOutputProjection> sumOutputPerOrderForOperation(@Param("operationId") Long operationId);
+
+    /**
+     * Month-by-month output for this operation, from the first day of the month
+     * `:months` back through today. Months with no work are absent — the caller
+     * fills the gaps, because a missing month must read as zero on a chart, not
+     * as a break in the line.
+     */
+    @Query(value = """
+        SELECT to_char(date_trunc('month', ws.work_date), 'YYYY-MM') AS period,
+               COALESCE(SUM(wl.quantity), 0) AS quantity,
+               COALESCE(SUM(wl.scrap), 0) AS scrap
+        FROM work_logs wl
+        JOIN work_shifts ws ON ws.id = wl.work_shift_id
+        WHERE wl.operation_id = :operationId
+          AND wl.is_active = true
+          AND wl.archived_at IS NULL
+          AND ws.work_date >= date_trunc('month', CURRENT_DATE) - make_interval(months => :months - 1)
+        GROUP BY date_trunc('month', ws.work_date)
+        ORDER BY date_trunc('month', ws.work_date)
+        """, nativeQuery = true)
+    List<OperationPeriodOutputProjection> monthlyOutputForOperation(
+            @Param("operationId") Long operationId,
+            @Param("months") int months
+    );
+
+    /**
+     * Day-by-day output for this operation over the last `:days` days. Same
+     * shape as the monthly query, and the same rule about gaps: absent days are
+     * filled by the caller so a day with no work reads as zero, not as a break.
+     */
+    @Query(value = """
+        SELECT to_char(ws.work_date, 'YYYY-MM-DD') AS period,
+               COALESCE(SUM(wl.quantity), 0) AS quantity,
+               COALESCE(SUM(wl.scrap), 0) AS scrap
+        FROM work_logs wl
+        JOIN work_shifts ws ON ws.id = wl.work_shift_id
+        WHERE wl.operation_id = :operationId
+          AND wl.is_active = true
+          AND wl.archived_at IS NULL
+          AND ws.work_date >= CURRENT_DATE - make_interval(days => :days - 1)
+        GROUP BY ws.work_date
+        ORDER BY ws.work_date
+        """, nativeQuery = true)
+    List<OperationPeriodOutputProjection> dailyOutputForOperation(
+            @Param("operationId") Long operationId,
+            @Param("days") int days
+    );
+
+    /**
+     * `start_at`/`end_at` are `timestamptz`, and a NATIVE query hands those to
+     * Spring as {@link java.time.Instant} — declaring them as OffsetDateTime here
+     * fails at runtime with "Cannot project java.time.Instant to
+     * java.time.OffsetDateTime". The moment is the same either way; the caller
+     * gives it an offset.
+     */
+    interface OperationWorkLogProjection {
+        Long getWorkLogId();
+        String getEmployeeName();
+        java.time.LocalDate getWorkDate();
+        java.time.Instant getStartAt();
+        java.time.Instant getEndAt();
+        Integer getDurationMin();
+        Integer getQuantity();
+        Integer getScrap();
+        Long getOrderId();
+        String getOrderCode();
+    }
+
+    interface OperationOrderOutputProjection {
+        Long getOrderId();
+        Long getQuantity();
+        Long getScrap();
+    }
+
+    interface OperationPeriodOutputProjection {
+        String getPeriod();
+        Long getQuantity();
+        Long getScrap();
+    }
 }

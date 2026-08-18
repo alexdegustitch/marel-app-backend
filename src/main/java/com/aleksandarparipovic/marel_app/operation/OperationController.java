@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.operation;
 
 import com.aleksandarparipovic.marel_app.operation.dto.*;
+import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ import java.util.List;
 public class OperationController {
 
     private final OperationService operationService;
+    private final OperationDetailService operationDetailService;
 
     @PostMapping("/search-all")
     public Page<OperationWithProductInfoRow> searchAll(@RequestBody SearchRequest searchRequest){
@@ -53,11 +55,94 @@ public class OperationController {
     @PatchMapping("/{id}/archive")
     public ResponseEntity<Void> archiveOperation(
             @PathVariable Long id,
-            @RequestBody ArchiveRequest request,
+            @RequestBody OperationArchiveRequest request,
             Authentication authentication
     ) {
-        operationService.archiveOperation(id, request.password(), authentication);
+        operationService.archiveOperation(id, request.password(), request.reason(), authentication);
         return ResponseEntity.noContent().build();
+    }
+
+    /** What stands in the way of archiving — empty list means it may be archived. */
+    @GetMapping("/{id}/archive-blockers")
+    public ResponseEntity<List<String>> getArchiveBlockers(@PathVariable Long id) {
+        return ResponseEntity.ok(operationDetailService.getArchiveBlockers(id));
+    }
+
+    @PatchMapping("/{id}/name")
+    public ResponseEntity<Void> renameOperation(
+            @PathVariable Long id,
+            @RequestBody @Valid OperationRenameRequest request
+    ) {
+        operationService.renameOperation(id, request.operationName());
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── The operation detail page ───────────────────────────────────────────
+
+    @GetMapping("/{id}/norm-versions")
+    public ResponseEntity<List<OperationNormVersionDto>> getNormHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(operationDetailService.getNormHistory(id));
+    }
+
+    @PostMapping("/{id}/norm-versions")
+    public ResponseEntity<OperationNormVersionDto> addNorm(
+            @PathVariable Long id,
+            @RequestBody OperationNormVersionCreateRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(operationDetailService.addNorm(id, request, authentication));
+    }
+
+    /** Edits the norm in force. Older versions are history and stay untouched. */
+    @PutMapping("/{id}/norm-versions/{versionId}")
+    public ResponseEntity<OperationNormVersionDto> updateNorm(
+            @PathVariable Long id,
+            @PathVariable Long versionId,
+            @RequestBody OperationNormVersionCreateRequest request
+    ) {
+        return ResponseEntity.ok(operationDetailService.updateNorm(id, versionId, request));
+    }
+
+    /** Archives the norm in force; the previous one becomes current again. */
+    @DeleteMapping("/{id}/norm-versions/{versionId}")
+    public ResponseEntity<Void> archiveNorm(@PathVariable Long id, @PathVariable Long versionId) {
+        operationDetailService.archiveNorm(id, versionId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{id}/norm-versions/{versionId}/verify")
+    public ResponseEntity<OperationNormVersionDto> verifyNorm(
+            @PathVariable Long id,
+            @PathVariable Long versionId,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(operationDetailService.verifyNorm(id, versionId, authentication));
+    }
+
+    @GetMapping("/{id}/production-orders")
+    public ResponseEntity<List<OperationOrderUsageRow>> getProductionOrders(@PathVariable Long id) {
+        return ResponseEntity.ok(operationDetailService.getProductionOrders(id));
+    }
+
+    @GetMapping("/{id}/sample-orders")
+    public ResponseEntity<List<ProductSampleOrderRow>> getSampleOrders(@PathVariable Long id) {
+        return ResponseEntity.ok(operationDetailService.getSampleOrders(id));
+    }
+
+    @GetMapping("/{id}/work-logs")
+    public ResponseEntity<List<OperationWorkLogRow>> getRecentWorkLogs(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "10") int limit
+    ) {
+        return ResponseEntity.ok(operationDetailService.getRecentWorkLogs(id, limit));
+    }
+
+    @GetMapping("/{id}/output")
+    public ResponseEntity<List<OperationOutputPointDto>> getMonthlyOutput(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "12") int months
+    ) {
+        return ResponseEntity.ok(operationDetailService.getMonthlyOutput(id, months));
     }
 
 

@@ -78,6 +78,14 @@ public class Operation {
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 
+    /** Why the operation was archived, and by whom. Set together or not at all. */
+    @Column(name = "archived_reason")
+    private String archivedReason;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "archived_by")
+    private com.aleksandarparipovic.marel_app.user.User archivedBy;
+
     @PrePersist
     void onCreate() {
         this.createdAt = OffsetDateTime.now();
