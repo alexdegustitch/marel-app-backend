@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsFilterRequest;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeEfficiencyDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NoteOccurrenceDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.OperationEfficiencyDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
@@ -669,6 +670,54 @@ public class AnalyticsQueryRepository {
                     rs.getBigDecimal("sum_weighted_performance"),
                     (Long) rs.getObject("sum_performance_duration_min")
             );
+
+    /**
+     * Each operation's norm, beside what the filtered work says its norm could be.
+     *
+     * <p>Built on page 2's own aggregate, which is the point: the candidate has to be derived
+     * from exactly the work the report is showing, bounds and all. A reader who narrows the
+     * period, drops a shift or sets "učinak od 90%" is deciding what counts as representative
+     * work, and the norm they are offered has to follow that decision rather than quietly
+     * answer about everything ever recorded.
+     *
+     * <p>Summed from the aggregate rather than from the facts: the HAVING bounds are measured
+     * against a row of that aggregate — one worker, one operation, one shift, one day — so
+     * they have to be applied before anything is totalled across it.
+     *
+     * <p>A norm is pieces per HOUR, so it is SUM(quantity) / SUM(hours) and never the average
+     * of each row's own rate: a worker who ran ten minutes must not weigh as much as one who
+     * ran all shift.
+     */
+    public List<NormBasisDto> findNormBasis(AnalyticsFilterRequest filter) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        StringBuilder sql = new StringBuilder("WITH agg AS (\n");
+        sql.append(buildDateTreeAggregate(filter, params));
+        sql.append("\n)\n");
+        sql.append("""
+                SELECT
+                    a.operation_id AS operation_id,
+                    a.operation_name AS operation_name,
+                    o.min_norm AS current_norm,
+                    o.norm_date AS norm_date,
+                    SUM(a.sum_quantity) AS sum_quantity,
+                    SUM(a.sum_duration_min) AS sum_duration_min,
+                    SUM(a.sum_quantity) / NULLIF(SUM(a.sum_duration_min) / 60.0, 0) AS avg_per_hour
+                FROM agg a
+                JOIN operations o ON o.id = a.operation_id
+                GROUP BY a.operation_id, a.operation_name, o.min_norm, o.norm_date
+                ORDER BY a.operation_name
+                """);
+
+        return jdbc.query(sql.toString(), params, (rs, rowNum) -> new NormBasisDto(
+                rs.getLong("operation_id"),
+                rs.getString("operation_name"),
+                (Integer) rs.getObject("current_norm"),
+                rs.getObject("norm_date", java.time.LocalDate.class),
+                rs.getLong("sum_quantity"),
+                rs.getLong("sum_duration_min"),
+                rs.getBigDecimal("avg_per_hour")
+        ));
+    }
 
     /** Page 2's aggregate — SELECT … GROUP BY … HAVING …, with no ordering or paging. */
     private StringBuilder buildDateTreeAggregate(AnalyticsFilterRequest filter, MapSqlParameterSource params) {

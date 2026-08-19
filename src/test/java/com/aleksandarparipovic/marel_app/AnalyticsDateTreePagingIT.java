@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsFilterRequest;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
 import com.aleksandarparipovic.marel_app.operation.Operation;
@@ -161,6 +162,47 @@ class AnalyticsDateTreePagingIT extends AbstractIntegrationTest {
         assertThat(analyticsQueryRepository.findDistinctOperations(null, 500).stream()
                 .map(AnalyticsOptionDto::id).toList())
                 .contains(data.otherProductOperationId);
+    }
+
+    @Test
+    @DisplayName("the candidate norm is pieces per hour, one line per operation")
+    void normBasisIsThroughputPerOperation() {
+        Fixture data = seedThreeDaysTwoShiftsTwoOperations();
+
+        List<NormBasisDto> norms = analyticsQueryRepository.findNormBasis(treeFilter(data.productId, 60, 0));
+
+        // A norm belongs to an operation, so a product's answer is one line per operation.
+        assertThat(norms).hasSize(2);
+
+        NormBasisDto first = norms.stream()
+                .filter(n -> n.getOperationId().equals(data.operationAId)).findFirst().orElseThrow();
+
+        // Six logs of one hour each: 100+105+110+115+120+125 = 675 pieces over 6 hours.
+        assertThat(first.getSumQuantity()).isEqualTo(675);
+        assertThat(first.getSumDurationMin()).isEqualTo(360);
+        assertThat(first.getAvgPerHour()).isEqualByComparingTo(new java.math.BigDecimal("112.5"));
+
+        // The norm in force travels with it, so the two numbers are read side by side.
+        assertThat(first.getCurrentNorm()).isEqualTo(40);
+    }
+
+    @Test
+    @DisplayName("a bound reshapes the candidate, because it decides what counts as representative")
+    void normBasisFollowsTheBounds() {
+        Fixture data = seedThreeDaysTwoShiftsTwoOperations();
+
+        AnalyticsFilterRequest bounded = treeFilter(data.productId, 60, 0);
+        // Applied to a ROW of the report — one worker, one operation, one shift, one day — so
+        // three of operation A's six hours drop out before anything is totalled across them.
+        bounded.setMinQuantity(115L);
+
+        NormBasisDto first = analyticsQueryRepository.findNormBasis(bounded).stream()
+                .filter(n -> n.getOperationId().equals(data.operationAId)).findFirst().orElseThrow();
+
+        // 115 + 120 + 125 = 360 pieces over 3 hours, not 675 over 6.
+        assertThat(first.getSumQuantity()).isEqualTo(360);
+        assertThat(first.getSumDurationMin()).isEqualTo(180);
+        assertThat(first.getAvgPerHour()).isEqualByComparingTo(new java.math.BigDecimal("120"));
     }
 
     /** What one seeded period produced, so each test can assert against it by name. */

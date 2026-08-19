@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsFilterRequest;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeEfficiencyDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NoteOccurrenceDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.OperationEfficiencyDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
@@ -86,6 +87,19 @@ public class AnalyticsController {
     @PostMapping("/operation-efficiency")
     public List<OperationEfficiencyDto> operationEfficiency(@RequestBody AnalyticsFilterRequest filter) {
         return queryRepo.findOperationEfficiency(filter);
+    }
+
+    /**
+     * Each operation's norm beside what the filtered work says it could be — what the norm
+     * panel on page 2 shows once a single product is chosen.
+     *
+     * <p>Takes the report's own filter, bounds included, because the candidate norm is only
+     * meaningful as "the throughput of the work I am currently looking at". Narrowing the
+     * period or raising a bound re-answers it.
+     */
+    @PostMapping("/norm-basis")
+    public List<NormBasisDto> normBasis(@RequestBody AnalyticsFilterRequest filter) {
+        return queryRepo.findNormBasis(filter);
     }
 
     // Backs the "napomena" multi-select filter option list on all 5 analytics pages.
