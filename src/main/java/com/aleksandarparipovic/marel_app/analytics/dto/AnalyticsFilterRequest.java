@@ -89,4 +89,11 @@ public class AnalyticsFilterRequest {
      * because they page by different things and a report only ever means one of them.
      */
     private Boolean groupByDate;
+
+    /**
+     * Page 3 only — keeps the worker -> product -> operation tree, and makes a page a page of
+     * WORKERS: each arrives with every product and operation they worked, so a worker's own
+     * total is never a part of itself.
+     */
+    private Boolean groupByEmployee;
 }

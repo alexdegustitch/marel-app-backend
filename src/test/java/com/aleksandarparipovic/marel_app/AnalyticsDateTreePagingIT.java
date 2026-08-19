@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsFilterRequest;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeProductOperationDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
@@ -203,6 +204,58 @@ class AnalyticsDateTreePagingIT extends AbstractIntegrationTest {
         assertThat(first.getSumQuantity()).isEqualTo(360);
         assertThat(first.getSumDurationMin()).isEqualTo(180);
         assertThat(first.getAvgPerHour()).isEqualByComparingTo(new java.math.BigDecimal("120"));
+    }
+
+    @Test
+    @DisplayName("the worker report pages by WORKER, at operation-of-a-product grain")
+    void employeeReportPagesByWorker() {
+        Fixture data = seedThreeDaysTwoShiftsTwoOperations();
+
+        AnalyticsFilterRequest filter = new AnalyticsFilterRequest();
+        filter.setProductIds(List.of(data.productId));
+        filter.setGroupByEmployee(true);
+        filter.setSize(1);
+        filter.setPage(0);
+
+        AnalyticsPageDto<EmployeeProductOperationDto> first =
+                analyticsQueryRepository.findEmployeeEfficiencyPage(filter);
+
+        // One worker did all of it, so the report is one page long — however many rows the
+        // worker's own page holds.
+        assertThat(first.page().totalElements()).isEqualTo(1);
+
+        // And that worker arrives WHOLE: both operations of the product, not the first one.
+        assertThat(first.content()).hasSize(2);
+        assertThat(first.content()).extracting(EmployeeProductOperationDto::getOperationId)
+                .containsExactlyInAnyOrder(data.operationAId, data.operationBId);
+
+        // Totalled across every day and shift the filters left standing.
+        assertThat(first.content().stream()
+                .filter(r -> r.getOperationId().equals(data.operationAId))
+                .findFirst().orElseThrow().getSumQuantity()).isEqualTo(675);
+    }
+
+    @Test
+    @DisplayName("a sorted worker report flattens and pages by row")
+    void employeeReportFlattensWhenSorted() {
+        Fixture data = seedThreeDaysTwoShiftsTwoOperations();
+
+        AnalyticsFilterRequest filter = new AnalyticsFilterRequest();
+        filter.setProductIds(List.of(data.productId));
+        filter.setGroupByEmployee(true);
+        filter.setSortBy("sumQuantity");
+        filter.setSortDir("DESC");
+        filter.setSize(1);
+        filter.setPage(0);
+
+        AnalyticsPageDto<EmployeeProductOperationDto> first =
+                analyticsQueryRepository.findEmployeeEfficiencyPage(filter);
+
+        // Now a page is a page of ROWS: two of them, and one per page.
+        assertThat(first.page().totalElements()).isEqualTo(2);
+        assertThat(first.content()).hasSize(1);
+        // Operation B produced 681 to A's 675, so it ranks first.
+        assertThat(first.content().getFirst().getOperationId()).isEqualTo(data.operationBId);
     }
 
     /** What one seeded period produced, so each test can assert against it by name. */
