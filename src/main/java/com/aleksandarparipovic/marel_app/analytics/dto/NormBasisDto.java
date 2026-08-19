@@ -26,6 +26,14 @@ public class NormBasisDto {
     private Integer currentNorm;
     /** When that norm was signed off. */
     private LocalDate normDate;
+    /**
+     * How many pieces of this operation go into one product.
+     *
+     * <p>Carried so that applying a new norm from the report writes the value the operation
+     * already has: a norm version records the pair, and sending it back empty would clear a
+     * number this screen never asked about and the manufacturing-time report depends on.
+     */
+    private Integer unitsPerProduct;
 
     private Long sumQuantity;
     private Long sumDurationMin;

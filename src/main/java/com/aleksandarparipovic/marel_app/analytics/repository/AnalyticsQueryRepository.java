@@ -699,12 +699,13 @@ public class AnalyticsQueryRepository {
                     a.operation_name AS operation_name,
                     o.min_norm AS current_norm,
                     o.norm_date AS norm_date,
+                    o.units_per_product AS units_per_product,
                     SUM(a.sum_quantity) AS sum_quantity,
                     SUM(a.sum_duration_min) AS sum_duration_min,
                     SUM(a.sum_quantity) / NULLIF(SUM(a.sum_duration_min) / 60.0, 0) AS avg_per_hour
                 FROM agg a
                 JOIN operations o ON o.id = a.operation_id
-                GROUP BY a.operation_id, a.operation_name, o.min_norm, o.norm_date
+                GROUP BY a.operation_id, a.operation_name, o.min_norm, o.norm_date, o.units_per_product
                 ORDER BY a.operation_name
                 """);
 
@@ -713,6 +714,7 @@ public class AnalyticsQueryRepository {
                 rs.getString("operation_name"),
                 (Integer) rs.getObject("current_norm"),
                 rs.getObject("norm_date", java.time.LocalDate.class),
+                (Integer) rs.getObject("units_per_product"),
                 rs.getLong("sum_quantity"),
                 rs.getLong("sum_duration_min"),
                 rs.getBigDecimal("avg_per_hour")
