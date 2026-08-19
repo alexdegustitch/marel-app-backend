@@ -31,3 +31,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Local secrets ###
+# Real credentials for local dev. .env.example documents the shape; this
+# file holds the actual values and must never be committed.
+.env
+.env.*
+!.env.example
