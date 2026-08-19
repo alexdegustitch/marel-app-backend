@@ -262,12 +262,30 @@ public class AnalyticsQueryRepository {
      * `limit` by name, which is what an untouched dropdown shows.
      */
     public List<AnalyticsOptionDto> findDistinctOperations(String search, int limit) {
+        return findDistinctOperations(search, limit, null);
+    }
+
+    /**
+     * The same list, narrowed to the operations of the chosen products.
+     *
+     * <p>Which is what a report that filters by product AND by operation needs: once a
+     * product is chosen, an operation belonging to some other product is not a narrower
+     * filter but an empty one — the two conditions are ANDed, so offering it would only ever
+     * produce a blank report. Narrowing is on {@code operations.product_id}, the operation's
+     * own product, not on what happens to have been worked together.
+     */
+    public List<AnalyticsOptionDto> findDistinctOperations(String search, int limit, List<Long> productIds) {
         StringBuilder sql = new StringBuilder("""
                 SELECT o.id, o.op_name
                 FROM operations o
                 WHERE EXISTS (SELECT 1 FROM work_log_facts f WHERE f.operation_id = o.id)
                 """);
         MapSqlParameterSource params = new MapSqlParameterSource();
+
+        if (isNotEmpty(productIds)) {
+            sql.append(" AND o.product_id IN (:optionProductIds)");
+            params.addValue("optionProductIds", productIds);
+        }
 
         if (search != null && !search.isBlank()) {
             sql.append(" AND o.op_name ILIKE :search");
@@ -512,18 +530,157 @@ public class AnalyticsQueryRepository {
         ));
     }
 
-    // Page 2 — Proizvod-datum-operacija-radnik. Always pre-aggregates to (date, shift,
-    // product, operation, employee) grain — this is the ONLY query that joins employees for
-    // display purposes (employee name is not denormalized onto work_log_facts, since page 2
-    // is the only page that needs it, per the fact-table design). Reads: dateRange/months/
-    // productionOrderIds/notes/noteLike/startTimes/startTimeRange (top filter panel) plus
-    // employeeIds/productIds/operationIds/durationMinFrom/durationMinTo (sidebar). Ignores
-    // dates/shiftIds (not part of this page's filter set — shift is a grouping dimension here,
-    // not a top-level filter, per the spec).
-    public List<ProductDateOperationEmployeeDto> findProductDateOperationEmployeeSummary(AnalyticsFilterRequest filter) {
+    /**
+     * Page 2 — Datum-smena-proizvod-operacija-radnik, one page of DATES at a time.
+     *
+     * <p>Always pre-aggregated to (date, shift, product, operation, employee) grain, so what
+     * travels is bounded by distinct combinations rather than by how many work logs the
+     * factory recorded. This is also the only query that joins {@code employees} for display
+     * — the worker's name is not denormalized onto the facts, because page 2 is the only page
+     * that names one.
+     *
+     * <p>Paged, sorted and bounded on the SERVER, for page 1's reason: over a year the report
+     * is far more rows than a browser can hold, so "the ten worst operations" is a question
+     * only the side holding all of them can answer, and a client sorting the chunk it happens
+     * to have would answer a different question with the same words.
+     *
+     * <p>Two ways to page, and they page different things:
+     * <ul>
+     *   <li>{@code groupByDate} (the default view, nothing sorted) — a page is a page of
+     *       DATES. A date arrives with every shift, product, operation and worker on it, so a
+     *       day's or a shift's subtotal on screen is always the whole of it.
+     *   <li>anything sorted — the tree is not a ranking, so a chosen sort flattens it and a
+     *       page is a page of rows, ordered across everything the filters left standing.
+     * </ul>
+     *
+     * <p>Reads every field of {@link AnalyticsFilterRequest} except {@code level} and
+     * {@code groupByProduct}, which belong to page 1's product/operation grain.
+     */
+    public AnalyticsPageDto<ProductDateOperationEmployeeDto> findDateTreePage(AnalyticsFilterRequest filter) {
+        // Ordering the DAYS is a reordering of the bands, not a ranking that cuts across them,
+        // so the tree survives it — "najnoviji dan prvo" is still a tree. Every other sort
+        // ranks things that live at different depths and flattens it.
+        boolean tree = Boolean.TRUE.equals(filter.getGroupByDate())
+                && (filter.getSortBy() == null || "workDate".equals(filter.getSortBy()));
+
+        // A day is atomic here, so a chunk of dates is a much bigger unit than a chunk of
+        // rows — hence the smaller default and the lower ceiling in tree mode.
+        int maxSize = tree ? 60 : 500;
+        int defaultSize = tree ? 7 : 100;
+        int size = filter.getSize() == null ? defaultSize : Math.max(1, Math.min(filter.getSize(), maxSize));
+        int page = filter.getPage() == null ? 0 : Math.max(0, filter.getPage());
+        String sortColumn = dateTreeSortColumnOf(filter.getSortBy());
+        String direction = "DESC".equalsIgnoreCase(filter.getSortDir()) ? "DESC" : "ASC";
+
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        StringBuilder sql = new StringBuilder("WITH agg AS (\n");
+        sql.append(buildDateTreeAggregate(filter, params));
+        sql.append("\n)\n");
+
+        if (tree) {
+            // The page is chosen among the DATES the filters left standing; the join then
+            // brings back everything recorded on those days.
+            //
+            // Every level of the ordering carries its ID after its name, because the client
+            // builds the tree by walking CONSECUTIVE rows: two products that happen to share
+            // a name would otherwise be free to interleave, and each block of them would open
+            // a band of its own. The id makes each one a run.
+            sql.append("""
+                    , page_dates AS (
+                        SELECT work_date FROM (
+                            SELECT DISTINCT work_date FROM agg
+                        ) d
+                        ORDER BY d.work_date""").append(" ").append(direction).append("""
+                        LIMIT :limit OFFSET :offset
+                    )
+                    SELECT a.*, (SELECT COUNT(DISTINCT work_date) FROM agg) AS total_rows
+                    FROM agg a
+                    JOIN page_dates pd ON pd.work_date = a.work_date
+                    ORDER BY a.work_date""").append(" ").append(direction).append("""
+                             , a.shift_start_time, a.shift_code, a.shift_type_id,
+                               a.product_name, a.product_id,
+                               a.operation_name, a.operation_id,
+                               a.employee_name, a.employee_id
+                    """);
+        } else {
+            sql.append("SELECT a.*, COUNT(*) OVER () AS total_rows FROM agg a");
+            sql.append(" ORDER BY a.").append(sortColumn).append(" ").append(direction).append(" NULLS LAST");
+            // A tiebreaker, or two rows with the same measure could swap places between
+            // requests and a page boundary would show one of them twice and the other never.
+            sql.append(", a.work_date, a.shift_start_time, a.product_name, a.operation_id, a.employee_id");
+            sql.append(" LIMIT :limit OFFSET :offset");
+        }
+
+        params.addValue("limit", size);
+        params.addValue("offset", (long) page * size);
+
+        List<Long> total = new ArrayList<>(1);
+        List<ProductDateOperationEmployeeDto> rows = jdbc.query(sql.toString(), params, (rs, rowNum) -> {
+            if (total.isEmpty()) total.add(rs.getLong("total_rows"));
+            return DATE_TREE_ROW_MAPPER.mapRow(rs, rowNum);
+        });
+
+        return AnalyticsPageDto.of(rows, size, page, total.isEmpty() ? 0 : total.get(0));
+    }
+
+    /**
+     * Sort keys page 2 may name, mapped to the aggregate's own columns.
+     *
+     * <p>A whitelist, not a passthrough: the value lands in an ORDER BY, one of the few places
+     * a bound parameter cannot stand in for an identifier.
+     *
+     * <p>"smena" sorts by when the shift STARTS, not by how its code is spelled — I, II, III
+     * is a chronological order that happens to also be alphabetical, and stops being so the
+     * moment a factory names its shifts anything else.
+     */
+    private String dateTreeSortColumnOf(String sortBy) {
+        return switch (sortBy == null ? "" : sortBy) {
+            case "shiftCode" -> "shift_start_time";
+            case "productName" -> "product_name";
+            case "operationName" -> "operation_name";
+            case "employeeName" -> "employee_name";
+            case "sumQuantity" -> "sum_quantity";
+            case "sumScrap" -> "sum_scrap";
+            case "avgPerHour" -> "avg_per_hour";
+            case "avgPerformancePct" -> "avg_performance_pct";
+            case "defectPct" -> "defect_pct";
+            case "sumDurationMin" -> "sum_duration_min";
+            default -> "work_date";
+        };
+    }
+
+    private static final RowMapper<ProductDateOperationEmployeeDto> DATE_TREE_ROW_MAPPER = (rs, rowNum) ->
+            new ProductDateOperationEmployeeDto(
+                    rs.getObject("work_date", java.time.LocalDate.class),
+                    rs.getLong("shift_type_id"),
+                    rs.getString("shift_code"),
+                    rs.getLong("product_id"),
+                    rs.getString("product_name"),
+                    rs.getLong("operation_id"),
+                    rs.getString("operation_name"),
+                    rs.getLong("employee_id"),
+                    rs.getString("employee_name"),
+                    rs.getLong("sum_quantity"),
+                    rs.getLong("sum_scrap"),
+                    rs.getLong("sum_duration_min"),
+                    rs.getBigDecimal("avg_per_hour"),
+                    rs.getBigDecimal("defect_pct"),
+                    rs.getBigDecimal("avg_performance_pct"),
+                    rs.getBigDecimal("sum_weighted_performance"),
+                    (Long) rs.getObject("sum_performance_duration_min")
+            );
+
+    /** Page 2's aggregate — SELECT … GROUP BY … HAVING …, with no ordering or paging. */
+    private StringBuilder buildDateTreeAggregate(AnalyticsFilterRequest filter, MapSqlParameterSource params) {
+        // The shift's code and start time are read from the SHIFTS table, not from the copy
+        // denormalized onto the facts: the copy is taken when a row is synced, so renaming a
+        // shift would put the same shift_type_id in the GROUP BY under two spellings and split
+        // one shift's totals across two bands. Same reasoning as findDistinctProducts.
         StringBuilder sql = new StringBuilder("""
                 SELECT
-                    f.work_date AS work_date, f.shift_type_id AS shift_type_id, f.shift_code AS shift_code,
+                    f.work_date AS work_date,
+                    f.shift_type_id AS shift_type_id, s.shift_code AS shift_code,
+                    s.start_time AS shift_start_time,
                     f.product_id AS product_id, p.product_name AS product_name,
                     f.operation_id AS operation_id, o.op_name AS operation_name,
                     f.employee_id AS employee_id, e.full_name AS employee_name,
@@ -540,32 +697,17 @@ public class AnalyticsQueryRepository {
                 JOIN employees e ON e.id = f.employee_id
                 JOIN products p ON p.id = f.product_id
                 JOIN operations o ON o.id = f.operation_id
+                JOIN shifts s ON s.id = f.shift_type_id
                 WHERE 1=1
                 """);
-        MapSqlParameterSource params = new MapSqlParameterSource();
         appendCommonFilters(sql, params, filter);
-        sql.append(" GROUP BY f.work_date, f.shift_type_id, f.shift_code, f.product_id, p.product_name,");
-        sql.append(" f.operation_id, o.op_name, f.employee_id, e.full_name");
-        sql.append(" ORDER BY f.work_date, f.shift_code, p.product_name, o.op_name, e.full_name");
+        sql.append(" GROUP BY f.work_date, f.shift_type_id, s.shift_code, s.start_time,");
+        sql.append(" f.product_id, p.product_name, f.operation_id, o.op_name,");
+        sql.append(" f.employee_id, e.full_name");
+        // Measured against the row the reader is looking at — one worker's work on one
+        // operation, on one shift of one day — and never against a single work log.
+        appendAggregateBounds(sql, params, filter);
 
-        return jdbc.query(sql.toString(), params, (rs, rowNum) -> new ProductDateOperationEmployeeDto(
-                rs.getObject("work_date", java.time.LocalDate.class),
-                rs.getLong("shift_type_id"),
-                rs.getString("shift_code"),
-                rs.getLong("product_id"),
-                rs.getString("product_name"),
-                rs.getLong("operation_id"),
-                rs.getString("operation_name"),
-                rs.getLong("employee_id"),
-                rs.getString("employee_name"),
-                rs.getLong("sum_quantity"),
-                rs.getLong("sum_scrap"),
-                rs.getLong("sum_duration_min"),
-                rs.getBigDecimal("avg_per_hour"),
-                rs.getBigDecimal("defect_pct"),
-                rs.getBigDecimal("avg_performance_pct"),
-                rs.getBigDecimal("sum_weighted_performance"),
-                (Long) rs.getObject("sum_performance_duration_min")
-        ));
+        return sql;
     }
 }

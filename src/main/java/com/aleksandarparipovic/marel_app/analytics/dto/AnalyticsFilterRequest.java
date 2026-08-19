@@ -77,4 +77,16 @@ public class AnalyticsFilterRequest {
     private Integer page;
     private Integer size;
     private Boolean groupByProduct;
+
+    /**
+     * Page 2 only — keeps the date -> shift -> product -> operation tree, and with it changes
+     * what a page IS: a page of DATES, each arriving with every shift, product, operation and
+     * worker recorded on it. A date is therefore never split across two chunks, which is what
+     * lets a day's (and a shift's) subtotal be the whole of it rather than the part that
+     * happened to land on this page.
+     *
+     * <p>Its counterpart on page 1 is {@code groupByProduct}; the two are separate fields
+     * because they page by different things and a report only ever means one of them.
+     */
+    private Boolean groupByDate;
 }

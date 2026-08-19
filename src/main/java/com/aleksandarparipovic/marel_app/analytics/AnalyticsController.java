@@ -61,10 +61,19 @@ public class AnalyticsController {
         return queryRepo.findProductOperationSummary(filter);
     }
 
-    // Page 2 — Proizvod-datum-operacija-radnik
+    /**
+     * Page 2 — Datum-smena-proizvod-operacija-radnik, one page at a time.
+     *
+     * <p>Paged and sorted on the server for the same reason as page 1: over a period of any
+     * length the report is more rows than a browser can hold, and a ranking of the chunk that
+     * happened to arrive is not a ranking. In its default view a page is a page of DATES —
+     * a day arrives whole, so the day's and the shift's subtotals are never a part of
+     * themselves; see {@code groupByDate} on the filter.
+     */
     @PostMapping("/product-date-operation-employee")
-    public List<ProductDateOperationEmployeeDto> productDateOperationEmployee(@RequestBody AnalyticsFilterRequest filter) {
-        return queryRepo.findProductDateOperationEmployeeSummary(filter);
+    public AnalyticsPageDto<ProductDateOperationEmployeeDto> productDateOperationEmployee(
+            @RequestBody AnalyticsFilterRequest filter) {
+        return queryRepo.findDateTreePage(filter);
     }
 
     // Page 3 — Efikasnost radnika
@@ -102,9 +111,12 @@ public class AnalyticsController {
     @GetMapping("/filters/operations")
     public List<AnalyticsOptionDto> distinctOperations(
             @RequestParam(required = false) String search,
-            @RequestParam(defaultValue = "50") int limit
+            @RequestParam(defaultValue = "50") int limit,
+            // Present when the report already filters by product: an operation of some other
+            // product would AND with that filter to an empty report, so it is not offered.
+            @RequestParam(required = false) List<Long> productIds
     ) {
-        return queryRepo.findDistinctOperations(search, Math.max(1, Math.min(limit, 200)));
+        return queryRepo.findDistinctOperations(search, Math.max(1, Math.min(limit, 200)), productIds);
     }
 
     @GetMapping("/filters/employees")
