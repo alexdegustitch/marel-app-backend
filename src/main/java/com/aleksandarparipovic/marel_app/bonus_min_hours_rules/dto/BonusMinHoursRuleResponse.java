@@ -19,6 +19,8 @@ public class BonusMinHoursRuleResponse {
     private final Integer effectiveMinNumHours;
     private final OffsetDateTime manualSetAt;
     private final Long manualSetBy;
+    /** Who set it, by name — what the screen actually shows. */
+    private final String manualSetByName;
     private final OffsetDateTime createdAt;
     private final OffsetDateTime updatedAt;
     private final OffsetDateTime archivedAt;
@@ -31,6 +33,7 @@ public class BonusMinHoursRuleResponse {
         this.effectiveMinNumHours = e.getEffectiveMinNumHours();
         this.manualSetAt = e.getManualSetAt();
         this.manualSetBy = e.getManualSetBy();
+        this.manualSetByName = e.getManualSetByUser() == null ? null : e.getManualSetByUser().getFullName();
         this.createdAt = e.getCreatedAt();
         this.updatedAt = e.getUpdatedAt();
         this.archivedAt = e.getArchivedAt();

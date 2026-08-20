@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.bonus_min_hours_rules;
 
+import com.aleksandarparipovic.marel_app.user.User;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -50,6 +51,16 @@ public class BonusMinHoursRule {
 
     @Column(name = "manual_set_by")
     private Long manualSetBy;
+
+    /**
+     * The same column again, read-only, so the screen can say WHO rather than an id.
+     *
+     * <p>Two mappings of one column: the {@code Long} above is what the service writes, and
+     * this one is only ever read. Same idiom as {@code OperationNormVersion.createdBy}.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "manual_set_by", insertable = false, updatable = false)
+    private User manualSetByUser;
 
     /**
      * The number to apply — the manual one when there is one, the calendar's otherwise.
