@@ -55,11 +55,19 @@ public class AnalyticsController {
         return queryRepo.findNoteOccurrences(filter, Math.max(1, Math.min(limit, 1000)));
     }
 
-    // Page 4 — Efikasnost proizvoda. Same query/output shape as page 1 (identical spec),
-    // exposed as its own endpoint for a clearer frontend route per page.
+    /**
+     * Page 4 — Efikasnost proizvoda, one page at a time.
+     *
+     * <p>The same aggregate page 1 reads, at the same grain and through the same paging: a
+     * page is a page of PRODUCTS, each arriving with every operation it has, so a product's
+     * band always carries its whole total. The two pages differ in what they ASK of it — page
+     * 1 offers a grain toggle and the note trail, page 4 draws it as a foldable tree of four
+     * measures — which is a question for the screen, not for the query.
+     */
     @PostMapping("/product-efficiency")
-    public List<ProductOperationSummaryDto> productEfficiency(@RequestBody AnalyticsFilterRequest filter) {
-        return queryRepo.findProductOperationSummary(filter);
+    public AnalyticsPageDto<ProductOperationSummaryDto> productEfficiency(
+            @RequestBody AnalyticsFilterRequest filter) {
+        return queryRepo.findProductOperationSummaryPage(filter);
     }
 
     /**

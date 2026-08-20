@@ -337,7 +337,11 @@ public class AnalyticsQueryRepository {
      */
     public AnalyticsPageDto<ProductOperationSummaryDto> findProductOperationSummaryPage(AnalyticsFilterRequest filter) {
         boolean byProduct = isProductLevel(filter);
-        boolean banded = !byProduct && Boolean.TRUE.equals(filter.getGroupByProduct());
+        // Ordering the PRODUCTS is a reordering of the bands, not a ranking that cuts across
+        // them, so the bands survive it. Every other sort ranks operations against each other
+        // regardless of whose product they are, which a band cannot hold.
+        boolean banded = !byProduct && Boolean.TRUE.equals(filter.getGroupByProduct())
+                && (filter.getSortBy() == null || "productName".equals(filter.getSortBy()));
 
         int size = filter.getSize() == null ? 100 : Math.max(1, Math.min(filter.getSize(), 500));
         int page = filter.getPage() == null ? 0 : Math.max(0, filter.getPage());
@@ -358,15 +362,17 @@ public class AnalyticsQueryRepository {
                         SELECT product_id FROM (
                             SELECT DISTINCT product_id, product_name FROM agg
                         ) d
-                        ORDER BY d.product_name
+                        ORDER BY d.product_name""").append(" ").append(direction).append("""
                         LIMIT :limit OFFSET :offset
                     )
                     SELECT a.*, (SELECT COUNT(DISTINCT product_id) FROM agg) AS total_rows
                     FROM agg a
                     JOIN page_products pp ON pp.product_id = a.product_id
                     """);
-            sql.append(" ORDER BY a.product_name, a.")
-               .append(sortColumn).append(" ").append(direction).append(" NULLS LAST, a.operation_name");
+            // The id follows each name, because a client that builds bands by walking
+            // CONSECUTIVE rows would open two bands for two products sharing a name.
+            sql.append(" ORDER BY a.product_name ").append(direction)
+               .append(", a.product_id, a.operation_name, a.operation_id");
         } else {
             sql.append("SELECT a.*, COUNT(*) OVER () AS total_rows FROM agg a");
             sql.append(" ORDER BY a.").append(sortColumn).append(" ").append(direction).append(" NULLS LAST");
