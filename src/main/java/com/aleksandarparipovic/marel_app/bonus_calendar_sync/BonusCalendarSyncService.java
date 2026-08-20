@@ -3,7 +3,9 @@ package com.aleksandarparipovic.marel_app.bonus_calendar_sync;
 import com.aleksandarparipovic.marel_app.bonus_eligibility_rules.BonusEligibilityRule;
 import com.aleksandarparipovic.marel_app.bonus_eligibility_rules.BonusEligibilityRuleRepository;
 import com.aleksandarparipovic.marel_app.bonus_eligibility_rules.BonusEligibilityRuleService;
+import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.BonusMinHoursHistoryRecorder;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.BonusMinHoursRule;
+import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.BonusMinHoursRuleHistory;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.BonusMinHoursRuleRepository;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.dto.BonusMinHoursRuleResponse;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
@@ -34,6 +36,7 @@ public class BonusCalendarSyncService {
 
     private final WorkCalendarDayRepository workCalendarDayRepository;
     private final BonusMinHoursRuleRepository bonusMinHoursRuleRepository;
+    private final BonusMinHoursHistoryRecorder historyRecorder;
     private final BonusEligibilityRuleRepository bonusEligibilityRuleRepository;
     private final BonusEligibilityRuleService bonusEligibilityRuleService;
     private final PayrollRunItemRepository payrollRunItemRepository;
@@ -52,14 +55,29 @@ public class BonusCalendarSyncService {
 
         BonusMinHoursRule rule = bonusMinHoursRuleRepository.findByPeriodAndArchivedAtIsNull(period)
                 .orElseGet(() -> BonusMinHoursRule.builder().period(period).build());
+        /*
+         * The calendar owns its own number and nothing else. A manual override stays exactly
+         * where it is — that is what makes it an override rather than a suggestion the next
+         * calendar edit quietly undoes — and the effective value the database derives keeps
+         * preferring it. What changes here still matters even while overridden: it is what
+         * "reset" will return the month to, and what the screen shows struck through.
+         */
         rule.setMinNumHours(minHours);
-        bonusMinHoursRuleRepository.save(rule);
+        BonusMinHoursRule saved = bonusMinHoursRuleRepository.saveAndFlush(rule);
+
+        historyRecorder.record(period, minHours, saved.getManualMinNumHours(),
+                BonusMinHoursRuleHistory.Source.CALENDAR_SYNC, null,
+                "Izmena kalendara rada.");
 
         syncEligibilityActiveFlags(year, month, days);
 
         payrollRunItemRepository.markNeedsRecalculationByYearAndMonth(year, month);
 
-        log.info("[BonusCalendarSyncService] Sinhronizovan mesec {}/{}: min sati za bonus = {}.", month, year, minHours);
+        log.info("[BonusCalendarSyncService] Sinhronizovan mesec {}/{}: sistemski min sati = {}{}.",
+                month, year, minHours,
+                saved.getManualMinNumHours() == null
+                        ? ""
+                        : ", ručno postavljeno " + saved.getManualMinNumHours() + " i dalje važi");
     }
 
     @Transactional
@@ -88,7 +106,13 @@ public class BonusCalendarSyncService {
             int minHours = days.isEmpty() ? 0 : computeMinHours(days);
 
             BonusMinHoursRule rule = BonusMinHoursRule.builder().period(period).minNumHours(minHours).build();
-            result.add(new BonusMinHoursRuleResponse(bonusMinHoursRuleRepository.save(rule)));
+            BonusMinHoursRule saved = bonusMinHoursRuleRepository.saveAndFlush(rule);
+
+            historyRecorder.record(period, minHours, null,
+                    BonusMinHoursRuleHistory.Source.CALENDAR_SYNC, null,
+                    "Inicijalizacija godine.");
+
+            result.add(new BonusMinHoursRuleResponse(saved));
         }
 
         return result;

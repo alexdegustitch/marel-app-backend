@@ -148,6 +148,13 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
                                                                        @Param("year") int year,
                                                                        @Param("month") int month);
 
+    /**
+     * Flags a whole month for recalculation — what a change to the month's rules asks for.
+     *
+     * <p>LOCKED items are excluded, as they are in the per-employee variant: a locked figure
+     * is one somebody signed off, and marking it stale would either quietly rewrite an
+     * approved number or leave a flag nothing will ever clear.
+     */
     @Modifying
     @Query("""
         UPDATE PayrollRunItem pri
@@ -157,8 +164,27 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
             WHERE pr.reportYear = :year AND pr.reportMonth = :month
         )
         AND pri.archivedAt IS NULL
+        AND pri.status <> 'LOCKED'
         """)
     int markNeedsRecalculationByYearAndMonth(@Param("year") int year, @Param("month") int month);
+
+    /**
+     * Whether a month is closed — any locked item in it.
+     *
+     * <p>Asked before anything rewrites what that month is calculated FROM. A locked item is a
+     * figure somebody signed off; changing the rule under it would leave the signature
+     * attached to arithmetic nobody approved.
+     */
+    @Query("""
+        SELECT count(pri) FROM PayrollRunItem pri
+        WHERE pri.payrollRun.id IN (
+            SELECT pr.id FROM PayrollRun pr
+            WHERE pr.reportYear = :year AND pr.reportMonth = :month
+        )
+        AND pri.archivedAt IS NULL
+        AND pri.status = 'LOCKED'
+        """)
+    long countLockedForMonth(@Param("year") int year, @Param("month") int month);
 
     @Modifying
     @Query("""

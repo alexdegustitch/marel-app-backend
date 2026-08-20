@@ -115,9 +115,20 @@ public class MonthlyBonusCalculator implements PayrollComponentCalculator {
             inputs.put("baseBonusReason", "NO_MIN_HOURS_RULE_FOR_PERIOD");
             return BigDecimal.ZERO;
         }
-        inputs.put("minHoursRequired", minHoursRule.getMinNumHours());
+        /*
+         * The EFFECTIVE minimum — the manual one when a person set it, the calendar's
+         * otherwise. Derived by the database, so this cannot accidentally apply the
+         * calendar's number to a month somebody deliberately overrode.
+         *
+         * Both are recorded on the item: the threshold applied, and whether it was a decision
+         * or the calendar. A payslip questioned a year from now can then answer for itself,
+         * regardless of what the rule says by then.
+         */
+        int minHoursRequired = minHoursRule.getEffectiveMinNumHours();
+        inputs.put("minHoursRequired", minHoursRequired);
+        inputs.put("minHoursSource", minHoursRule.getManualMinNumHours() != null ? "MANUAL" : "CALENDAR");
 
-        if (hoursWorked.compareTo(BigDecimal.valueOf(minHoursRule.getMinNumHours())) < 0) {
+        if (hoursWorked.compareTo(BigDecimal.valueOf(minHoursRequired)) < 0) {
             inputs.put("baseBonusReason", "BELOW_MINIMUM_HOURS");
             return BigDecimal.ZERO;
         }
