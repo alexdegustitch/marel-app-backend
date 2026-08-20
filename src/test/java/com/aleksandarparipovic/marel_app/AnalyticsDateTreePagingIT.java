@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeProductOperationDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.OperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
 import com.aleksandarparipovic.marel_app.operation.Operation;
@@ -256,6 +257,35 @@ class AnalyticsDateTreePagingIT extends AbstractIntegrationTest {
         assertThat(first.content()).hasSize(1);
         // Operation B produced 681 to A's 675, so it ranks first.
         assertThat(first.content().getFirst().getOperationId()).isEqualTo(data.operationBId);
+    }
+
+    @Test
+    @DisplayName("the operation report pages by OPERATION, with its workers under it")
+    void operationReportPagesByOperation() {
+        Fixture data = seedThreeDaysTwoShiftsTwoOperations();
+
+        AnalyticsFilterRequest filter = new AnalyticsFilterRequest();
+        filter.setProductIds(List.of(data.productId));
+        filter.setGroupByOperation(true);
+        filter.setSize(1);
+        filter.setPage(0);
+
+        AnalyticsPageDto<OperationEmployeeDto> first =
+                analyticsQueryRepository.findOperationEfficiencyPage(filter);
+
+        // Two operations were worked, so the report is two pages long — one operation each.
+        assertThat(first.page().totalElements()).isEqualTo(2);
+
+        // And the operation arrives WHOLE: every worker who ran it. One worker did all of it
+        // here, so one row — but it is the operation that was paged, not the row.
+        assertThat(first.content()).hasSize(1);
+        OperationEmployeeDto row = first.content().getFirst();
+        assertThat(row.getEmployeeId()).isNotNull();
+        assertThat(row.getProductId()).isEqualTo(data.productId);
+
+        // Totalled across every day and shift the filters left standing.
+        assertThat(first.content().stream().mapToLong(OperationEmployeeDto::getSumQuantity).sum())
+                .isIn(675L, 681L);
     }
 
     /** What one seeded period produced, so each test can assert against it by name. */

@@ -6,7 +6,7 @@ import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeProductOperationDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NoteOccurrenceDto;
-import com.aleksandarparipovic.marel_app.analytics.dto.OperationEfficiencyDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.OperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductOperationSummaryDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
@@ -98,10 +98,17 @@ public class AnalyticsController {
         return queryRepo.findEmployeeEfficiencyPage(filter);
     }
 
-    // Page 5 — Efikasnost operacija - količina
+    /**
+     * Page 5 — Efikasnost operacija, one page at a time.
+     *
+     * <p>Aggregated to (operation, worker) grain: the report answers "how is this operation
+     * going, and for whom". In its default view a page is a page of OPERATIONS — each arrives
+     * with every worker who ran it, so an operation's total is never a part of itself.
+     */
     @PostMapping("/operation-efficiency")
-    public List<OperationEfficiencyDto> operationEfficiency(@RequestBody AnalyticsFilterRequest filter) {
-        return queryRepo.findOperationEfficiency(filter);
+    public AnalyticsPageDto<OperationEmployeeDto> operationEfficiency(
+            @RequestBody AnalyticsFilterRequest filter) {
+        return queryRepo.findOperationEfficiencyPage(filter);
     }
 
     /**

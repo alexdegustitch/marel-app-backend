@@ -6,7 +6,7 @@ import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeProductOperationDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NoteOccurrenceDto;
-import com.aleksandarparipovic.marel_app.analytics.dto.OperationEfficiencyDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.OperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductOperationSummaryDto;
 import lombok.RequiredArgsConstructor;
@@ -616,37 +616,145 @@ public class AnalyticsQueryRepository {
         return sql;
     }
 
-    // Page 5 — Efikasnost operacija - količina. Flat, grouped by operation only. Reads:
-    // dates/dateRange/months/shiftIds/productionOrderIds/notes/noteLike/startTimes/
-    // startTimeRange/productIds. Ignores operationIds/employeeIds.
-    public List<OperationEfficiencyDto> findOperationEfficiency(AnalyticsFilterRequest filter) {
+    /**
+     * Page 5 — Efikasnost operacija, one page of OPERATIONS at a time.
+     *
+     * <p>Aggregated to (operation, worker) grain: the report answers "how is this operation
+     * going, and for whom". An operation belongs to exactly one product, so the product is
+     * carried as context on the row rather than as a level of the tree — there is nothing to
+     * group by that a 1:1 relation would not simply repeat.
+     *
+     * <p>Paged by OPERATION for the same reason the other reports are paged by their subject:
+     * every band states its own total, and a total is only true if the band under it is whole.
+     * Ordering the operations keeps the tree; any other sort ranks workers against each other
+     * across every operation at once, which a band cannot hold, so it flattens and pages by
+     * row.
+     *
+     * <p>The bounds are measured against a row of this aggregate — one worker on one
+     * operation — and never against a single work log.
+     */
+    public AnalyticsPageDto<OperationEmployeeDto> findOperationEfficiencyPage(AnalyticsFilterRequest filter) {
+        boolean tree = Boolean.TRUE.equals(filter.getGroupByOperation())
+                && (filter.getSortBy() == null || "operationName".equals(filter.getSortBy()));
+
+        int maxSize = tree ? 200 : 500;
+        int defaultSize = tree ? 20 : 100;
+        int size = filter.getSize() == null ? defaultSize : Math.max(1, Math.min(filter.getSize(), maxSize));
+        int page = filter.getPage() == null ? 0 : Math.max(0, filter.getPage());
+        String sortColumn = operationTreeSortColumnOf(filter.getSortBy());
+        String direction = "DESC".equalsIgnoreCase(filter.getSortDir()) ? "DESC" : "ASC";
+
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        StringBuilder sql = new StringBuilder("WITH agg AS (\n");
+        sql.append(buildOperationTreeAggregate(filter, params));
+        sql.append("\n)\n");
+
+        if (tree) {
+            // The page is chosen among the OPERATIONS the filters left standing; the join then
+            // brings back every worker who ran them.
+            //
+            // Each name carries its id after it. A client builds the bands by walking
+            // CONSECUTIVE rows, and operation names repeat across products — "Brušenje" exists
+            // once per product — so without the id two of them could interleave and each block
+            // would open a band of its own.
+            sql.append("""
+                    , page_operations AS (
+                        SELECT operation_id FROM (
+                            SELECT DISTINCT operation_id, operation_name FROM agg
+                        ) d
+                        ORDER BY d.operation_name""").append(" ").append(direction).append("""
+                             , d.operation_id
+                        LIMIT :limit OFFSET :offset
+                    )
+                    SELECT a.*, (SELECT COUNT(DISTINCT operation_id) FROM agg) AS total_rows
+                    FROM agg a
+                    JOIN page_operations po ON po.operation_id = a.operation_id
+                    ORDER BY a.operation_name""").append(" ").append(direction).append("""
+                             , a.operation_id, a.employee_name, a.employee_id
+                    """);
+        } else {
+            sql.append("SELECT a.*, COUNT(*) OVER () AS total_rows FROM agg a");
+            sql.append(" ORDER BY a.").append(sortColumn).append(" ").append(direction).append(" NULLS LAST");
+            sql.append(", a.operation_name, a.operation_id, a.employee_id");
+            sql.append(" LIMIT :limit OFFSET :offset");
+        }
+
+        params.addValue("limit", size);
+        params.addValue("offset", (long) page * size);
+
+        List<Long> total = new ArrayList<>(1);
+        List<OperationEmployeeDto> rows = jdbc.query(sql.toString(), params, (rs, rowNum) -> {
+            if (total.isEmpty()) total.add(rs.getLong("total_rows"));
+            return OPERATION_TREE_ROW_MAPPER.mapRow(rs, rowNum);
+        });
+
+        return AnalyticsPageDto.of(rows, size, page, total.isEmpty() ? 0 : total.get(0));
+    }
+
+    /**
+     * Sort keys page 5 may name, mapped to the aggregate's own columns. A whitelist, not a
+     * passthrough: the value lands in an ORDER BY, where a bound parameter cannot stand in
+     * for an identifier.
+     */
+    private String operationTreeSortColumnOf(String sortBy) {
+        return switch (sortBy == null ? "" : sortBy) {
+            case "productName" -> "product_name";
+            case "employeeName" -> "employee_name";
+            case "sumQuantity" -> "sum_quantity";
+            case "sumScrap" -> "sum_scrap";
+            case "avgPerHour" -> "avg_per_hour";
+            case "avgPerformancePct" -> "avg_performance_pct";
+            case "defectPct" -> "defect_pct";
+            case "sumDurationMin" -> "sum_duration_min";
+            default -> "operation_name";
+        };
+    }
+
+    private static final RowMapper<OperationEmployeeDto> OPERATION_TREE_ROW_MAPPER = (rs, rowNum) ->
+            new OperationEmployeeDto(
+                    rs.getLong("operation_id"),
+                    rs.getString("operation_name"),
+                    rs.getLong("product_id"),
+                    rs.getString("product_name"),
+                    rs.getLong("employee_id"),
+                    rs.getString("employee_name"),
+                    rs.getLong("sum_quantity"),
+                    rs.getLong("sum_scrap"),
+                    rs.getLong("sum_duration_min"),
+                    rs.getBigDecimal("avg_performance_pct"),
+                    rs.getBigDecimal("defect_pct"),
+                    rs.getBigDecimal("sum_weighted_performance"),
+                    (Long) rs.getObject("sum_performance_duration_min")
+            );
+
+    /** Page 5's aggregate — SELECT … GROUP BY … HAVING …, with no ordering or paging. */
+    private StringBuilder buildOperationTreeAggregate(AnalyticsFilterRequest filter, MapSqlParameterSource params) {
         StringBuilder sql = new StringBuilder("""
                 SELECT
                     f.operation_id AS operation_id, o.op_name AS operation_name,
-                    SUM(approved_performance_rate * duration_min) FILTER (WHERE approved_performance_rate IS NOT NULL)
-                        / NULLIF(SUM(duration_min) FILTER (WHERE approved_performance_rate IS NOT NULL), 0) AS avg_performance_pct,
-                    SUM(scrap)::numeric / NULLIF(SUM(quantity) + SUM(scrap), 0) * 100 AS defect_pct,
-                    SUM(quantity) / NULLIF(SUM(duration_min) / 60.0, 0) AS avg_per_hour,
-                    SUM(quantity) AS sum_quantity,
-                    SUM(scrap) AS sum_scrap
+                    f.product_id AS product_id, p.product_name AS product_name,
+                    f.employee_id AS employee_id, e.full_name AS employee_name,
+                    SUM(f.quantity) AS sum_quantity,
+                    SUM(f.scrap) AS sum_scrap,
+                    SUM(f.duration_min) AS sum_duration_min,
+                    SUM(f.quantity) / NULLIF(SUM(f.duration_min) / 60.0, 0) AS avg_per_hour,
+                    SUM(f.scrap)::numeric / NULLIF(SUM(f.quantity) + SUM(f.scrap), 0) * 100 AS defect_pct,
+                    SUM(f.approved_performance_rate * f.duration_min) FILTER (WHERE f.approved_performance_rate IS NOT NULL)
+                        / NULLIF(SUM(f.duration_min) FILTER (WHERE f.approved_performance_rate IS NOT NULL), 0) AS avg_performance_pct,
+                    SUM(f.approved_performance_rate * f.duration_min) FILTER (WHERE f.approved_performance_rate IS NOT NULL) AS sum_weighted_performance,
+                    SUM(f.duration_min) FILTER (WHERE f.approved_performance_rate IS NOT NULL) AS sum_performance_duration_min
                 FROM work_log_facts f
                 JOIN operations o ON o.id = f.operation_id
+                JOIN products p ON p.id = f.product_id
+                JOIN employees e ON e.id = f.employee_id
                 WHERE 1=1
                 """);
-        MapSqlParameterSource params = new MapSqlParameterSource();
         appendCommonFilters(sql, params, filter);
-        sql.append(" GROUP BY f.operation_id, o.op_name");
-        sql.append(" ORDER BY o.op_name");
+        sql.append(" GROUP BY f.operation_id, o.op_name, f.product_id, p.product_name,");
+        sql.append(" f.employee_id, e.full_name");
+        appendAggregateBounds(sql, params, filter);
 
-        return jdbc.query(sql.toString(), params, (rs, rowNum) -> new OperationEfficiencyDto(
-                rs.getLong("operation_id"),
-                rs.getString("operation_name"),
-                rs.getBigDecimal("avg_performance_pct"),
-                rs.getBigDecimal("defect_pct"),
-                rs.getBigDecimal("avg_per_hour"),
-                rs.getLong("sum_quantity"),
-                rs.getLong("sum_scrap")
-        ));
+        return sql;
     }
 
     /**
