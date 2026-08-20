@@ -14,11 +14,13 @@ import com.aleksandarparipovic.marel_app.user.UsernameGenerator;
 import com.aleksandarparipovic.marel_app.user_registration_request.UserRegistrationRequestService;
 import com.aleksandarparipovic.marel_app.user_session.UserSessionService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class AuthService {
 
@@ -32,15 +34,41 @@ public class AuthService {
     private final UserRegistrationRequestService registrationRequestService;
     private final UserSessionService userSessionService;
 
+    /**
+     * Sign in with a username OR an e-mail address, whichever the person types.
+     *
+     * <p>The form asks for one field and people put either in it — and the two are not
+     * interchangeable for everyone: most accounts here were created with the e-mail as the
+     * username, but the bootstrap admin is "admin" with the e-mail "admin@marel.local". A
+     * lookup by username alone turned typing that account's own e-mail into "invalid
+     * username or password".
+     *
+     * <p>Both lookups ignore case, which is what the database already guarantees: the unique
+     * indexes are on {@code lower(username)} and {@code lower(email_address)}, so neither can
+     * match two people. The input is trimmed because a trailing space pasted from a password
+     * manager is not a different account.
+     */
     @Transactional
     public LoginResponse login(String username, String password, String ipAddress, String userAgent) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid username or password"));
+        String identifier = username == null ? "" : username.trim();
+
+        User user = userRepository.findByUsernameIgnoreCase(identifier)
+                .or(() -> userRepository.findByEmailAddressIgnoreCase(identifier))
+                .orElseThrow(() -> {
+                    // The CALLER is told nothing beyond "these credentials are wrong" — see
+                    // below — but the log says which half failed, because an administrator
+                    // reading their own server log is not the person being guarded against.
+                    log.info("Sign-in failed: no account matches '{}'", identifier);
+                    return new IllegalArgumentException("Invalid username or password");
+                });
 
         // Credentials are verified BEFORE the account state is revealed: telling an
         // anonymous caller "this account is pending approval" for a password they do
-        // not know would leak which usernames exist.
+        // not know would leak which usernames exist. For the same reason the message is
+        // identical whether the account was not found or the password did not match —
+        // anything else lets a stranger harvest valid usernames by watching the wording.
         if (user.getPasswordHash() == null || !passwordEncoder.matches(password, user.getPasswordHash())) {
+            log.info("Sign-in failed: wrong password for '{}'", user.getUsername());
             throw new IllegalArgumentException("Invalid username or password");
         }
 

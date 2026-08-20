@@ -14,6 +14,16 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
     @EntityGraph(attributePaths = "role")
     Optional<User> findByUsername(String username);
 
+    /**
+     * The lookup sign-in uses.
+     *
+     * <p>Case-INSENSITIVE, because that is what the database already guarantees: the unique
+     * index is on {@code lower(username)}, so "Admin" and "admin" can never be two people.
+     * An exact-match lookup therefore refused a sign-in the schema had already promised was
+     * unambiguous.
+     */
+    Optional<User> findByUsernameIgnoreCase(String username);
+
     boolean existsByUsername(String username);
 
     boolean existsByEmailAddress(String emailAddress);
