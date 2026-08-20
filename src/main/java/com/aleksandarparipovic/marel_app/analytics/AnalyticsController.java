@@ -6,7 +6,7 @@ import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsPageDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.EmployeeProductOperationDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NormBasisDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.NoteOccurrenceDto;
-import com.aleksandarparipovic.marel_app.analytics.dto.OperationEmployeeDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.OperationSummaryDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductDateOperationEmployeeDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductOperationSummaryDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
@@ -101,12 +101,13 @@ public class AnalyticsController {
     /**
      * Page 5 — Efikasnost operacija, one page at a time.
      *
-     * <p>Aggregated to (operation, worker) grain: the report answers "how is this operation
-     * going, and for whom". In its default view a page is a page of OPERATIONS — each arrives
-     * with every worker who ran it, so an operation's total is never a part of itself.
+     * <p>One row per operation and nothing beneath it. It is the report whose row count
+     * follows the number of OPERATIONS — 10–15k of them — so paging and sorting belong to the
+     * server: a client ordering the chunk it happens to hold would answer a different
+     * question with the same words.
      */
     @PostMapping("/operation-efficiency")
-    public AnalyticsPageDto<OperationEmployeeDto> operationEfficiency(
+    public AnalyticsPageDto<OperationSummaryDto> operationEfficiency(
             @RequestBody AnalyticsFilterRequest filter) {
         return queryRepo.findOperationEfficiencyPage(filter);
     }

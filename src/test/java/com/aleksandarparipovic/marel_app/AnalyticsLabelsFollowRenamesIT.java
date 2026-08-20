@@ -2,7 +2,7 @@ package com.aleksandarparipovic.marel_app;
 
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsFilterRequest;
 import com.aleksandarparipovic.marel_app.analytics.dto.AnalyticsOptionDto;
-import com.aleksandarparipovic.marel_app.analytics.dto.OperationEmployeeDto;
+import com.aleksandarparipovic.marel_app.analytics.dto.OperationSummaryDto;
 import com.aleksandarparipovic.marel_app.analytics.dto.ProductOperationSummaryDto;
 import com.aleksandarparipovic.marel_app.analytics.repository.AnalyticsQueryRepository;
 import com.aleksandarparipovic.marel_app.operation.Operation;
@@ -75,12 +75,10 @@ class AnalyticsLabelsFollowRenamesIT extends AbstractIntegrationTest {
         // The whole point: both rows counted, under one operation.
         assertThat(productOperation.getFirst().getSumQuantity()).isEqualTo(150);
 
-        // The same must hold of the operation report, which now groups by (operation, worker)
-        // — one worker here, so still one row for the operation.
+        // The same must hold of the operation report, which is one row per operation.
         AnalyticsFilterRequest operationFilter = new AnalyticsFilterRequest();
-        operationFilter.setGroupByOperation(true);
-        operationFilter.setSize(200);
-        List<OperationEmployeeDto> operationEfficiency =
+        operationFilter.setSize(500);
+        List<OperationSummaryDto> operationEfficiency =
                 analyticsQueryRepository.findOperationEfficiencyPage(operationFilter).content().stream()
                         .filter(row -> operationId == row.getOperationId())
                         .toList();

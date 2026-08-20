@@ -97,10 +97,4 @@ public class AnalyticsFilterRequest {
      */
     private Boolean groupByEmployee;
 
-    /**
-     * Page 5 only — keeps the operation -> worker tree, and makes a page a page of
-     * OPERATIONS: each arrives with every worker who ran it, so an operation's own total is
-     * never a part of itself.
-     */
-    private Boolean groupByOperation;
 }
