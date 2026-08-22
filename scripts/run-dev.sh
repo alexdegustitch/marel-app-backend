@@ -39,4 +39,13 @@ done
 # GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are allowed to be
 # blank - see .env.example for why that's different from unset.
 
+# Mail credentials come as a pair. Half of one is worse than neither: the Brevo
+# adapter registers on MAIL_USERNAME alone, then fails authentication on every
+# message and burns its five retries before giving up.
+if { [ -n "${MAIL_USERNAME:-}" ] && [ -z "${MAIL_PASSWORD:-}" ]; } \
+    || { [ -z "${MAIL_USERNAME:-}" ] && [ -n "${MAIL_PASSWORD:-}" ]; }; then
+    echo "error: set BOTH MAIL_USERNAME and MAIL_PASSWORD in $ENV_FILE, or neither." >&2
+    exit 1
+fi
+
 exec ./mvnw spring-boot:run

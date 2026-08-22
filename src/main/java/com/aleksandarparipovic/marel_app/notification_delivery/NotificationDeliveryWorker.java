@@ -19,6 +19,7 @@ public class NotificationDeliveryWorker {
 
     private final DeliveryBatchProcessor processor;
     private final EmailSender emailSender;
+    private final NotificationEmailComposer composer;
 
     @Scheduled(fixedDelayString = "${app.notifications.delivery.poll-interval-ms:5000}")
     public void drain() {
@@ -35,7 +36,7 @@ public class NotificationDeliveryWorker {
         try {
             if (send.channel() == NotificationChannel.EMAIL) {
                 // No transaction is open here — see DeliveryBatchProcessor.
-                emailSender.send(send.recipientEmail(), send.subject(), send.body());
+                emailSender.send(composer.compose(send));
             }
             // IN_APP needs no transport: the user_notifications row IS the delivery.
             processor.markSent(send.deliveryId());

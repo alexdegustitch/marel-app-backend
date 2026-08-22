@@ -17,8 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 public class LoggingEmailSender implements EmailSender {
 
     @Override
-    public void send(String toAddress, String subject, String body) {
+    public void send(EmailMessage message) {
         log.info("[EmailSender] No mail provider configured — would send to {} with subject '{}'",
-                toAddress, subject);
+                message.toAddress(), message.subject());
     }
 }

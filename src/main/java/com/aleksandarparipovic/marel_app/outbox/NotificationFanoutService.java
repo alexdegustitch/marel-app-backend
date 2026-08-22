@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -52,6 +54,14 @@ public class NotificationFanoutService {
     private final PermissionService permissionService;
     private final UserPreferencesService userPreferencesService;
 
+    /**
+     * Which events go out by e-mail as well as in-app. Everything else is in-app
+     * only — an event has to earn a place in somebody's inbox.
+     */
+    private static final Set<OutboxEventType> EMAIL_EVENT_TYPES = EnumSet.of(
+            OutboxEventType.PRODUCTION_ORDER_COMPLETED,
+            OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED);
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void process(Long outboxEventId) {
         // Idempotency gate. uq_notification_events_outbox_event_id makes this the
@@ -73,16 +83,31 @@ public class NotificationFanoutService {
             createInAppDelivery(notificationEvent, recipient);
         }
 
-        if (event.getEventType() == OutboxEventType.PRODUCTION_ORDER_COMPLETED) {
+        if (EMAIL_EVENT_TYPES.contains(event.getEventType())) {
             createEmailDeliveriesForOrder(notificationEvent, event.getAggregateId());
+            // The person who caused it gets their own copy even when they are not
+            // on the list: the application sent the mail, so it is nowhere in their
+            // Sent folder, and a copy in the inbox is the only way they can find it
+            // again later.
+            createEmailDeliveryForActor(notificationEvent);
         }
     }
 
     private NotificationEvent createNotificationEvent(OutboxEvent event) {
         JsonNode payload = event.getPayload();
 
+        // Whose action this was. Carried in the payload by the publisher rather
+        // than read from the security context here: fan-out runs on a worker
+        // thread, long after the request that caused the event is gone.
+        User actor = null;
+        Long actorUserId = longOf(payload, "actorUserId");
+        if (actorUserId != null) {
+            actor = userRepository.findById(actorUserId).orElse(null);
+        }
+
         return notificationEventRepository.save(NotificationEvent.builder()
                 .outboxEvent(event)
+                .actorUser(actor)
                 .type(event.getEventType())
                 .entityType(event.getAggregateType().name())
                 .entityId(event.getAggregateId())
@@ -120,6 +145,9 @@ public class NotificationFanoutService {
                     addUser(recipients, longOf(payload, "createdByUserId"));
 
             case PRODUCTION_ORDER_COMPLETED ->
+                    addUser(recipients, longOf(payload, "responsibleUserId"));
+
+            case PRODUCTION_ORDER_DEADLINE_CHANGED ->
                     addUser(recipients, longOf(payload, "responsibleUserId"));
         }
 
@@ -197,6 +225,31 @@ public class NotificationFanoutService {
         }
     }
 
+    /**
+     * A copy for the actor, skipped when the snapshot already covers them so the
+     * unique index on (event, e-mail) is never the thing that catches it.
+     */
+    private void createEmailDeliveryForActor(NotificationEvent event) {
+        User actor = event.getActorUser();
+        if (actor == null || actor.getEmailAddress() == null || actor.getEmailAddress().isBlank()) {
+            return;
+        }
+        if (!userPreferencesService.emailNotificationsEnabled(actor.getId())) {
+            return;
+        }
+        if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmail(
+                event.getId(), NotificationChannel.EMAIL, actor.getEmailAddress())) {
+            return;
+        }
+
+        deliveryRepository.save(NotificationDelivery.builder()
+                .notificationEvent(event)
+                .channel(NotificationChannel.EMAIL)
+                .recipientUser(actor)
+                .recipientEmail(actor.getEmailAddress())
+                .build());
+    }
+
     private static Long longOf(JsonNode payload, String field) {
         if (payload == null || !payload.hasNonNull(field)) {
             return null;
@@ -211,6 +264,17 @@ public class NotificationFanoutService {
         return payload.get(field).asText(fallback);
     }
 
+    /** A payload array of date descriptions, as one readable phrase. */
+    private static String joinOf(JsonNode payload, String field) {
+        if (payload == null || !payload.hasNonNull(field) || !payload.get(field).isArray()
+                || payload.get(field).isEmpty()) {
+            return "nije bio postavljen";
+        }
+        List<String> values = new ArrayList<>();
+        payload.get(field).forEach(node -> values.add(node.asText()));
+        return String.join(", ", values);
+    }
+
     private static String titleFor(OutboxEvent event) {
         return switch (event.getEventType()) {
             case USER_REGISTRATION_REQUESTED -> "Nova registracija čeka odobrenje";
@@ -221,6 +285,7 @@ public class NotificationFanoutService {
             case MANUFACTURING_TIME_REQUEST_COMPLETED -> "Zahtev je završen";
             case MANUFACTURING_TIME_REQUEST_DECLINED -> "Zahtev je odbijen";
             case PRODUCTION_ORDER_COMPLETED -> "Nalog za proizvodnju je isporučen";
+            case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Promenjen rok isporuke";
         };
     }
 
@@ -245,6 +310,10 @@ public class NotificationFanoutService {
                     + textOf(payload, "productName", "-") + " je odbijen.";
             case PRODUCTION_ORDER_COMPLETED -> "Nalog "
                     + textOf(payload, "orderCode", "-") + " je isporučen.";
+            case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Nalog "
+                    + textOf(payload, "orderCode", "-") + ": rok "
+                    + joinOf(payload, "deadlinesBefore") + " promenjen na "
+                    + joinOf(payload, "deadlinesAfter") + ".";
         };
     }
 }

@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.notification_delivery;
 
 import com.aleksandarparipovic.marel_app.common.ErrorSanitizer;
 import com.aleksandarparipovic.marel_app.notification_event.NotificationEvent;
+import com.aleksandarparipovic.marel_app.user.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,12 +62,20 @@ public class DeliveryBatchProcessor {
             delivery.setAttemptCount(delivery.getAttemptCount() + 1);
 
             NotificationEvent event = delivery.getNotificationEvent();
+            // The actor is read HERE, inside the transaction: the association is
+            // lazy and the send happens after this commits.
+            User actor = event.getActorUser();
+
             sends.add(new PendingSend(
                     delivery.getId(),
                     delivery.getChannel(),
                     delivery.getRecipientEmail(),
                     event.getTitle(),
-                    event.getMessage()
+                    event.getMessage(),
+                    actor == null ? null : actor.getFullName(),
+                    actor == null ? null : actor.getEmailAddress(),
+                    event.getEntityType(),
+                    event.getEntityId()
             ));
         }
 
@@ -104,7 +113,11 @@ public class DeliveryBatchProcessor {
             NotificationChannel channel,
             String recipientEmail,
             String subject,
-            String body
+            String body,
+            String actorName,
+            String actorEmail,
+            String entityType,
+            Long entityId
     ) {
     }
 }

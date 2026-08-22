@@ -21,6 +21,9 @@ import com.aleksandarparipovic.marel_app.production_order_line_item.repository.P
 import com.aleksandarparipovic.marel_app.production_order_line_item_note.repository.ProductionOrderLineItemNoteRepository;
 import com.aleksandarparipovic.marel_app.production_order_line_item_quantity.ProductionOrderLineItemQuantity;
 import com.aleksandarparipovic.marel_app.production_order_line_item_quantity.repository.ProductionOrderLineItemQuantityRepository;
+import com.aleksandarparipovic.marel_app.outbox.OutboxAggregateType;
+import com.aleksandarparipovic.marel_app.outbox.OutboxEventPublisher;
+import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.User;
@@ -35,6 +38,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -49,6 +53,9 @@ public class ProductionOrderService {
 
     private static final String DEADLINE_SORT_FIELD = "deliveryDeadline";
 
+    /** Serbian date order, the one used everywhere else people read dates here. */
+    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy.");
+
     private final ProductionOrderRepository productionOrderRepository;
     private final ProductionOrderDeadlineRepository productionOrderDeadlineRepository;
     private final ProductionOrderLineItemRepository productionOrderLineItemRepository;
@@ -58,6 +65,7 @@ public class ProductionOrderService {
     private final CurrentUserService currentUserService;
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
+    private final OutboxEventPublisher outboxEventPublisher;
 
     @Transactional
     public ProductionOrderDetailDto create(ProductionOrderCreateRequest req) {
@@ -143,6 +151,54 @@ public class ProductionOrderService {
     }
 
     /**
+     * Announces a moved delivery date, and only that.
+     *
+     * <p>Compared as an ordered list of value descriptions rather than by row id,
+     * because update() never edits a deadline in place — it deactivates the old
+     * rows and inserts new ones. By identity every save looks like a change; by
+     * value, only a real one does.
+     */
+    private void publishDeadlineChange(ProductionOrder order, List<String> deadlinesBefore) {
+        List<String> deadlinesAfter = describeDeadlines(
+                productionOrderDeadlineRepository.findAllByProductionOrder_IdAndIsActiveIsTrue(order.getId()));
+
+        if (deadlinesBefore.equals(deadlinesAfter)) {
+            return;
+        }
+
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderCode", order.getCode());
+        payload.put("orderName", order.getName());
+        payload.put("deadlinesBefore", deadlinesBefore);
+        payload.put("deadlinesAfter", deadlinesAfter);
+        payload.put("actorUserId", currentUserService.getCurrentUserId());
+
+        outboxEventPublisher.publish(
+                OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED,
+                OutboxAggregateType.PRODUCTION_ORDER,
+                order.getId(),
+                payload
+        );
+    }
+
+    /**
+     * The deadlines as a person would read them, in display order — the form's
+     * own ordering, which is what "the deadline changed" means to a recipient.
+     */
+    private List<String> describeDeadlines(List<ProductionOrderDeadline> deadlines) {
+        return deadlines.stream()
+                .sorted(Comparator.comparing(ProductionOrderDeadline::getDeadlineOrder,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(d -> {
+                    String from = d.getDeadlineDateFrom() == null ? "" : DATE_FORMAT.format(d.getDeadlineDateFrom());
+                    String to = d.getDeadlineDateTo() == null ? "" : DATE_FORMAT.format(d.getDeadlineDateTo());
+                    String range = from.isEmpty() ? to : from + " - " + to;
+                    return d.getQuantity() == null ? range : range + " (" + d.getQuantity() + " kom)";
+                })
+                .toList();
+    }
+
+    /**
      * Full edit of an existing order — everything except the code (immutable once
      * created) and status (changed only via markDelivered). Deadlines and line items
      * (with their quantities) are never overwritten in place: the currently active
@@ -166,6 +222,14 @@ public class ProductionOrderService {
         order.setIsAnnounced(Boolean.TRUE.equals(req.isAnnounced()));
         order.setHasSuccessiveDeliveries(Boolean.TRUE.equals(req.hasSuccessiveDeliveries()));
         order = productionOrderRepository.save(order);
+
+        // Read BEFORE the replace below. update() deactivates every deadline and
+        // inserts a fresh set on every save, even when the form did not touch them,
+        // so "were they changed" cannot be answered afterwards — and publishing
+        // without asking would e-mail the whole recipient list every time somebody
+        // fixes a note.
+        List<String> deadlinesBefore = describeDeadlines(
+                productionOrderDeadlineRepository.findAllByProductionOrder_IdAndIsActiveIsTrue(id));
 
         for (ProductionOrderDeadline existing : productionOrderDeadlineRepository.findAllByProductionOrder_IdAndIsActiveIsTrue(id)) {
             existing.setIsActive(false);
@@ -239,6 +303,8 @@ public class ProductionOrderService {
             }
         }
 
+        publishDeadlineChange(order, deadlinesBefore);
+
         return productionOrderMapper.toDetailDto(order, deadlineDtos, lineItemDtos);
     }
 
@@ -251,8 +317,29 @@ public class ProductionOrderService {
         ProductionOrder order = productionOrderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Proizvodni nalog nije pronađen (id=" + id + ")"));
 
+        boolean alreadyDelivered = order.getStatus() == ProductionOrderStatus.DELIVERED;
+
         order.setStatus(ProductionOrderStatus.DELIVERED);
         order = productionOrderRepository.save(order);
+
+        // Published only on the actual transition. Outbox idempotency is keyed on
+        // the outbox row, so re-marking a delivered order would otherwise create a
+        // second event and notify everybody again.
+        if (!alreadyDelivered) {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("orderCode", order.getCode());
+            payload.put("orderName", order.getName());
+            payload.put("responsibleUserId",
+                    order.getUser() == null ? null : order.getUser().getId());
+            payload.put("actorUserId", currentUserService.getCurrentUserId());
+
+            outboxEventPublisher.publish(
+                    OutboxEventType.PRODUCTION_ORDER_COMPLETED,
+                    OutboxAggregateType.PRODUCTION_ORDER,
+                    order.getId(),
+                    payload
+            );
+        }
 
         return getDetail(order.getId());
     }
