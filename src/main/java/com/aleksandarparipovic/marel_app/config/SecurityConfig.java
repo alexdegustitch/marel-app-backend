@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.config;
 
 import com.aleksandarparipovic.marel_app.auth.JwtAuthenticationFilter;
+import com.aleksandarparipovic.marel_app.auth.ratelimit.AuthRateLimitFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import jakarta.servlet.http.HttpServletResponse;
@@ -27,6 +28,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AuthRateLimitFilter authRateLimitFilter;
 
     @Value("${app.security.cors.allowed-origins:http://localhost:5123,http://localhost:5173,http://localhost:3000}")
     private List<String> allowedOrigins;
@@ -38,7 +40,24 @@ public class SecurityConfig {
                 .cors(cors -> {})   // 👈 enable CORS support
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/**").permitAll()
+                        /*
+                         * ACTUATOR IS NOT PUBLIC.
+                         *
+                         * /actuator/health stays open because that is what a
+                         * monitor or a restart policy polls, and with
+                         * show-details=never it answers nothing but UP or DOWN.
+                         *
+                         * Everything else — the endpoint index, info and metrics —
+                         * is operational detail about the running server and is
+                         * restricted to "developer", the internal engineering
+                         * account. Deliberately NOT admin: admin is a business role
+                         * held by factory staff, and running the machine is not
+                         * part of running the company. The index path is listed
+                         * separately so it never depends on whether "/**" also
+                         * matches the bare prefix.
+                         */
+                        .requestMatchers("/actuator/health").permitAll()
+                        .requestMatchers("/actuator", "/actuator/**").hasRole("developer")
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/departments/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()          // WebSocket endpoint
@@ -70,7 +89,10 @@ public class SecurityConfig {
                 .addFilterBefore(
                         jwtAuthenticationFilter,
                         org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class
-                );
+                )
+                // Ahead of everything else on the credential endpoints: a blocked
+                // caller must be refused before any password is hashed.
+                .addFilterBefore(authRateLimitFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }
