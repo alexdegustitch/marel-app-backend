@@ -99,15 +99,20 @@ public class AuthController {
     private static final String INTENT_REGISTER = "register";
 
     @GetMapping("/google/login")
-    public ResponseEntity<Void> googleLogin(
+    public ResponseEntity<?> googleLogin(
             @RequestParam(required = false, defaultValue = CLIENT_DESKTOP) String client,
             @RequestParam(required = false, defaultValue = INTENT_LOGIN) String intent
     ) {
+        String clientType = CLIENT_WEB.equals(client) ? CLIENT_WEB : CLIENT_DESKTOP;
+
         if (!googleOAuthService.isConfigured()) {
-            throw new IllegalStateException("Google prijava nije podešena na serveru.");
+            // A full-page navigation lands here, so throwing put the person on a
+            // raw JSON error page outside the application with nothing to click.
+            // An installation without Google credentials is a configuration state,
+            // not a fault: say so back inside the app, the way the callback does.
+            return respondWithResult(clientType, "error", "google_not_configured");
         }
 
-        String clientType = CLIENT_WEB.equals(client) ? CLIENT_WEB : CLIENT_DESKTOP;
         String intentType = INTENT_REGISTER.equals(intent) ? INTENT_REGISTER : INTENT_LOGIN;
         String state = oAuthStateStore.issue(clientType, intentType);
         URI redirectUri = googleOAuthService.buildAuthorizationUrl(state);
@@ -196,6 +201,15 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * The page that hands a desktop sign-in back to the application.
+     *
+     * <p>The URL is substituted with {@code replace}, not {@code formatted}: the
+     * stylesheet below is full of percentages, and a format string read
+     * {@code 30% 20%} as conversions and threw on EVERY desktop response —
+     * success and error alike — so the Electron Google flow ended in a 500 no
+     * matter what happened upstream.
+     */
     private ResponseEntity<String> deepLinkLandingPage(String deepLinkUrl) {
         String safeUrl = deepLinkUrl.replace("\"", "%22");
         String html = """
@@ -226,7 +240,7 @@ public class AuthController {
                     .spinner {
                       width: 22px; height: 22px; margin: 4px auto 18px;
                       border: 3px solid #e3e6f5; border-top-color: #4c6ef5;
-                      border-radius: 50%%; animation: spin 0.8s linear infinite;
+                      border-radius: 50%; animation: spin 0.8s linear infinite;
                     }
                     @keyframes spin { to { transform: rotate(360deg); } }
                     h1 { font-size: 16px; font-weight: 600; color: #212529; margin: 0 0 6px; }
@@ -235,7 +249,7 @@ public class AuthController {
                     a:hover { text-decoration: underline; }
                   </style>
                   <script>
-                    window.location.href = "%s";
+                    window.location.href = "__DEEP_LINK__";
                   </script>
                 </head>
                 <body>
@@ -251,12 +265,12 @@ public class AuthController {
                     <h1>Vraćanje u Marel aplikaciju</h1>
                     <p>
                       Ako se aplikacija nije automatski otvorila,
-                      <a href="%s">kliknite ovde</a>.
+                      <a href="__DEEP_LINK__">kliknite ovde</a>.
                     </p>
                   </div>
                 </body>
                 </html>
-                """.formatted(safeUrl, safeUrl);
+                """.replace("__DEEP_LINK__", safeUrl);
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
