@@ -16,6 +16,16 @@ package com.aleksandarparipovic.marel_app.config.security;
  */
 public enum AppPermission {
 
+    /**
+     * See the administrator's control board.
+     *
+     * <p>Its own capability rather than a check for "is an admin": the board
+     * gathers payroll readiness, registrations and orders on one screen, so who
+     * may see it is a decision that belongs beside the others in
+     * {@link RolePermissions}.
+     */
+    DASHBOARD_ADMIN_VIEW,
+
     /** Approve or decline a pending self-registration. */
     USER_REGISTRATION_APPROVE,
 
