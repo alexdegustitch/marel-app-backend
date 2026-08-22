@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app;
 import com.aleksandarparipovic.marel_app.auth.AuthService;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterRequest;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
 import com.aleksandarparipovic.marel_app.role.Role;
 import com.aleksandarparipovic.marel_app.role.RoleRepository;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
@@ -31,6 +32,9 @@ class RegistrationApprovalIT extends AbstractIntegrationTest {
 
     private static final AtomicInteger COUNTER = new AtomicInteger();
 
+    /** The bootstrap administrator's password, from application-test.properties. */
+    private static final String ADMIN_PASSWORD = "Test1234!";
+
     private RegisterRequest newRegistration() {
         int n = COUNTER.incrementAndGet();
         Role role = roleRepository.findAll().stream()
@@ -47,10 +51,13 @@ class RegistrationApprovalIT extends AbstractIntegrationTest {
         return request;
     }
 
+    /**
+     * The bootstrap administrator specifically, not merely any active user: the
+     * review now asks for the reviewer's password, so the test needs one whose
+     * password it knows.
+     */
     private User anAdmin() {
-        return userRepository.findAll().stream()
-                .filter(u -> u.getAccountStatus() == UserAccountStatus.ACTIVE)
-                .findFirst().orElseThrow();
+        return userRepository.findByUsername("admin").orElseThrow();
     }
 
     @Test
@@ -74,7 +81,7 @@ class RegistrationApprovalIT extends AbstractIntegrationTest {
         Long requestId = pendingRequestIdFor(registered.userId());
         User reviewer = anAdmin();
 
-        var reviewed = requestService.approve(requestId, reviewer.getId(), "U redu.");
+        var reviewed = requestService.approve(requestId, reviewer.getId(), ADMIN_PASSWORD);
 
         assertThat(reviewed.status()).isEqualTo(UserRegistrationRequestStatus.APPROVED);
         assertThat(reviewed.reviewedByUserId()).isEqualTo(reviewer.getId());
@@ -90,7 +97,8 @@ class RegistrationApprovalIT extends AbstractIntegrationTest {
         var registered = authService.register(newRegistration());
         Long requestId = pendingRequestIdFor(registered.userId());
 
-        requestService.decline(requestId, anAdmin().getId(), "Nije potrebno.");
+        requestService.decline(
+                requestId, anAdmin().getId(), "Nije potrebno.", ADMIN_PASSWORD);
 
         User user = userRepository.findById(registered.userId()).orElseThrow();
         assertThat(user.getAccountStatus()).isEqualTo(UserAccountStatus.DECLINED);
@@ -105,11 +113,12 @@ class RegistrationApprovalIT extends AbstractIntegrationTest {
         Long requestId = pendingRequestIdFor(registered.userId());
         Long reviewerId = anAdmin().getId();
 
-        requestService.approve(requestId, reviewerId, null);
+        requestService.approve(requestId, reviewerId, ADMIN_PASSWORD);
 
-        assertThatThrownBy(() -> requestService.approve(requestId, reviewerId, null))
+        assertThatThrownBy(() -> requestService.approve(requestId, reviewerId, ADMIN_PASSWORD))
                 .isInstanceOf(ConflictException.class);
-        assertThatThrownBy(() -> requestService.decline(requestId, reviewerId, null))
+        assertThatThrownBy(() ->
+                requestService.decline(requestId, reviewerId, "Ipak ne.", ADMIN_PASSWORD))
                 .isInstanceOf(ConflictException.class);
     }
 
@@ -136,6 +145,54 @@ class RegistrationApprovalIT extends AbstractIntegrationTest {
                 authService.login(username, request.getPassword(), "127.0.0.1", "test"))
                 .isInstanceOf(com.aleksandarparipovic.marel_app.auth.AccountNotUsableException.class)
                 .hasMessageContaining("odobrenje");
+    }
+
+    @Test
+    @DisplayName("a wrong password decides nothing")
+    void wrongPasswordLeavesTheRequestPending() {
+        var registered = authService.register(newRegistration());
+        Long requestId = pendingRequestIdFor(registered.userId());
+        Long reviewerId = anAdmin().getId();
+
+        assertThatThrownBy(() -> requestService.approve(requestId, reviewerId, "pogresna"))
+                .isInstanceOf(WrongPasswordException.class);
+        assertThatThrownBy(() ->
+                requestService.decline(requestId, reviewerId, "Nije potrebno.", "pogresna"))
+                .isInstanceOf(WrongPasswordException.class);
+
+        assertThat(requestRepository.findById(requestId).orElseThrow().getStatus())
+                .isEqualTo(UserRegistrationRequestStatus.PENDING);
+        assertThat(userRepository.findById(registered.userId()).orElseThrow().getAccountStatus())
+                .isEqualTo(UserAccountStatus.PENDING_APPROVAL);
+    }
+
+    @Test
+    @DisplayName("a refusal without a reason is refused")
+    void declineRequiresAReason() {
+        var registered = authService.register(newRegistration());
+        Long requestId = pendingRequestIdFor(registered.userId());
+        Long reviewerId = anAdmin().getId();
+
+        assertThatThrownBy(() -> requestService.decline(requestId, reviewerId, "   ", ADMIN_PASSWORD))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(requestRepository.findById(requestId).orElseThrow().getStatus())
+                .isEqualTo(UserRegistrationRequestStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("approval records no note; the refusal reason is kept")
+    void notesFollowTheDecision() {
+        var approved = authService.register(newRegistration());
+        Long approvedId = pendingRequestIdFor(approved.userId());
+        assertThat(requestService.approve(approvedId, anAdmin().getId(), ADMIN_PASSWORD)
+                .reviewNote()).isNull();
+
+        var refused = authService.register(newRegistration());
+        Long refusedId = pendingRequestIdFor(refused.userId());
+        assertThat(requestService.decline(
+                refusedId, anAdmin().getId(), "Nepotpuni podaci.", ADMIN_PASSWORD)
+                .reviewNote()).isEqualTo("Nepotpuni podaci.");
     }
 
     private Long pendingRequestIdFor(Long userId) {

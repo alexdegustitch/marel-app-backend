@@ -26,11 +26,17 @@ public class NotificationEmailComposer {
 
     private final String appName;
 
-    /** Entity type as stored on the event -> the route that shows it. */
+    /**
+     * Entity type as stored on the event -> the route that shows it.
+     *
+     * <p>Registration requests are absent on purpose. The only registration mail
+     * that goes out is the decision, and it goes to the applicant — who is either
+     * not yet able to sign in or has just been refused. A deep link into the
+     * administrators' review screen would be a door they cannot open.
+     */
     private static final Map<String, String> ROUTE_BY_ENTITY = Map.of(
             "PRODUCTION_ORDER", "/admin/production-orders/",
-            "MANUFACTURING_TIME_REQUEST", "/admin/requests",
-            "USER_REGISTRATION_REQUEST", "/admin/admin_users"
+            "MANUFACTURING_TIME_REQUEST", "/admin/requests"
     );
 
     public NotificationEmailComposer(

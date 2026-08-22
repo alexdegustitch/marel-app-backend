@@ -3,6 +3,8 @@ package com.aleksandarparipovic.marel_app.user_registration_request;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.config.security.PermissionService;
+import com.aleksandarparipovic.marel_app.user_registration_request.dto.RegistrationApproveRequest;
+import com.aleksandarparipovic.marel_app.user_registration_request.dto.RegistrationDeclineRequest;
 import com.aleksandarparipovic.marel_app.user_registration_request.dto.RegistrationRequestResponse;
 import com.aleksandarparipovic.marel_app.user_registration_request.dto.RegistrationReviewRequest;
 import jakarta.validation.Valid;
@@ -22,8 +24,8 @@ import java.util.Map;
  *
  * <p>Nothing here accepts a reviewer id, timestamp or target status from the
  * client: the reviewer comes from the security context, the timestamp from the
- * server clock, and the status from which endpoint was called. The only client
- * input is an optional note.
+ * server clock, and the status from which endpoint was called. The client sends
+ * only the reviewer's password — and, when refusing, the reason.
  */
 @RestController
 @RequestMapping("/api/registration-requests")
@@ -66,24 +68,29 @@ public class UserRegistrationRequestController {
         return ResponseEntity.ok(service.getById(id));
     }
 
+    /** Activating somebody's account: password only, no explanation asked for. */
     @PostMapping("/{id}/approve")
     @PreAuthorize("@perm.has('USER_REGISTRATION_APPROVE')")
     public ResponseEntity<RegistrationRequestResponse> approve(
             @PathVariable Long id,
-            @RequestBody(required = false) @Valid RegistrationReviewRequest request
+            @RequestBody @Valid RegistrationApproveRequest request
     ) {
         return ResponseEntity.ok(service.approve(
-                id, currentUserService.getCurrentUserId(), noteOf(request)));
+                id, currentUserService.getCurrentUserId(), request.password()));
     }
 
+    /** Turning somebody away: the reason is required, and the applicant is told it. */
     @PostMapping("/{id}/decline")
     @PreAuthorize("@perm.has('USER_REGISTRATION_APPROVE')")
     public ResponseEntity<RegistrationRequestResponse> decline(
             @PathVariable Long id,
-            @RequestBody(required = false) @Valid RegistrationReviewRequest request
+            @RequestBody @Valid RegistrationDeclineRequest request
     ) {
         return ResponseEntity.ok(service.decline(
-                id, currentUserService.getCurrentUserId(), noteOf(request)));
+                id,
+                currentUserService.getCurrentUserId(),
+                request.reviewNote(),
+                request.password()));
     }
 
     /**

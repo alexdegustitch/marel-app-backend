@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.user_registration_request;
 
 import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
 import com.aleksandarparipovic.marel_app.outbox.OutboxAggregateType;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventPublisher;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
@@ -12,6 +13,7 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +28,10 @@ import java.util.Map;
  * the user's account status are two halves of one decision and are always written
  * together, in one transaction. There is no code path that approves a request
  * without activating the user, or activates a user without closing the request.
+ *
+ * <p>Both decisions are guarded by the reviewer's own password. The guard lives
+ * here rather than in the controller so that it cannot be skipped by adding a
+ * second way in: there is no method that decides a request without it.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,6 +40,7 @@ public class UserRegistrationRequestService {
     private final UserRegistrationRequestRepository requestRepository;
     private final UserRepository userRepository;
     private final OutboxEventPublisher outboxEventPublisher;
+    private final PasswordEncoder passwordEncoder;
 
     /**
      * Opens the pending request for a freshly created account.
@@ -71,6 +78,9 @@ public class UserRegistrationRequestService {
     /**
      * Approves the request and activates the account, atomically.
      *
+     * <p>The reviewer confirms with their own password first; a wrong one leaves
+     * the request pending and the account untouched.
+     *
      * <p>Concurrency: the request carries a {@code @Version}, so if two
      * administrators approve the same pending row at once, exactly one commits and
      * the other fails with an OptimisticLockingFailureException (HTTP 409). The
@@ -78,11 +88,13 @@ public class UserRegistrationRequestService {
      * over in the first place.
      */
     @Transactional
-    public RegistrationRequestResponse approve(Long requestId, Long reviewerId, String note) {
+    public RegistrationRequestResponse approve(Long requestId, Long reviewerId, String password) {
         UserRegistrationRequest request = loadOrThrow(requestId);
         User reviewer = loadUserOrThrow(reviewerId);
+        requireOwnPassword(reviewer, password);
 
-        request.approve(reviewer, note);
+        // No note: approval is the ordinary outcome and explains nothing.
+        request.approve(reviewer, null);
 
         User applicant = request.getUser();
         applicant.setAccountStatus(UserAccountStatus.ACTIVE);
@@ -103,11 +115,21 @@ public class UserRegistrationRequestService {
     /**
      * Declines the request and marks the account DECLINED, atomically.
      * The account is never archived by a decline — archiving is a separate act.
+     *
+     * <p>The reason is required, not merely accepted: it is what the applicant is
+     * told, and the only record of why they were turned away.
      */
     @Transactional
-    public RegistrationRequestResponse decline(Long requestId, Long reviewerId, String note) {
+    public RegistrationRequestResponse decline(
+            Long requestId, Long reviewerId, String note, String password
+    ) {
         UserRegistrationRequest request = loadOrThrow(requestId);
         User reviewer = loadUserOrThrow(reviewerId);
+        requireOwnPassword(reviewer, password);
+
+        if (note == null || note.isBlank()) {
+            throw new IllegalArgumentException("Obrazloženje odbijanja je obavezno.");
+        }
 
         request.decline(reviewer, note);
 
@@ -115,11 +137,16 @@ public class UserRegistrationRequestService {
         applicant.setAccountStatus(UserAccountStatus.DECLINED);
         applicant.setActive(false);
 
+        // The reason travels with the event: the notification and the e-mail the
+        // applicant receives are the whole point of asking for it.
+        Map<String, Object> payload = payloadFor(applicant);
+        payload.put("reviewNote", request.getReviewNote());
+
         outboxEventPublisher.publish(
                 OutboxEventType.USER_REGISTRATION_DECLINED,
                 OutboxAggregateType.USER_REGISTRATION_REQUEST,
                 request.getId(),
-                payloadFor(applicant)
+                payload
         );
 
         return toResponse(request);
@@ -173,12 +200,35 @@ public class UserRegistrationRequestService {
                 .orElseThrow(() -> new EntityNotFoundException("Korisnik nije pronađen: " + userId));
     }
 
+    /**
+     * The reviewer re-typing their own password. A wrong one is refused with
+     * {@link WrongPasswordException} (HTTP 400, code WRONG_PASSWORD) — the same
+     * answer archiving gives, so the screens can treat it identically.
+     */
+    private void requireOwnPassword(User reviewer, String password) {
+        if (reviewer.getPasswordHash() == null) {
+            // Accounts created through Google have no password at all. Saying so
+            // plainly beats "wrong password", which would send the reviewer off to
+            // retype something they never had.
+            throw new IllegalArgumentException(
+                    "Vaš nalog nema lozinku (prijava preko Google naloga), "
+                            + "pa odluka ne može da se potvrdi lozinkom.");
+        }
+        if (password == null || password.isBlank()
+                || !passwordEncoder.matches(password, reviewer.getPasswordHash())) {
+            throw new WrongPasswordException("Pogrešna lozinka.");
+        }
+    }
+
     /** Display-only metadata for the notification. No credentials, no tokens. */
     private Map<String, Object> payloadFor(User user) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("userId", user.getId());
         payload.put("username", user.getUsername());
         payload.put("fullName", user.getFullName());
+        // The address the decision e-mail goes to. Read here, while the entity is
+        // managed, because fan-out runs later on a worker thread.
+        payload.put("emailAddress", user.getEmailAddress());
         return payload;
     }
 

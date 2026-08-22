@@ -55,12 +55,22 @@ public class NotificationFanoutService {
     private final UserPreferencesService userPreferencesService;
 
     /**
-     * Which events go out by e-mail as well as in-app. Everything else is in-app
-     * only — an event has to earn a place in somebody's inbox.
+     * Order events that go out by e-mail as well as in-app. Everything not listed
+     * in one of these two sets is in-app only — an event has to earn a place in
+     * somebody's inbox.
      */
-    private static final Set<OutboxEventType> EMAIL_EVENT_TYPES = EnumSet.of(
+    private static final Set<OutboxEventType> ORDER_EMAIL_EVENT_TYPES = EnumSet.of(
             OutboxEventType.PRODUCTION_ORDER_COMPLETED,
             OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED);
+
+    /**
+     * The two decisions about a person's own account. These MUST go by e-mail:
+     * an approved user has not signed in yet and a declined one never will, so
+     * the in-app notification is a message neither of them can reach.
+     */
+    private static final Set<OutboxEventType> ACCOUNT_DECISION_EMAIL_EVENT_TYPES = EnumSet.of(
+            OutboxEventType.USER_REGISTRATION_APPROVED,
+            OutboxEventType.USER_REGISTRATION_DECLINED);
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void process(Long outboxEventId) {
@@ -83,13 +93,17 @@ public class NotificationFanoutService {
             createInAppDelivery(notificationEvent, recipient);
         }
 
-        if (EMAIL_EVENT_TYPES.contains(event.getEventType())) {
+        if (ORDER_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
             createEmailDeliveriesForOrder(notificationEvent, event.getAggregateId());
             // The person who caused it gets their own copy even when they are not
             // on the list: the application sent the mail, so it is nowhere in their
             // Sent folder, and a copy in the inbox is the only way they can find it
             // again later.
             createEmailDeliveryForActor(notificationEvent);
+        }
+
+        if (ACCOUNT_DECISION_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
+            createEmailDeliveryForApplicant(notificationEvent, event.getPayload());
         }
     }
 
@@ -226,6 +240,48 @@ public class NotificationFanoutService {
     }
 
     /**
+     * The applicant's copy of the decision on their own registration.
+     *
+     * <p>Deliberately NOT gated on the e-mail notification preference, unlike
+     * every other mail this service queues. This one is not news about somebody
+     * else's work that a person may opt out of — it is the answer to their own
+     * request, and it is the only channel left: the account is either not yet
+     * usable or refused outright, so nobody can sign in to read it in the app.
+     *
+     * <p>The address comes from the event payload, written when the decision was
+     * made. Fan-out runs later on a worker thread, so it is read here from the
+     * user record only as a fallback for events published before that field
+     * existed.
+     */
+    private void createEmailDeliveryForApplicant(NotificationEvent event, JsonNode payload) {
+        Long applicantId = longOf(payload, "userId");
+        if (applicantId == null) {
+            return;
+        }
+
+        User applicant = userRepository.findById(applicantId).orElse(null);
+        String email = textOf(payload, "emailAddress", null);
+        if ((email == null || email.isBlank()) && applicant != null) {
+            email = applicant.getEmailAddress();
+        }
+        if (email == null || email.isBlank()) {
+            return;
+        }
+
+        if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmail(
+                event.getId(), NotificationChannel.EMAIL, email)) {
+            return;
+        }
+
+        deliveryRepository.save(NotificationDelivery.builder()
+                .notificationEvent(event)
+                .channel(NotificationChannel.EMAIL)
+                .recipientUser(applicant)
+                .recipientEmail(email)
+                .build());
+    }
+
+    /**
      * A copy for the actor, skipped when the snapshot already covers them so the
      * unique index on (event, e-mail) is never the thing that catches it.
      */
@@ -298,8 +354,12 @@ public class NotificationFanoutService {
         return switch (event.getEventType()) {
             case USER_REGISTRATION_REQUESTED -> "Korisnik "
                     + textOf(payload, "fullName", "nepoznat") + " čeka odobrenje naloga.";
-            case USER_REGISTRATION_APPROVED -> "Vaš nalog je odobren i sada je aktivan.";
-            case USER_REGISTRATION_DECLINED -> "Vaša registracija je odbijena.";
+            case USER_REGISTRATION_APPROVED ->
+                    "Vaš nalog je odobren i sada je aktivan. Možete da se prijavite.";
+            // The reason is the whole message for the person who was turned away,
+            // so it is carried through rather than summarised.
+            case USER_REGISTRATION_DECLINED -> "Vaša registracija je odbijena. Obrazloženje: "
+                    + textOf(payload, "reviewNote", "nije navedeno");
             case MANUFACTURING_TIME_REQUEST_CREATED -> "Novi zahtev za proizvod "
                     + textOf(payload, "productName", "-") + ".";
             case MANUFACTURING_TIME_REQUEST_ASSIGNED -> "Zahtev za proizvod "
