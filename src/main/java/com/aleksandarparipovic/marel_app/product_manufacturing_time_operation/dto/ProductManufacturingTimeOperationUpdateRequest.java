@@ -21,6 +21,11 @@ public class ProductManufacturingTimeOperationUpdateRequest {
     private LocalDate normDateSnapshot;
     private Boolean normDateOverridden;
     private LocalDate normDateValue;
+    /** "TEMPORARY" or "ANALYTICS" — why the line has no date. */
+    private String normDateNote;
+
+    /** What somebody wrote about this line of this calculation. */
+    private String note;
 
     private Boolean excluded;
 }

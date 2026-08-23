@@ -46,6 +46,8 @@ public class ProductManufacturingTimeOperationService {
         entity.setNormDateSnapshot(req.getNormDateSnapshot());
         entity.setNormDateOverridden(Boolean.TRUE.equals(req.getNormDateOverridden()));
         entity.setNormDateValue(req.getNormDateValue());
+        entity.setNormDateNote(req.getNormDateNote());
+        entity.setNote(req.getNote());
 
         entity.setExcluded(Boolean.TRUE.equals(req.getExcluded()));
         entity.setActive(true);
@@ -68,6 +70,8 @@ public class ProductManufacturingTimeOperationService {
         if (req.getNormDateSnapshot() != null) entity.setNormDateSnapshot(req.getNormDateSnapshot());
         if (req.getNormDateOverridden() != null) entity.setNormDateOverridden(req.getNormDateOverridden());
         if (req.getNormDateValue() != null) entity.setNormDateValue(req.getNormDateValue());
+        if (req.getNormDateNote() != null) entity.setNormDateNote(req.getNormDateNote());
+        if (req.getNote() != null) entity.setNote(req.getNote());
 
         if (req.getExcluded() != null) entity.setExcluded(req.getExcluded());
 

@@ -12,6 +12,9 @@ import java.util.List;
 public class ProductManufacturingTimeUpdateRequest {
 
     private String title;
+
+    /** One note about the calculation as a whole. */
+    private String note;
     private BigDecimal manufacturingCoefficient;
     private BigDecimal productsPerHour;
     private Integer manufacturingTimeSeconds;

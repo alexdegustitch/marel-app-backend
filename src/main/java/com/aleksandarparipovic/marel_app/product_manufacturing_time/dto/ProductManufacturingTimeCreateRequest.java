@@ -20,6 +20,9 @@ public class ProductManufacturingTimeCreateRequest {
     @NotBlank
     private String title;
 
+    /** One note about the calculation as a whole. */
+    private String note;
+
     @NotBlank
     private String productName;
 

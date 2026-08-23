@@ -25,6 +25,10 @@ public class ProductManufacturingTimeOperationDto {
     private final LocalDate normDateSnapshot;
     private final Boolean normDateOverridden;
     private final LocalDate normDateValue;
+    /** "TEMPORARY" or "ANALYTICS" — why the line has no date. */
+    private final String normDateNote;
+    /** What somebody wrote about this line of this calculation. */
+    private final String note;
 
     private final Boolean excluded;
 
@@ -42,6 +46,8 @@ public class ProductManufacturingTimeOperationDto {
         this.normDateSnapshot = e.getNormDateSnapshot();
         this.normDateOverridden = e.getNormDateOverridden();
         this.normDateValue = e.getNormDateValue();
+        this.normDateNote = e.getNormDateNote();
+        this.note = e.getNote();
         this.excluded = e.getExcluded();
     }
 }

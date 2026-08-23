@@ -43,6 +43,7 @@ public class ProductManufacturingTimeService {
         ProductManufacturingTime entity = new ProductManufacturingTime();
         entity.setUser(user);
         entity.setTitle(req.getTitle());
+        entity.setNote(req.getNote());
         entity.setProduct(product);
         entity.setProductName(req.getProductName());
         entity.setDateOfIssue(LocalDate.now());
@@ -70,6 +71,7 @@ public class ProductManufacturingTimeService {
         ProductManufacturingTime entity = new ProductManufacturingTime();
         entity.setUser(user);
         entity.setTitle(req.getTitle());
+        entity.setNote(req.getNote());
         entity.setProduct(product);
         entity.setProductName(req.getProductName());
         entity.setDateOfIssue(LocalDate.now());
@@ -98,6 +100,9 @@ public class ProductManufacturingTimeService {
         if (req.getProductsPerHour() != null) entity.setProductsPerHour(req.getProductsPerHour());
         if (req.getManufacturingTimeSeconds() != null) entity.setManufacturingTimeSeconds(req.getManufacturingTimeSeconds());
         if (req.getTitle() != null) entity.setTitle(req.getTitle());
+        // Not guarded on null: erasing the note is an edit like any other, and a
+        // guard would make it the one change the screen cannot make.
+        entity.setNote(req.getNote());
 
         if (req.getOperations() != null) {
             pmtoRepository.deactivateAllByProductManufacturingTimeId(entity.getId());
@@ -191,6 +196,8 @@ public class ProductManufacturingTimeService {
             op.setNormDateSnapshot(opReq.getNormDateSnapshot());
             op.setNormDateOverridden(Boolean.TRUE.equals(opReq.getNormDateOverridden()));
             op.setNormDateValue(opReq.getNormDateValue());
+            op.setNormDateNote(opReq.getNormDateNote());
+            op.setNote(opReq.getNote());
             op.setExcluded(Boolean.TRUE.equals(opReq.getExcluded()));
             op.setActive(true);
             pmtoRepository.save(op);

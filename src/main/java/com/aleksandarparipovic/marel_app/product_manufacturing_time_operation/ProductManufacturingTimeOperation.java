@@ -65,6 +65,28 @@ public class ProductManufacturingTimeOperation {
     @Column(name = "norm_date_value")
     private LocalDate normDateValue;
 
+    /**
+     * Why this line has no norm date: TEMPORARY (the operation's norm was
+     * entered undated on purpose) or ANALYTICS (the norm was read out of the
+     * recorded work). Null when there is a date, or when the record predates
+     * this being written down.
+     *
+     * <p>It is stored because the record is a snapshot: a report rebuilt from it
+     * has no operation to ask, and printing "–" would make the same document say
+     * two different things depending on where it was generated.
+     */
+    @Column(name = "norm_date_note")
+    private String normDateNote;
+
+    /**
+     * What somebody wrote about THIS line of THIS calculation — why it was left
+     * out, where its norm came from. Snapshotted with everything else: it belongs
+     * to the calculation, not to the operation, and must not follow the operation
+     * when it is edited later.
+     */
+    @Column(name = "note")
+    private String note;
+
     @Column(name = "excluded", nullable = false)
     private Boolean excluded = false;
 

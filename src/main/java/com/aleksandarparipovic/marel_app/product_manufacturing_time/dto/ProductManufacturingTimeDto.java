@@ -14,6 +14,9 @@ public class ProductManufacturingTimeDto {
     private final Long id;
     private final Long userId;
     private final String title;
+
+    /** One note about the calculation as a whole. */
+    private final String note;
     private final Long productId;
     private final String productName;
     private final LocalDate dateOfIssue;
@@ -29,6 +32,7 @@ public class ProductManufacturingTimeDto {
     public ProductManufacturingTimeDto(ProductManufacturingTime e, List<ProductManufacturingTimeOperationDto> operations) {
         this.id = e.getId();
         this.title = e.getTitle();
+        this.note = e.getNote();
         this.userId = e.getUser().getId();
         this.productId = e.getProduct().getId();
         this.productName = e.getProductName();

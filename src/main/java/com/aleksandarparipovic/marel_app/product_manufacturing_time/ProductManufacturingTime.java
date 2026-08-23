@@ -31,6 +31,10 @@ public class ProductManufacturingTime {
     @Column(name = "title")
     private String title;
 
+    /** One note about the calculation as a whole. Prints above the table. */
+    @Column(name = "note")
+    private String note;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
