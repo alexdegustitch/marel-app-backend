@@ -21,8 +21,28 @@ public record ManufacturingTimeRequestResponse(
         OffsetDateTime processedAt,
         String decisionNote,
         Long targetManufacturingTimeId,
-        /** The record this request produced, once completed. */
+        /** The production-order line the request was raised on; NULL if standalone. */
+        Long productionOrderLineItemId,
+        Long productionOrderId,
+        /** Order code and name, so the queue shows the occasion without a second call. */
+        String productionOrderCode,
+        String productionOrderName,
+        /** The line's own description, which may name a variant the product does not. */
+        String productionOrderLineDescription,
+        /**
+         * The record that answers this request, once completed. It may answer
+         * other requests too — one manufacturing time settles everyone who asked
+         * for the same product's time.
+         */
         Long resultManufacturingTimeId,
+        /**
+         * The two numbers the answer is actually read for: how long one piece
+         * takes, and how many fit in an hour. The record's name and issue date
+         * are deliberately absent — neither the requester nor the processor
+         * reads a request row to learn what a record is called.
+         */
+        Integer resultManufacturingTimeSeconds,
+        java.math.BigDecimal resultProductsPerHour,
         OffsetDateTime cancelledAt,
         OffsetDateTime createdAt
 ) {

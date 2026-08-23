@@ -13,6 +13,8 @@ import com.aleksandarparipovic.marel_app.product_manufacturing_time.ProductManuf
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.ProductManufacturingTimeRepository;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.ProductManufacturingTimeService;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeUpdateRequest;
+import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
+import com.aleksandarparipovic.marel_app.production_order_line_item.repository.ProductionOrderLineItemRepository;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -45,11 +47,22 @@ public class ManufacturingTimeRequestService {
 
     private final ManufacturingTimeRequestRepository requestRepository;
     private final ProductRepository productRepository;
+    private final ProductionOrderLineItemRepository lineItemRepository;
     private final ProductManufacturingTimeRepository manufacturingTimeRepository;
     private final ProductManufacturingTimeService manufacturingTimeService;
     private final UserRepository userRepository;
     private final OutboxEventPublisher outboxEventPublisher;
     private final PermissionService permissionService;
+
+    /**
+     * The statuses that still say something about an order line: work under way,
+     * or an answer that stands. A refused or withdrawn request leaves no trace on
+     * the line it was raised from.
+     */
+    private static final List<ManufacturingTimeRequestStatus> LIVE_STATUSES =
+            List.of(ManufacturingTimeRequestStatus.PENDING,
+                    ManufacturingTimeRequestStatus.IN_REVIEW,
+                    ManufacturingTimeRequestStatus.COMPLETED);
 
     private static final List<ManufacturingTimeRequestStatus> OPEN_STATUSES =
             List.of(ManufacturingTimeRequestStatus.PENDING, ManufacturingTimeRequestStatus.IN_REVIEW);
@@ -64,6 +77,7 @@ public class ManufacturingTimeRequestService {
                         "Proizvod nije pronađen: " + request.getProductId()));
 
         ProductManufacturingTime target = resolveTarget(request, product);
+        ProductionOrderLineItem lineItem = resolveLineItem(request, product);
 
         ManufacturingTimeRequest saved = requestRepository.save(
                 ManufacturingTimeRequest.builder()
@@ -72,6 +86,7 @@ public class ManufacturingTimeRequestService {
                         .requestType(request.getRequestType())
                         .description(request.getDescription().trim())
                         .targetManufacturingTime(target)
+                        .productionOrderLineItem(lineItem)
                         .status(ManufacturingTimeRequestStatus.PENDING)
                         .build()
         );
@@ -125,6 +140,47 @@ public class ManufacturingTimeRequestService {
     }
 
     /**
+     * Resolves the production-order line the request was raised on.
+     *
+     * <p>The line is the occasion, so it is optional. When it is given, the
+     * product it carries and the product the request names must be the same one:
+     * a mismatch is refused rather than resolved, because either half could be
+     * the client's mistake and silently preferring one would produce a request
+     * about a product nobody asked for. The database enforces the same pairing
+     * through {@code fk_manufacturing_time_requests_line_item}; this check exists
+     * to say so in words a user can act on.
+     */
+    private ProductionOrderLineItem resolveLineItem(
+            ManufacturingTimeRequestCreateRequest request, Product product
+    ) {
+        Long lineItemId = request.getProductionOrderLineItemId();
+        if (lineItemId == null) {
+            return null;
+        }
+
+        ProductionOrderLineItem lineItem = lineItemRepository.findById(lineItemId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Stavka proizvodnog naloga nije pronađena: " + lineItemId));
+
+        if (!Boolean.TRUE.equals(lineItem.getIsActive())) {
+            throw new ConflictException(
+                    "Stavka proizvodnog naloga više nije aktivna, pa zahtev ne može da se veže za nju.");
+        }
+
+        if (!lineItem.getProduct().getId().equals(product.getId())) {
+            throw new IllegalArgumentException(
+                    "Izabrana stavka proizvodnog naloga ne pripada izabranom proizvodu.");
+        }
+
+        if (requestRepository.existsByProductionOrderLineItem_IdAndStatusIn(lineItemId, OPEN_STATUSES)) {
+            throw new ConflictException(
+                    "Za ovu stavku proizvodnog naloga već postoji otvoren zahtev.");
+        }
+
+        return lineItem;
+    }
+
+    /**
      * Claim or assign. Locks the row first so two processors cannot both believe
      * they own it; the loser waits, re-reads, and sees it is already IN_REVIEW.
      */
@@ -175,12 +231,13 @@ public class ManufacturingTimeRequestService {
         User processor = loadUser(processorId);
 
         requireNotOwnRequest(request, processorId);
+        claimIfUnowned(request, processor);
         requireAssigneeOrProcessor(request, processorId);
+        // Refuse an illegal completion before anything is written.
+        request.requireCompletable();
 
-        request.complete(processor, decision == null ? null : decision.getDecisionNote());
-
-        ProductManufacturingTime result = produceResult(request, processor, decision);
-        result.setSourceRequest(request);
+        ProductManufacturingTime result = resolveResult(request, processor, decision);
+        request.complete(processor, decision == null ? null : decision.getDecisionNote(), result);
 
         outboxEventPublisher.publish(
                 OutboxEventType.MANUFACTURING_TIME_REQUEST_COMPLETED,
@@ -192,12 +249,72 @@ public class ManufacturingTimeRequestService {
         return toResponse(request);
     }
 
+    /**
+     * The record that will answer the request: either one that already exists, or
+     * one this completion produces.
+     */
+    private ProductManufacturingTime resolveResult(
+            ManufacturingTimeRequest request,
+            User processor,
+            ManufacturingTimeRequestDecisionRequest decision
+    ) {
+        Long existingId = decision == null ? null : decision.getExistingManufacturingTimeId();
+
+        return existingId == null
+                ? produceResult(request, processor, decision)
+                : attachExisting(request, existingId, decision.getManufacturingTimeUpdate());
+    }
+
+    /**
+     * Answers the request with a manufacturing time that already exists.
+     *
+     * <p>Nothing is produced, so {@code sourceRequest} is deliberately NOT
+     * stamped: this request did not write that record, and overwriting the
+     * stamp would take authorship away from the request that did — and, with it,
+     * that request's own result.
+     *
+     * <p>The record may already answer other requests. That is the whole point:
+     * one manufacturing time settles everyone who asked for the same product's.
+     */
+    private ProductManufacturingTime attachExisting(
+            ManufacturingTimeRequest request,
+            Long existingId,
+            ProductManufacturingTimeUpdateRequest update
+    ) {
+        if (request.getRequestType().requiresTarget()) {
+            throw new IllegalArgumentException(
+                    "Zahtev tipa " + request.getRequestType()
+                            + " se zavrsava nad ciljnim zapisom, pa ne moze da se veze za drugi.");
+        }
+
+        ProductManufacturingTime existing = manufacturingTimeService.getActiveOrThrow(existingId);
+
+        if (!existing.getProduct().getId().equals(request.getProduct().getId())) {
+            throw new IllegalArgumentException(
+                    "Izabrano vreme izrade ne pripada proizvodu iz zahteva.");
+        }
+
+        if (update == null) {
+            return existing;
+        }
+
+        // Changing the record and settling the request are one act, so they are
+        // one transaction: a processor who reworked the numbers must never end up
+        // with the record rewritten and the request still open.
+        ProductManufacturingTime changed = manufacturingTimeService.applyUpdate(existingId, update);
+        // Reworking IS authorship, unlike plain attaching.
+        changed.setSourceRequest(request);
+        return changed;
+    }
+
     private ProductManufacturingTime produceResult(
             ManufacturingTimeRequest request,
             User processor,
             ManufacturingTimeRequestDecisionRequest decision
     ) {
-        return switch (request.getRequestType()) {
+        // Every branch below WRITES the record, so every branch stamps
+        // authorship on it.
+        ProductManufacturingTime produced = switch (request.getRequestType()) {
             case CREATE -> {
                 if (decision == null || decision.getManufacturingTime() == null) {
                     throw new IllegalArgumentException(
@@ -224,6 +341,9 @@ public class ManufacturingTimeRequestService {
                 yield manufacturingTimeRepository.findById(targetId).orElseThrow();
             }
         };
+
+        produced.setSourceRequest(request);
+        return produced;
     }
 
     /** Declines without producing any result. */
@@ -272,16 +392,86 @@ public class ManufacturingTimeRequestService {
             Long productId,
             Long createdById,
             Long assignedToId,
+            Long productionOrderId,
+            Long mineUserId,
+            java.time.OffsetDateTime createdFrom,
+            java.time.OffsetDateTime createdTo,
             Pageable pageable
     ) {
         return requestRepository
-                .search(status, productId, createdById, assignedToId, pageable)
+                .search(status, productId, createdById, assignedToId, productionOrderId,
+                        mineUserId,
+                        ManufacturingTimeRequestStatus.PENDING,
+                        ManufacturingTimeRequestStatus.IN_REVIEW,
+                        ManufacturingTimeRequestStatus.COMPLETED,
+                        ManufacturingTimeRequestStatus.DECLINED,
+                        createdFrom, createdTo,
+                        pageable)
                 .map(this::toResponse);
+    }
+
+    /**
+     * What this person can pick up on the manufacturing-time screen: requests
+     * still waiting for anyone, plus the ones they have already taken.
+     * {@code restrictToCreatedById} is the caller's own id when they may not read
+     * everybody's requests, and NULL when they may.
+     */
+    @Transactional(readOnly = true)
+    public List<ManufacturingTimeRequestResponse> pickableRequests(
+            Long actorId, Long restrictToCreatedById
+    ) {
+        return requestRepository.findPickable(
+                        ManufacturingTimeRequestStatus.PENDING,
+                        ManufacturingTimeRequestStatus.IN_REVIEW,
+                        actorId,
+                        restrictToCreatedById)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    /**
+     * What each of one order's lines can say about its manufacturing time: a
+     * request still running, or the answer it already got.
+     * {@code restrictToCreatedById} is the caller's own id when they may not read
+     * everybody's requests, and NULL when they may.
+     */
+    @Transactional(readOnly = true)
+    public List<ManufacturingTimeRequestResponse> forProductionOrder(
+            Long productionOrderId, Long restrictToCreatedById
+    ) {
+        return requestRepository
+                .findByProductionOrderAndStatusIn(
+                        productionOrderId, LIVE_STATUSES, restrictToCreatedById)
+                .stream()
+                .map(this::toResponse)
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public ManufacturingTimeRequestResponse getById(Long requestId) {
         return toResponse(loadDetail(requestId));
+    }
+
+    /**
+     * Takes an unowned request on the way to completing it.
+     *
+     * <p>Completing is done from the manufacturing-time screen, where the
+     * processor picks a request and hands it a result in one motion; making them
+     * walk back to the queue to press "claim" first would be ceremony, not
+     * safety. This is still a claim-and-process sequence rather than a blind
+     * write: {@code assigned_to} ends up naming whoever did the work, which is
+     * the whole point of the rule.
+     *
+     * <p>A request somebody ELSE owns is deliberately not touched — the check
+     * below then refuses it, and taking work away from a colleague stays a
+     * deliberate reassignment.
+     */
+    private void claimIfUnowned(ManufacturingTimeRequest request, User processor) {
+        if (request.getStatus() == ManufacturingTimeRequestStatus.PENDING
+                && request.getAssignedTo() == null) {
+            request.assignTo(processor);
+        }
     }
 
     /**
@@ -331,6 +521,12 @@ public class ManufacturingTimeRequestService {
         payload.put("productId", request.getProduct().getId());
         payload.put("productName", request.getProduct().getProductName());
         payload.put("createdByUserId", request.getCreatedBy().getId());
+        if (request.getProductionOrderLineItem() != null) {
+            var order = request.getProductionOrderLineItem().getProductionOrder();
+            payload.put("productionOrderId", order.getId());
+            payload.put("productionOrderCode", order.getCode());
+            payload.put("productionOrderName", order.getName());
+        }
         if (request.getAssignedTo() != null) {
             payload.put("assignedToUserId", request.getAssignedTo().getId());
         }
@@ -338,9 +534,12 @@ public class ManufacturingTimeRequestService {
     }
 
     private ManufacturingTimeRequestResponse toResponse(ManufacturingTimeRequest r) {
-        Long resultId = manufacturingTimeRepository.findBySourceRequest_Id(r.getId())
-                .map(ProductManufacturingTime::getId)
-                .orElse(null);
+        // Read from the request's own column rather than looking the record up by
+        // source_request_id: that lookup was one query PER ROW of every list, and
+        // it answered the wrong question now that a record can answer many
+        // requests.
+        ProductManufacturingTime result = r.getResultManufacturingTime();
+        ProductionOrderLineItem lineItem = r.getProductionOrderLineItem();
 
         return new ManufacturingTimeRequestResponse(
                 r.getId(),
@@ -358,7 +557,14 @@ public class ManufacturingTimeRequestService {
                 r.getProcessedAt(),
                 r.getDecisionNote(),
                 r.getTargetManufacturingTime() == null ? null : r.getTargetManufacturingTime().getId(),
-                resultId,
+                lineItem == null ? null : lineItem.getId(),
+                lineItem == null ? null : lineItem.getProductionOrder().getId(),
+                lineItem == null ? null : lineItem.getProductionOrder().getCode(),
+                lineItem == null ? null : lineItem.getProductionOrder().getName(),
+                lineItem == null ? null : lineItem.getProductDescription(),
+                result == null ? null : result.getId(),
+                result == null ? null : result.getManufacturingTimeSeconds(),
+                result == null ? null : result.getProductsPerHour(),
                 r.getCancelledAt(),
                 r.getCreatedAt()
         );

@@ -182,13 +182,52 @@ over.
 (`is_active = false`); the domain has no physical delete, so offering `DELETE`
 would name an operation the system cannot perform.
 
-**Deviation:** the retired stub linked a request to *many production orders*. The
-real manufacturing-time domain (`product_manufacturing_times`) hangs off a
-**product**, so the table references `product_id`. The stub's production-order
-association carried no business meaning and is not reproduced.
+**Deviation:** the retired stub linked a request to *many production orders*.
+The real manufacturing-time domain (`product_manufacturing_times`) hangs off a
+**product**, so the table references `product_id`. The stub's many-to-many
+production-order association carried no business meaning and is not reproduced.
 
 `CREATE` must have **no** `target_manufacturing_time_id`; every other type must
 have one (`chk_manufacturing_time_requests_target_required`).
+
+### 3.1.1 The production-order line a request was raised on
+
+`manufacturing_time_requests.production_order_line_item_id` is **nullable** and
+names the line the request came from. Added 2026-08-22 in
+`V3__manufacturing_time_request_line_item.sql`.
+
+The line is the **occasion**, never the subject:
+
+- `product_id` stays `NOT NULL` and keeps its meaning. Manufacturing times hang
+  off a product, so a request with only a line item would leave completion with
+  nothing to write.
+- `NULL` means "raised on its own", not "about nothing". A request raised from
+  the manufacturing-time screen is exactly as valid as one raised from an order.
+- When a line IS given, the line's product and the request's product must be the
+  same one. This is a **composite foreign key**
+  (`fk_manufacturing_time_requests_line_item`) over
+  `(production_order_line_item_id, product_id)` referencing
+  `production_order_line_items (id, product_id)`, so the two cannot drift apart
+  for any writer, including SQL run by hand. `MATCH SIMPLE` is deliberate: with
+  the line NULL the key is not checked at all.
+- The column is **not updatable**. The occasion is a fact about how the request
+  came to exist.
+- A request may not be raised on an **inactive** line (409), and a line may have
+  **at most one open request** (409) — `PENDING` or `IN_REVIEW`. Both are service
+  rules, not constraints; see the caveat below for why the second one is not an
+  index.
+
+**Line identity is not stable across an order edit.** `ProductionOrderService`
+retires an order's lines (`is_active = false`) and writes NEW rows rather than
+updating them. The consequences were accepted deliberately:
+
+- The reference stays valid and historically truthful — it keeps pointing at the
+  line as it was when somebody asked.
+- The "one open request per line" rule therefore cannot be a unique index: after
+  an order edit the same need is a different line id. It is a service check whose
+  job is to stop the obvious double-ask, not a concurrency guarantee. The rule
+  that IS race-proof — one open request per targeted manufacturing-time record —
+  is unchanged.
 
 ### 3.2 Statuses and transitions
 
@@ -206,6 +245,20 @@ IN_REVIEW -> CANCELLED
 must be owned before it is decided, so that `assigned_to` always identifies who
 took responsibility. A processor who wants to decide immediately claims first;
 the API offers a claim-and-process sequence, never a blind status write.
+
+**Completing an unowned request claims it on the way** (`claimIfUnowned`, added
+2026-08-23). The status machine is unchanged — the request still goes
+`PENDING -> IN_REVIEW -> COMPLETED`, both steps in one transaction — and
+`assigned_to` still ends up naming whoever did the work. What changed is only
+that it takes one call instead of two: completing is done from the
+manufacturing-time screen, where the processor picks a request and hands it a
+result in one motion.
+
+Two limits keep this from being a takeover:
+- a request somebody **else** owns is untouched, and then refused. Taking work
+  away from a colleague stays a deliberate reassignment.
+- **declining does not auto-claim.** Turning somebody's request down is not
+  something to fall into from a queue, so it still requires claiming first.
 
 `COMPLETED`, `DECLINED` and `CANCELLED` are terminal — a finished request can
 never be processed again. There is **no generic status-update endpoint**.
@@ -230,6 +283,41 @@ These are **current business state**, not audit metadata. The audit log records
 not duplicates of each other. No ambiguous `changed_by` is used anywhere.
 
 ### 3.4 Relationship to the manufacturing-time record
+
+There are **two links, answering two different questions.** They cannot
+contradict each other because one records authorship and the other records the
+answer.
+
+| Column | Question | Cardinality | Written when |
+|---|---|---|---|
+| `manufacturing_time_requests.result_manufacturing_time_id` | Which record **answers** this request? | many requests → one record | the request is completed, whether the record was newly produced or an existing one attached |
+| `product_manufacturing_times.source_request_id` | Which request last **wrote** this record? | one record ↔ one request | only when a request actually creates or changes the record |
+
+**A manufacturing time may answer many requests.** Two people can ask for the
+same product's time and one record settles both. That is why
+`result_manufacturing_time_id` lives on the request: a foreign key belongs on the
+side that has many. `source_request_id` could not carry this — it is one column
+on the record, so a second request answered by the same record would overwrite
+the first and leave a `COMPLETED` request with no result.
+`uq_pmt_source_request_id` does not prevent that; it enforces the opposite
+direction.
+
+**Attaching is not authorship.** Completing a request with an existing record
+fills `result_manufacturing_time_id` and deliberately leaves `source_request_id`
+alone. Overwriting the stamp would take authorship away from the request that
+produced the record — and, through that column, that request's own history.
+
+`chk_manufacturing_time_requests_result_state` makes "COMPLETED" and "has a
+result" the same fact: a finished request always has one, an unfinished or
+refused one never does. The result's product is checked against the request's
+product by the composite key `fk_manufacturing_time_requests_result`, the same
+idiom as §3.1.1.
+
+Added 2026-08-23 in `V4__manufacturing_time_request_result.sql`, which backfills
+the new column from `source_request_id` — every request completed before it
+produced its own record, so the two agreed by construction.
+
+#### 3.4.1 The authorship link
 
 `product_manufacturing_times.source_request_id` → `manufacturing_time_requests.id`,
 with a **partial unique index** (`uq_pmt_source_request_id`).
@@ -264,10 +352,30 @@ producing anything (`status = DECLINED` and no row references it).
    `IN_REVIEW`.
 5. Optimistic locking (`@Version`) prevents two processors both completing or
    declining the same request.
+6. A request may name the production-order line it was raised on; see §3.1.1.
+   Doing so changes nothing about the workflow — the same statuses, the same
+   processing rules, the same result.
+7. A `CREATE` request may be completed by **attaching a manufacturing time that
+   already exists** (`existingManufacturingTimeId` on the decision payload)
+   instead of by producing a new one. The record must be active and belong to the
+   request's product; it may already answer other requests. The other request
+   types refuse an attachment — the record they act on is the target they already
+   name.
+8. An illegal completion is refused **before** any result is produced
+   (`requireCompletable`), so a refused completion never writes a
+   manufacturing-time row that the rollback then has to take back.
+9. `existingManufacturingTimeId` may travel **together with**
+   `manufacturingTimeUpdate`: the named record is rewritten and the request
+   settled in one transaction. This is the "I reworked the numbers on an existing
+   record" case. Reworking **is** authorship, so `source_request_id` moves to the
+   request that did it — unlike plain attaching, which leaves it alone.
 
 ### 3.6 Authorization
 
-Creating a request: any authenticated user. Claiming, completing, declining, and
+Creating a request: any authenticated user — including `commercial`, which is
+who raises requests from a production order. Nothing about the line item changes
+this: raising a request on a line requires no permission the plain request does
+not already require. Claiming, completing, declining, and
 listing all requests: `MANUFACTURING_TIME_REQUEST_PROCESS` /
 `MANUFACTURING_TIME_REQUEST_READ_ALL` (`admin`, `supervisor`, `developer`). A user
 without the read-all permission sees only their own requests.

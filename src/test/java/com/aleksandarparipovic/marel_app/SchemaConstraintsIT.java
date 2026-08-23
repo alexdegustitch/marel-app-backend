@@ -42,6 +42,14 @@ class SchemaConstraintsIT extends AbstractIntegrationTest {
         assertThat(constraintExists("chk_manufacturing_time_requests_processing_state")).isTrue();
         assertThat(constraintExists("chk_manufacturing_time_requests_assignment_state")).isTrue();
         assertThat(constraintExists("chk_manufacturing_time_requests_target_required")).isTrue();
+        // A request's order line and its product are one pair, checked as one key,
+        // so the two can never name different products.
+        assertThat(constraintExists("fk_manufacturing_time_requests_line_item")).isTrue();
+        // A finished request always has a result; an unfinished or refused one
+        // never does.
+        assertThat(constraintExists("chk_manufacturing_time_requests_result_state")).isTrue();
+        // The answering record is about the product the request is about.
+        assertThat(constraintExists("fk_manufacturing_time_requests_result")).isTrue();
         assertThat(constraintExists("chk_mailing_list_members_exactly_one_source")).isTrue();
         assertThat(constraintExists("chk_po_recipients_source_list_consistency")).isTrue();
         assertThat(constraintExists("chk_po_recipients_removal_state")).isTrue();

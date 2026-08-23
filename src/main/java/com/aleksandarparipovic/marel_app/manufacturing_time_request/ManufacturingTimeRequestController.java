@@ -7,6 +7,10 @@ import com.aleksandarparipovic.marel_app.manufacturing_time_request.dto.*;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.format.annotation.DateTimeFormat;
+
+import java.time.LocalDate;
+import java.time.ZoneId;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +31,12 @@ import org.springframework.web.bind.annotation.*;
 public class ManufacturingTimeRequestController {
 
     private static final int MAX_PAGE_SIZE = 100;
+
+    /** The range an unset date filter stands for: everything there could be. */
+    private static final java.time.OffsetDateTime DAWN =
+            java.time.OffsetDateTime.parse("1900-01-01T00:00:00Z");
+    private static final java.time.OffsetDateTime DUSK =
+            java.time.OffsetDateTime.parse("9999-12-31T00:00:00Z");
 
     private final ManufacturingTimeRequestService service;
     private final CurrentUserService currentUserService;
@@ -51,6 +61,15 @@ public class ManufacturingTimeRequestController {
             @RequestParam(required = false) Long productId,
             @RequestParam(required = false) Long createdById,
             @RequestParam(required = false) Long assignedToId,
+            @RequestParam(required = false) Long productionOrderId,
+            /** Narrow to what this caller raised or took on. */
+            @RequestParam(defaultValue = "false") boolean mine,
+            /** Inclusive calendar bounds on when the request was raised. */
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdFrom,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdTo,
+            @RequestParam(defaultValue = "true") boolean newestFirst,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "25") int size
     ) {
@@ -61,12 +80,56 @@ public class ManufacturingTimeRequestController {
                         : currentUserId;
 
         return ResponseEntity.ok(service.search(
-                status, productId, effectiveCreatedBy, assignedToId,
+                status, productId, effectiveCreatedBy, assignedToId, productionOrderId,
+                mine ? currentUserId : null,
+                // A calendar day becomes a half-open instant range in the
+                // server's own zone, so "23. avgust" means all of that day.
+                createdFrom == null
+                        ? DAWN
+                        : createdFrom.atStartOfDay(ZoneId.systemDefault()).toOffsetDateTime(),
+                createdTo == null
+                        ? DUSK
+                        : createdTo.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toOffsetDateTime(),
+                // The query ranks the statuses into groups; this sort is appended
+                // after that rank, so it orders WITHIN each group.
                 PageRequest.of(
                         Math.max(page, 0),
                         Math.clamp(size, 1, MAX_PAGE_SIZE),
-                        Sort.by(Sort.Direction.DESC, "createdAt"))
+                        Sort.by(newestFirst ? Sort.Direction.DESC : Sort.Direction.ASC, "createdAt"))
         ));
+    }
+
+    /**
+     * The picker on the manufacturing-time screen: work free to take, plus work
+     * this caller already took. Narrowed to their own requests by the same rule
+     * as the list above.
+     */
+    @GetMapping("/open")
+    public ResponseEntity<java.util.List<ManufacturingTimeRequestResponse>> open() {
+        Long currentUserId = currentUserService.getCurrentUserId();
+        Long restrictTo =
+                permissionService.hasPermission(AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL)
+                        ? null
+                        : currentUserId;
+
+        return ResponseEntity.ok(service.pickableRequests(currentUserId, restrictTo));
+    }
+
+    /**
+     * What one production order's lines can say about their manufacturing time:
+     * a request still running, or the answer one already got. Narrowed to the
+     * caller's own requests by the same rule as the list above.
+     */
+    @GetMapping("/open-by-production-order/{productionOrderId}")
+    public ResponseEntity<java.util.List<ManufacturingTimeRequestResponse>> openByProductionOrder(
+            @PathVariable Long productionOrderId
+    ) {
+        Long restrictTo =
+                permissionService.hasPermission(AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL)
+                        ? null
+                        : currentUserService.getCurrentUserId();
+
+        return ResponseEntity.ok(service.forProductionOrder(productionOrderId, restrictTo));
     }
 
     @GetMapping("/{id}")

@@ -32,4 +32,29 @@ public interface ProductManufacturingTimeRepository
     );
 
     java.util.Optional<ProductManufacturingTime> findBySourceRequest_Id(Long sourceRequestId);
+
+    /**
+     * Every active record that ANSWERS a request, whoever made it.
+     *
+     * <p>Not filtered by user on purpose: a manufacturing time produced through
+     * the request workflow is the company's answer to somebody's ask, not the
+     * processor's personal document. The per-user list next to it stays what it
+     * is — a private working list.
+     *
+     * <p>Keyed off the request's own {@code result_manufacturing_time_id} rather
+     * than {@code source_request_id}, so a record made outside the workflow and
+     * later attached to a request counts too — it is answering one.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            select distinct p
+            from ProductManufacturingTime p
+            where p.active = true
+              and exists (
+                  select 1
+                  from ManufacturingTimeRequest r
+                  where r.resultManufacturingTime.id = p.id
+              )
+            order by p.dateOfIssue desc
+            """)
+    java.util.List<ProductManufacturingTime> findAnsweringRequests();
 }

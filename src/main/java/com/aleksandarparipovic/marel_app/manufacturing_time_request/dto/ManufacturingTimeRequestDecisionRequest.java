@@ -10,10 +10,15 @@ import lombok.Setter;
 /**
  * What a processor sends when completing or declining a request.
  *
- * <p>For a completion, exactly one of the two payloads is used, chosen by the
- * request's own type — a CREATE request carries {@code manufacturingTime}, and
- * UPDATE/RECALCULATE carry {@code manufacturingTimeUpdate}. DEACTIVATE needs
- * neither. The client cannot pick which one applies; the stored request type does.
+ * <p>For a completion, the request's own TYPE chooses the payload — a CREATE
+ * request carries {@code manufacturingTime}, UPDATE/RECALCULATE carry
+ * {@code manufacturingTimeUpdate}, and DEACTIVATE needs neither. The client
+ * cannot pick which one applies.
+ *
+ * <p>{@code existingManufacturingTimeId} is the one exception the CLIENT does
+ * choose: a CREATE request may be answered by a record that already exists
+ * instead of by a new one. It is the only field here that can settle a request
+ * without producing anything.
  */
 @Getter
 @Setter
@@ -27,4 +32,14 @@ public class ManufacturingTimeRequestDecisionRequest {
 
     @Valid
     private ProductManufacturingTimeUpdateRequest manufacturingTimeUpdate;
+
+    /**
+     * Answer a CREATE request with a manufacturing time that already exists.
+     *
+     * <p>The record may already answer other requests — that is the point, one
+     * record settles everyone who asked for the same product's time. Refused for
+     * the other request types, where the record to act on is already named by
+     * the request itself.
+     */
+    private Long existingManufacturingTimeId;
 }

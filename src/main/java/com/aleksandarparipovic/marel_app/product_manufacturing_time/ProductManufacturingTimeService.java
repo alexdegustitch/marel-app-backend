@@ -120,6 +120,15 @@ public class ProductManufacturingTimeService {
                 .toList();
     }
 
+    /** Everything the request workflow has produced, whoever produced it. */
+    @Transactional(readOnly = true)
+    public List<ProductManufacturingTimeDto> getAnsweringRequests() {
+        return repository.findAnsweringRequests()
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public List<ProductManufacturingTimeDto> getForCurrentUser(Authentication authentication) {
         User user = userRepository.findByUsername(authentication.getName())

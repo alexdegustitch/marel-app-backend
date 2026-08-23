@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.manufacturing_time_request;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.ProductManufacturingTime;
+import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
 import com.aleksandarparipovic.marel_app.user.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -68,10 +69,41 @@ public class ManufacturingTimeRequest {
     @Column(name = "decision_note", length = 2000)
     private String decisionNote;
 
+    /**
+     * The manufacturing time that ANSWERS this request.
+     *
+     * <p>Many requests may share one record — two people can ask for the same
+     * product's time and one record settles both — so the foreign key lives
+     * here, on the side that has many. Set only when the request is completed,
+     * whether the record was newly produced or an existing one was attached.
+     *
+     * <p>Not the same thing as {@code ProductManufacturingTime.sourceRequest},
+     * which records which request last WROTE a record. Attaching an existing
+     * record fills this field and deliberately leaves that one alone: attaching
+     * is not authorship.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "result_manufacturing_time_id")
+    private ProductManufacturingTime resultManufacturingTime;
+
     /** The record the request acts on. NULL for CREATE. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "target_manufacturing_time_id", updatable = false)
     private ProductManufacturingTime targetManufacturingTime;
+
+    /**
+     * The production-order line the request was raised on. NULL means it was
+     * raised on its own — the line is the occasion, never the subject: what the
+     * request is about is always {@link #product}.
+     *
+     * <p>Not updatable, like the product: the occasion is a fact about how the
+     * request came to exist. It keeps pointing at the line as it was even after
+     * the order is edited, because editing an order deactivates its lines and
+     * writes new ones rather than changing them in place.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "production_order_line_item_id", updatable = false)
+    private ProductionOrderLineItem productionOrderLineItem;
 
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
@@ -125,8 +157,32 @@ public class ManufacturingTimeRequest {
         this.assignedTo = null;
     }
 
-    public void complete(User processor, String note) {
+    /**
+     * Completes the request WITH its result, in one step.
+     *
+     * <p>The two move together because the database refuses to see them apart:
+     * {@code chk_manufacturing_time_requests_result_state} makes COMPLETED and
+     * "has a result" the same fact, so a flush between two separate setters
+     * would be rejected.
+     */
+    public void complete(User processor, String note, ProductManufacturingTime result) {
+        if (result == null) {
+            throw new IllegalArgumentException("Zavrsen zahtev mora da ima vreme izrade.");
+        }
         finish(ManufacturingTimeRequestStatus.COMPLETED, processor, note);
+        this.resultManufacturingTime = result;
+    }
+
+    /**
+     * Refuses an illegal completion BEFORE any result is produced.
+     *
+     * <p>{@link #complete} checks the same thing, but by then the result exists:
+     * a CREATE would have written a manufacturing-time row that the rollback
+     * then has to take back. Asking first keeps the refusal cheap and the log
+     * clean.
+     */
+    public void requireCompletable() {
+        require(ManufacturingTimeRequestStatus.COMPLETED);
     }
 
     public void decline(User processor, String note) {

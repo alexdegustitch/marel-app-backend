@@ -44,6 +44,15 @@ public class ProductManufacturingTimeController {
         return ResponseEntity.ok(service.getForCurrentUser(authentication));
     }
 
+    /**
+     * Records that answer a request — shared, because the workflow that produced
+     * them is shared. The `/my` list above remains one person's own.
+     */
+    @GetMapping("/from-requests")
+    public ResponseEntity<List<ProductManufacturingTimeDto>> getFromRequests() {
+        return ResponseEntity.ok(service.getAnsweringRequests());
+    }
+
     @GetMapping("/by-product/{productId}")
     public ResponseEntity<List<ProductManufacturingTimeDto>> getByProductId(@PathVariable Long productId) {
         return ResponseEntity.ok(service.getByProductId(productId));

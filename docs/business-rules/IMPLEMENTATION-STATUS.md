@@ -20,6 +20,8 @@ working tree.
 | Permission layer | n/a | ✅ | ✅ | n/a | ✅ (indirect) |
 | Transactional outbox + worker | ✅ | ✅ | ✅ | n/a | ✅ |
 | Manufacturing-time requests | ✅ | ✅ | ✅ | ✅ | ✅ |
+| ↳ raised on a production-order line | ✅ `V3` | ✅ | ✅ | ✅ | ✅ |
+| ↳ answered by a manufacturing time (N:1) | ✅ `V4` | ✅ | ✅ | ✅ | ✅ |
 | Mailing lists | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Production-order recipients | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Notification events / user notifications | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -215,7 +217,7 @@ prefixes ARE the order:
 | `auth` | `AccountNotUsableException` |
 | `user` | `UserAccountStatus` |
 | `user_registration_request` | status enum, entity, repository, service, controller, 2 DTOs |
-| `manufacturing_time_request` | type + status enums, entity, repository, service, controller, 4 DTOs |
+| `manufacturing_time_request` | type + status enums, entity, repository, service, controller, 4 DTOs. Since `V3__manufacturing_time_request_line_item.sql` a request may name the production-order line it was raised on — nullable, composite-FK-checked against the product, see business rules §3.1.1 |
 | `mailing_list` | visibility enum, entity, repository, service, controller, 6 DTOs |
 | `mailing_list_access` | entity + id class, repository |
 | `mailing_list_member` | entity, repository |

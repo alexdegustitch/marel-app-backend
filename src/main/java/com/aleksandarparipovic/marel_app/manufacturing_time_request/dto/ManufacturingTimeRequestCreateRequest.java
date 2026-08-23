@@ -27,4 +27,11 @@ public class ManufacturingTimeRequestCreateRequest {
 
     /** Required for every type except CREATE; validated in the service. */
     private Long targetManufacturingTimeId;
+
+    /**
+     * Optional: the production-order line the request was raised on. When it is
+     * set, {@code productId} must be that line's product — the service refuses a
+     * mismatch rather than quietly picking one of the two.
+     */
+    private Long productionOrderLineItemId;
 }
