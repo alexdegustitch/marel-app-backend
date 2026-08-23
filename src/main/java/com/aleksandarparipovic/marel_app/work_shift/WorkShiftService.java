@@ -72,6 +72,11 @@ public class WorkShiftService {
         return workShiftMapper.toInfoDto(ws, dr);
     }
 
+    /** Years the Kartoni view may offer: every year that holds at least one live shift. */
+    public List<Integer> findYearsWithShifts(){
+        return repository.findYearsWithShifts();
+    }
+
     public List<WorkShiftActivityDto> findLastThreePerMonthForSupervisor(int year){
         Long userId = currentUserService.getCurrentUserId();
         return repository.findLastThreePerMonthForSupervisor(userId, year);

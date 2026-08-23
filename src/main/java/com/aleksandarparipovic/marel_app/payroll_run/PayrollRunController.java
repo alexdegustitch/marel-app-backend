@@ -20,6 +20,12 @@ public class PayrollRunController {
 
     private final PayrollRunService payrollRunService;
 
+    /** GET /api/payroll-runs/years — years that actually hold obračuni, newest first. */
+    @GetMapping("/years")
+    public ResponseEntity<List<Integer>> getYearsWithRuns() {
+        return ResponseEntity.ok(payrollRunService.getYearsWithRuns());
+    }
+
     /** GET /api/payroll-runs/year/{year} — summaries per employee for entire year */
     @GetMapping("/year/{year}")
     public ResponseEntity<List<PayrollRunSummaryDto>> getSummariesByYear(@PathVariable int year) {

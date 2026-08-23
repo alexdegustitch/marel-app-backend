@@ -47,6 +47,21 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
         """, nativeQuery = true)
     List<WorkShiftDto> findLastThreePerMonthForSupervisor(Long supervisorId, int year);*/
 
+    /**
+     * Years that actually hold kartoni.
+     *
+     * <p>The Kartoni year view offered a fixed list starting at 2020, so years
+     * without a single shift were still shown as empty sections. Archived
+     * shifts do not count as a reason to keep a year on the page.
+     */
+    @Query(value = """
+        SELECT DISTINCT EXTRACT(YEAR FROM ws.start_at)::int AS year
+        FROM work_shifts ws
+        WHERE ws.archived_at IS NULL
+        ORDER BY year DESC
+        """, nativeQuery = true)
+    List<Integer> findYearsWithShifts();
+
     @Query(value = """
         WITH employee_activity AS (
             SELECT

@@ -30,6 +30,12 @@ public class WorkShiftController {
         return ResponseEntity.ok(service.getWorkShiftInfo(id));
     }
 
+    /** GET /api/work-shifts/years — years that actually hold kartoni, newest first. */
+    @GetMapping("/years")
+    public ResponseEntity<List<Integer>> getYearsWithShifts(){
+        return ResponseEntity.ok(service.findYearsWithShifts());
+    }
+
     @GetMapping("/year/{year}")
     public ResponseEntity<List<WorkShiftActivityDto>> getLastWorkShifts(@PathVariable Integer year){
         return ResponseEntity.ok(service.findLastThreePerMonthForSupervisor(year));

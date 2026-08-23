@@ -28,6 +28,12 @@ public class PayrollRunService {
 
     // ── new query endpoints ──────────────────────────────────────────────
 
+    /** Years the Obračuni view may offer: every year that holds at least one live run. */
+    @Transactional(readOnly = true)
+    public List<Integer> getYearsWithRuns() {
+        return payrollRunRepository.findYearsWithRuns();
+    }
+
     @Transactional(readOnly = true)
     public List<PayrollRunSummaryDto> getSummariesByYear(int year) {
         return payrollRunItemRepository.findSummariesByYear(year);
