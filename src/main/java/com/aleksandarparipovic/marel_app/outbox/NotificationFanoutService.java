@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.outbox;
 
 import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.config.security.PermissionService;
+import com.aleksandarparipovic.marel_app.notification.UserNotificationPushService;
 import com.aleksandarparipovic.marel_app.notification_delivery.NotificationChannel;
 import com.aleksandarparipovic.marel_app.notification_delivery.NotificationDelivery;
 import com.aleksandarparipovic.marel_app.notification_delivery.NotificationDeliveryRepository;
@@ -53,6 +54,7 @@ public class NotificationFanoutService {
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final UserPreferencesService userPreferencesService;
+    private final UserNotificationPushService pushService;
 
     /**
      * Order events that go out by e-mail as well as in-app. Everything not listed
@@ -89,8 +91,15 @@ public class NotificationFanoutService {
 
         Set<User> inAppRecipients = resolveInAppRecipients(event);
         for (User recipient : inAppRecipients) {
-            createUserNotification(notificationEvent, recipient);
+            boolean isNew = createUserNotification(notificationEvent, recipient);
             createInAppDelivery(notificationEvent, recipient);
+
+            // Only a genuinely new row is announced. A replayed outbox event
+            // creates nothing, and must therefore push nothing — otherwise a
+            // retry would pop a toast for something the reader saw yesterday.
+            if (isNew) {
+                pushService.signal(recipient.getUsername());
+            }
         }
 
         if (ORDER_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
@@ -186,15 +195,17 @@ public class NotificationFanoutService {
         }
     }
 
-    private void createUserNotification(NotificationEvent event, User user) {
+    /** @return true when this call created the row, false when it already existed. */
+    private boolean createUserNotification(NotificationEvent event, User user) {
         if (userNotificationRepository.existsByNotificationEvent_IdAndUser_Id(
                 event.getId(), user.getId())) {
-            return;
+            return false;
         }
         userNotificationRepository.save(UserNotification.builder()
                 .notificationEvent(event)
                 .user(user)
                 .build());
+        return true;
     }
 
     private void createInAppDelivery(NotificationEvent event, User user) {
