@@ -15,7 +15,14 @@ public record OperationNormVersionDto(
         String createdByName,
         OffsetDateTime verifiedAt,
         String verifiedByName,
-        /** True for the version currently in force (the newest one). */
-        boolean current
+        /** True for the norm in force — stated on the version, not inferred from the order. */
+        boolean current,
+        /** A norm deliberately entered with no date; the date column reads "Privremena". */
+        boolean temporary,
+        /** Set once the norm is archived. Archived norms are history, still readable. */
+        OffsetDateTime archivedAt,
+        /** When this version was last put in force, and by whom. */
+        OffsetDateTime activatedAt,
+        String activatedByName
 ) {
 }

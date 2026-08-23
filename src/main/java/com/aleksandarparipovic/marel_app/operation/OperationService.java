@@ -4,6 +4,8 @@ import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
 import com.aleksandarparipovic.marel_app.operation.dto.*;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
 import com.aleksandarparipovic.marel_app.operation.specification.OperationSpecifications;
+import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormInForceService;
+import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormVersionRepository;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
@@ -25,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +42,8 @@ public class OperationService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final OperationDetailService operationDetailService;
+    private final OperationNormInForceService normInForce;
+    private final OperationNormVersionRepository normVersionRepository;
 
     private WorkCodeCategory resolveWorkCodeCategory(Long id) {
         if (id == null) {
@@ -56,9 +62,17 @@ public class OperationService {
     }
 
     public List<OperationDto> getAllOperationsForProductDto(Long id, LocalDate date) {
+        // One query for the whole product, not one per operation: the flag lives
+        // on the norm version, and the caller draws every operation of a product.
+        Set<Long> temporaryNorms = new HashSet<>(normVersionRepository.findOperationIdsWithTemporaryNorm(id));
+
         return operationRepository.findActiveOrArchivedAfterDate(id, date.atStartOfDay().atOffset(ZoneOffset.UTC))
                 .stream()
-                .map(operationMapper::toDto)
+                .map(operation -> {
+                    OperationDto dto = operationMapper.toDto(operation);
+                    dto.setNormTemporary(temporaryNorms.contains(operation.getId()));
+                    return dto;
+                })
                 .toList();
     }
 
@@ -90,8 +104,18 @@ public class OperationService {
         operation.setMaxNorm(request.getMaxNorm());
         validateNormRules(operation);
         operation.setUnitsPerProduct(request.getUnitsPerProduct());
-        operation.setNormDate(request.getNormDate());
+        // The norm is optional, and the date is the date a NORM applies from —
+        // so an operation without one is left without a date rather than with a
+        // date that dates nothing.
+        operation.setNormDate(hasNormValue(request.getMinNorm(), request.getMaxNorm())
+                ? request.getNormDate() : null);
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
+
+        // The norm history follows the columns this form just wrote. Without it
+        // the operation would work to one number while the history still marked
+        // another as the one in force.
+        normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
+
         long count = operationRepository.countByProduct_IdAndArchivedAtIsNull(operation.getProduct().getId());
         return new OperationWithProductInfoRow(
                 operation.getId(),
@@ -180,9 +204,18 @@ public class OperationService {
         operation.setMaxNorm(request.getMaxNorm());
         validateNormRules(operation);
         operation.setUnitsPerProduct(request.getUnitsPerProduct());
-        operation.setNormDate(request.getNormDate());
+        // The norm is optional, and the date is the date a NORM applies from —
+        // so an operation without one is left without a date rather than with a
+        // date that dates nothing.
+        operation.setNormDate(hasNormValue(request.getMinNorm(), request.getMaxNorm())
+                ? request.getNormDate() : null);
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
         operation = operationRepository.save(operation);
+
+        // An operation created WITH a norm starts its history there, rather than
+        // carrying a norm the version table never saw.
+        normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
+
         long count = operationRepository.countByProduct_IdAndArchivedAtIsNull(operation.getProduct().getId());
         return new OperationWithProductInfoRow(
                 operation.getId(),
@@ -197,6 +230,10 @@ public class OperationService {
                 operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
                 count
         );
+    }
+
+    private static boolean hasNormValue(Integer minNorm, Integer maxNorm) {
+        return minNorm != null || maxNorm != null;
     }
 
     private void validateNormRules(Operation operation) {

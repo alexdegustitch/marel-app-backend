@@ -10,6 +10,8 @@ import java.time.OffsetDateTime;
  */
 public record OperationWorkLogRow(
         Long workLogId,
+        /** Who did it — id so the row can open the employee. */
+        Long employeeId,
         String employeeName,
         LocalDate workDate,
         OffsetDateTime startAt,

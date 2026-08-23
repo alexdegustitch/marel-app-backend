@@ -174,6 +174,7 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
     /** The most recent work recorded on this operation, newest first. */
     @Query(value = """
         SELECT wl.id AS workLogId,
+               e.id AS employeeId,
                e.full_name AS employeeName,
                ws.work_date AS workDate,
                wl.start_at AS startAt,
@@ -268,6 +269,7 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
      */
     interface OperationWorkLogProjection {
         Long getWorkLogId();
+        Long getEmployeeId();
         String getEmployeeName();
         java.time.LocalDate getWorkDate();
         java.time.Instant getStartAt();

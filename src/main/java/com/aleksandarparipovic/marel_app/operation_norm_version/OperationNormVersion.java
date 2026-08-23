@@ -78,6 +78,29 @@ public class OperationNormVersion {
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 
+    /**
+     * The norm the operation works to.
+     *
+     * <p>Stated, not derived. "Newest row wins" could not express two things the
+     * factory needs: putting an EARLIER norm back in force, and an operation
+     * left with no norm at all. A partial unique index keeps at most one true
+     * per operation, and {@code OperationDetailService.makeCurrent} is the only
+     * writer — see {@link OperationNormActivation} for the chronology of those
+     * decisions.
+     */
+    @Column(name = "is_current", nullable = false)
+    private boolean current;
+
+    /**
+     * A norm deliberately entered without a date.
+     *
+     * <p>Without this, "no date" reads the same whether the norm is provisional
+     * or whether somebody simply did not fill the field in. The database ties it
+     * to the date being absent; the screen shows "Privremena" in its place.
+     */
+    @Column(name = "is_temporary", nullable = false)
+    private boolean temporary;
+
     public boolean isVerified() {
         return verifiedAt != null;
     }

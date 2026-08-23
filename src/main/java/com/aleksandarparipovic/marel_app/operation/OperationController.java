@@ -79,9 +79,22 @@ public class OperationController {
 
     // ── The operation detail page ───────────────────────────────────────────
 
+    /**
+     * The norm history. Archived norms are left out unless asked for — they are
+     * still history, so the screen offers them behind a switch.
+     */
     @GetMapping("/{id}/norm-versions")
-    public ResponseEntity<List<OperationNormVersionDto>> getNormHistory(@PathVariable Long id) {
-        return ResponseEntity.ok(operationDetailService.getNormHistory(id));
+    public ResponseEntity<List<OperationNormVersionDto>> getNormHistory(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean includeArchived
+    ) {
+        return ResponseEntity.ok(operationDetailService.getNormHistory(id, includeArchived));
+    }
+
+    /** Which norm the operation worked to, and since when — the whole chronology. */
+    @GetMapping("/{id}/norm-activations")
+    public ResponseEntity<List<OperationNormActivationDto>> getNormActivations(@PathVariable Long id) {
+        return ResponseEntity.ok(operationDetailService.getNormActivations(id));
     }
 
     @PostMapping("/{id}/norm-versions")
@@ -98,15 +111,35 @@ public class OperationController {
     public ResponseEntity<OperationNormVersionDto> updateNorm(
             @PathVariable Long id,
             @PathVariable Long versionId,
-            @RequestBody OperationNormVersionCreateRequest request
+            @RequestBody OperationNormVersionCreateRequest request,
+            Authentication authentication
     ) {
-        return ResponseEntity.ok(operationDetailService.updateNorm(id, versionId, request));
+        return ResponseEntity.ok(operationDetailService.updateNorm(id, versionId, request, authentication));
     }
 
-    /** Archives the norm in force; the previous one becomes current again. */
+    /**
+     * Puts a norm from the history back in force — an archived one included,
+     * which un-archives it.
+     */
+    @PostMapping("/{id}/norm-versions/{versionId}/activate")
+    public ResponseEntity<OperationNormVersionDto> activateNorm(
+            @PathVariable Long id,
+            @PathVariable Long versionId,
+            @RequestBody(required = false) OperationNormActivationRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(operationDetailService.activateNorm(
+                id, versionId, request == null ? null : request.reason(), authentication));
+    }
+
+    /** Archives the norm in force; the one that applies next takes over. */
     @DeleteMapping("/{id}/norm-versions/{versionId}")
-    public ResponseEntity<Void> archiveNorm(@PathVariable Long id, @PathVariable Long versionId) {
-        operationDetailService.archiveNorm(id, versionId);
+    public ResponseEntity<Void> archiveNorm(
+            @PathVariable Long id,
+            @PathVariable Long versionId,
+            Authentication authentication
+    ) {
+        operationDetailService.archiveNorm(id, versionId, authentication);
         return ResponseEntity.noContent().build();
     }
 

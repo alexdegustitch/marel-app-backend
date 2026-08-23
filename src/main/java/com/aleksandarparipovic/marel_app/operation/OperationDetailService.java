@@ -1,11 +1,15 @@
 package com.aleksandarparipovic.marel_app.operation;
 
+import com.aleksandarparipovic.marel_app.operation.dto.OperationNormActivationDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormVersionCreateRequest;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormVersionDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationOrderUsageRow;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationOutputPointDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWorkLogRow;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
+import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormActivation;
+import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormInForceService;
+import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormActivationRepository;
 import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormVersion;
 import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormVersionRepository;
 import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
@@ -47,6 +51,8 @@ public class OperationDetailService {
 
     private final OperationRepository operationRepository;
     private final OperationNormVersionRepository normVersionRepository;
+    private final OperationNormActivationRepository normActivationRepository;
+    private final OperationNormInForceService normInForce;
     private final ProductionOrderLineItemRepository productionOrderLineItemRepository;
     private final SampleOrderLineItemRepository sampleOrderLineItemRepository;
     private final WorkLogRepository workLogRepository;
@@ -54,21 +60,64 @@ public class OperationDetailService {
 
     // ── Norm history ────────────────────────────────────────────────────────
 
+    /**
+     * The operation's norms, newest entry first.
+     *
+     * @param includeArchived whether archived norms are part of the answer. They
+     *   are still history — what an older payroll was calculated against — so the
+     *   screen offers them behind a switch rather than dropping them.
+     */
     @Transactional(readOnly = true)
-    public List<OperationNormVersionDto> getNormHistory(Long operationId) {
+    public List<OperationNormVersionDto> getNormHistory(Long operationId, boolean includeArchived) {
         requireOperation(operationId);
-        List<OperationNormVersion> versions =
-                normVersionRepository.findByOperation_IdAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(operationId);
+        List<OperationNormVersion> versions = includeArchived
+                ? normVersionRepository.findByOperation_IdOrderByCreatedAtDescIdDesc(operationId)
+                : normVersionRepository.findByOperation_IdAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(operationId);
+
+        Map<Long, OperationNormActivation> lastActivation = lastActivationPerVersion(operationId);
 
         List<OperationNormVersionDto> history = new ArrayList<>(versions.size());
-        for (int i = 0; i < versions.size(); i++) {
-            history.add(toDto(versions.get(i), i == 0));
+        for (OperationNormVersion version : versions) {
+            history.add(toDto(version, lastActivation.get(version.getId())));
         }
         return history;
     }
 
     /**
-     * Records a new norm and makes it the current one.
+     * The chronology of which norm the operation worked to.
+     *
+     * <p>Entries are append-only, so this reads as what happened. The end of an
+     * entry is derived here — an entry ends where the next one begins, and the
+     * newest one ends when its norm was archived, or not at all.
+     */
+    @Transactional(readOnly = true)
+    public List<OperationNormActivationDto> getNormActivations(Long operationId) {
+        requireOperation(operationId);
+        List<OperationNormActivation> entries =
+                normActivationRepository.findByOperation_IdOrderByActivatedAtDescIdDesc(operationId);
+
+        List<OperationNormActivationDto> rows = new ArrayList<>(entries.size());
+        for (int i = 0; i < entries.size(); i++) {
+            OperationNormActivation entry = entries.get(i);
+            OperationNormVersion version = entry.getNormVersion();
+            // Newest first, so the entry that ENDS this one is the one before it.
+            OffsetDateTime until = i == 0 ? version.getArchivedAt() : entries.get(i - 1).getActivatedAt();
+            rows.add(new OperationNormActivationDto(
+                    entry.getId(),
+                    version.getId(),
+                    version.getMinNorm(),
+                    entry.getActivatedAt(),
+                    until,
+                    entry.getActivatedBy() == null ? null : entry.getActivatedBy().getFullName(),
+                    entry.getReason(),
+                    entry.getSource().name()
+            ));
+        }
+        return rows;
+    }
+
+    /**
+     * Records a new norm and puts it in force.
      *
      * <p>Both halves matter. The version is the history; the columns on the
      * operation are what payroll and the manufacturing-time report read, so a
@@ -83,19 +132,27 @@ public class OperationDetailService {
         Operation operation = requireOperation(operationId);
         validate(request);
 
+        // Without a norm there is nothing for a date to date, and nothing for
+        // "privremena" to say — the screen disables both, and the server does not
+        // depend on the screen for that.
+        boolean temporary = request.norm() != null && Boolean.TRUE.equals(request.temporary());
+        LocalDate normDate = request.norm() == null || temporary ? null : request.normDate();
+
         OperationNormVersion version = OperationNormVersion.builder()
                 .operation(operation)
                 .minNorm(request.norm())
                 .maxNorm(request.norm())
                 .unitsPerProduct(request.unitsPerProduct())
-                .normDate(request.normDate())
+                .normDate(normDate)
+                .temporary(temporary)
                 .note(request.note())
                 .createdBy(currentUser(authentication))
                 .build();
-        version = normVersionRepository.save(version);
+        version = normVersionRepository.saveAndFlush(version);
 
-        applyToOperation(operation, version);
-        return toDto(version, true);
+        makeCurrent(operation, version, currentUser(authentication), null,
+                OperationNormActivation.Source.ADDED);
+        return toDto(version, lastActivationPerVersion(operationId).get(version.getId()));
     }
 
     /**
@@ -106,66 +163,141 @@ public class OperationDetailService {
     public OperationNormVersionDto updateNorm(
             Long operationId,
             Long versionId,
-            OperationNormVersionCreateRequest request
+            OperationNormVersionCreateRequest request,
+            Authentication authentication
     ) {
         Operation operation = requireOperation(operationId);
         validate(request);
 
         OperationNormVersion version = requireVersion(operationId, versionId);
-        requireCurrent(operationId, version, "Može se menjati samo važeća norma");
+        if (!version.isCurrent()) {
+            throw new IllegalStateException("Može se menjati samo važeća norma");
+        }
 
+        boolean temporary = request.norm() != null && Boolean.TRUE.equals(request.temporary());
         version.setMinNorm(request.norm());
         version.setMaxNorm(request.norm());
         version.setUnitsPerProduct(request.unitsPerProduct());
-        version.setNormDate(request.normDate());
+        version.setNormDate(request.norm() == null || temporary ? null : request.normDate());
+        version.setTemporary(temporary);
         version.setNote(request.note());
 
-        applyToOperation(operation, version);
-        return toDto(version, true);
+        // The values the operation works to changed, even though which version is
+        // in force did not — without an entry the chronology would say the shop
+        // floor has been working to this number since before it existed.
+        makeCurrent(operation, version, currentUser(authentication), null,
+                OperationNormActivation.Source.EDITED);
+        return toDto(version, lastActivationPerVersion(operationId).get(version.getId()));
     }
 
     /**
-     * Archives the norm in force, and the one before it becomes current again —
-     * so the operation is left working to a norm somebody actually recorded,
-     * not to no norm at all. With no earlier version the operation is left
-     * un-normed, which is a state the schema already allows.
+     * Puts a norm from the history back in force.
+     *
+     * <p>Including an archived one: archiving takes a norm off the list, it does
+     * not deny that the factory may go back to it, so restoring un-archives it in
+     * the same transaction. Doing this to the norm already in force is a no-op
+     * rather than an error, the same way verifying twice is.
      */
     @Transactional
-    public void archiveNorm(Long operationId, Long versionId) {
+    public OperationNormVersionDto activateNorm(
+            Long operationId,
+            Long versionId,
+            String reason,
+            Authentication authentication
+    ) {
         Operation operation = requireOperation(operationId);
         OperationNormVersion version = requireVersion(operationId, versionId);
-        requireCurrent(operationId, version, "Može se arhivirati samo važeća norma");
+
+        if (version.isCurrent()) {
+            return toDto(version, lastActivationPerVersion(operationId).get(version.getId()));
+        }
+
+        version.setArchivedAt(null);
+        makeCurrent(operation, version, currentUser(authentication), reason,
+                OperationNormActivation.Source.ACTIVATED);
+        return toDto(version, lastActivationPerVersion(operationId).get(version.getId()));
+    }
+
+    /**
+     * Archives the norm in force, and the one that would apply next takes over —
+     * so the operation is left working to a norm somebody actually recorded, not
+     * to no norm at all. With nothing to inherit the operation is left un-normed,
+     * which is a state the schema already allows.
+     */
+    @Transactional
+    public void archiveNorm(Long operationId, Long versionId, Authentication authentication) {
+        Operation operation = requireOperation(operationId);
+        OperationNormVersion version = requireVersion(operationId, versionId);
+        if (!version.isCurrent()) {
+            throw new IllegalStateException("Može se arhivirati samo važeća norma");
+        }
 
         version.setArchivedAt(OffsetDateTime.now());
+        // Cleared before the successor claims it: at most one norm per operation
+        // may be in force, and the database enforces exactly that.
+        version.setCurrent(false);
+        normVersionRepository.saveAndFlush(version);
 
-        OperationNormVersion previous = normVersionRepository
-                .findFirstByOperation_IdAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(operationId)
+        OperationNormVersion successor = normVersionRepository
+                .findSuccessionCandidates(operationId, versionId)
+                .stream()
+                .findFirst()
                 .orElse(null);
 
-        if (previous == null) {
+        if (successor == null) {
             operation.setMinNorm(null);
             operation.setMaxNorm(null);
             operation.setNormRequired(false);
             operation.setNormDate(null);
-        } else {
-            applyToOperation(operation, previous);
+            return;
         }
+
+        makeCurrent(operation, successor, currentUser(authentication),
+                "Nasleđena pošto je prethodna norma arhivirana",
+                OperationNormActivation.Source.SUCCEEDED);
+    }
+
+    /** Signs off a norm version. Verifying twice is a no-op, not an error. */
+    @Transactional
+    public OperationNormVersionDto verifyNorm(Long operationId, Long versionId, Authentication authentication) {
+        requireOperation(operationId);
+        OperationNormVersion version = requireVersion(operationId, versionId);
+
+        if (!version.isVerified()) {
+            version.setVerifiedBy(currentUser(authentication));
+            version.setVerifiedAt(OffsetDateTime.now());
+        }
+
+        return toDto(version, lastActivationPerVersion(operationId).get(version.getId()));
     }
 
     /**
-     * Copies a version onto the operation's own columns — what payroll and the
-     * manufacturing-time report read. A norm that did not land here would be a
-     * norm nobody works to.
+     * Delegates to the one writer of "which norm is in force".
+     *
+     * <p>It lives in {@link OperationNormInForceService} rather than here because
+     * the operation FORM writes the same fact from the other direction, and two
+     * copies of this would be two ways for the flag, the chronology and the
+     * operation's own columns to drift apart.
      */
-    private static void applyToOperation(Operation operation, OperationNormVersion version) {
-        operation.setMinNorm(version.getMinNorm());
-        operation.setMaxNorm(version.getMaxNorm());
-        // The database CHECK ties norm_required to the pair being present.
-        operation.setNormRequired(version.getMinNorm() != null && version.getMaxNorm() != null);
-        if (version.getUnitsPerProduct() != null) {
-            operation.setUnitsPerProduct(version.getUnitsPerProduct());
+    private void makeCurrent(
+            Operation operation,
+            OperationNormVersion version,
+            User by,
+            String reason,
+            OperationNormActivation.Source source
+    ) {
+        normInForce.putInForce(operation, version, by, reason, source);
+    }
+
+    /** The most recent decision per version — what "in force since" reads from. */
+    private Map<Long, OperationNormActivation> lastActivationPerVersion(Long operationId) {
+        Map<Long, OperationNormActivation> byVersion = new HashMap<>();
+        // Newest first, so the first entry seen for a version is its latest.
+        for (OperationNormActivation entry :
+                normActivationRepository.findByOperation_IdOrderByActivatedAtDescIdDesc(operationId)) {
+            byVersion.putIfAbsent(entry.getNormVersion().getId(), entry);
         }
-        operation.setNormDate(version.getNormDate());
+        return byVersion;
     }
 
     private static void validate(OperationNormVersionCreateRequest request) {
@@ -175,6 +307,11 @@ public class OperationDetailService {
         if (request.unitsPerProduct() != null && request.unitsPerProduct() <= 0) {
             throw new IllegalArgumentException("Količina u sklopu mora biti veća od nule");
         }
+        if (Boolean.TRUE.equals(request.temporary()) && request.normDate() != null) {
+            throw new IllegalArgumentException("Privremena norma se unosi bez datuma");
+        }
+        // A norm is optional. A DATE without one is not refused but dropped: the
+        // caller asked for no norm, and a date is only ever a norm's date.
     }
 
     private OperationNormVersion requireVersion(Long operationId, Long versionId) {
@@ -184,38 +321,6 @@ public class OperationDetailService {
             throw new IllegalArgumentException("Norma ne pripada ovoj operaciji");
         }
         return version;
-    }
-
-    private void requireCurrent(Long operationId, OperationNormVersion version, String message) {
-        OperationNormVersion current = normVersionRepository
-                .findFirstByOperation_IdAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(operationId)
-                .orElse(null);
-        if (current == null || !current.getId().equals(version.getId())) {
-            throw new IllegalStateException(message);
-        }
-    }
-
-    /** Signs off a norm version. Verifying twice is a no-op, not an error. */
-    @Transactional
-    public OperationNormVersionDto verifyNorm(Long operationId, Long versionId, Authentication authentication) {
-        requireOperation(operationId);
-
-        OperationNormVersion version = normVersionRepository.findById(versionId)
-                .orElseThrow(() -> new EntityNotFoundException("Norm version not found"));
-
-        if (!version.getOperation().getId().equals(operationId)) {
-            throw new IllegalArgumentException("Norma ne pripada ovoj operaciji");
-        }
-
-        if (!version.isVerified()) {
-            version.setVerifiedBy(currentUser(authentication));
-            version.setVerifiedAt(OffsetDateTime.now());
-        }
-
-        OperationNormVersion current = normVersionRepository
-                .findFirstByOperation_IdAndArchivedAtIsNullOrderByCreatedAtDescIdDesc(operationId)
-                .orElse(null);
-        return toDto(version, current != null && current.getId().equals(version.getId()));
     }
 
     // ── Where the operation is used ─────────────────────────────────────────
@@ -277,6 +382,7 @@ public class OperationDetailService {
                 .stream()
                 .map(row -> new OperationWorkLogRow(
                         row.getWorkLogId(),
+                        row.getEmployeeId(),
                         row.getEmployeeName(),
                         row.getWorkDate(),
                         // The instant, expressed in UTC. The screen renders it in
@@ -415,7 +521,7 @@ public class OperationDetailService {
         return userRepository.findByUsername(authentication.getName()).orElse(null);
     }
 
-    private static OperationNormVersionDto toDto(OperationNormVersion version, boolean current) {
+    private static OperationNormVersionDto toDto(OperationNormVersion version, OperationNormActivation lastActivation) {
         return new OperationNormVersionDto(
                 version.getId(),
                 version.getMinNorm(),
@@ -427,7 +533,12 @@ public class OperationDetailService {
                 version.getCreatedBy() == null ? null : version.getCreatedBy().getFullName(),
                 version.getVerifiedAt(),
                 version.getVerifiedBy() == null ? null : version.getVerifiedBy().getFullName(),
-                current
+                version.isCurrent(),
+                version.isTemporary(),
+                version.getArchivedAt(),
+                lastActivation == null ? null : lastActivation.getActivatedAt(),
+                lastActivation == null || lastActivation.getActivatedBy() == null
+                        ? null : lastActivation.getActivatedBy().getFullName()
         );
     }
 }
