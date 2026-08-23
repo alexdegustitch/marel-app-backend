@@ -25,6 +25,7 @@ import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -78,6 +79,26 @@ public class EmployeeRecordService {
     public boolean existsForEmployeeAndMonth(Long employeeId, int year, int month) {
         LocalDate startDate = YearMonth.of(year, month).atDay(1);
         return employeeRecordRepository.existsByEmployeeIdAndStartDate(employeeId, startDate);
+    }
+
+    /**
+     * The id of one employee's karton for one month, or empty when there is none.
+     *
+     * <p>Beside {@link #existsForEmployeeAndMonth} rather than replacing it: that
+     * one answers a yes/no the create-records screen asks before writing, and
+     * changing what it returns would change a contract several callers rely on.
+     * This one exists so a screen holding an employee and a month — the worker's
+     * calendar — can LINK to the karton instead of only knowing that one is there.
+     *
+     * <p>A karton's {@code start_date} is the first of its month, which is what
+     * {@code createRecordsForMonth} writes; the lookup is that same key read back.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Long> findRecordIdForEmployeeAndMonth(Long employeeId, int year, int month) {
+        LocalDate startDate = YearMonth.of(year, month).atDay(1);
+        return employeeRecordRepository
+                .findByEmployeeIdAndStartDate(employeeId, startDate)
+                .map(EmployeeRecord::getId);
     }
 
     @Transactional(readOnly = true)

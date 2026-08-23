@@ -42,6 +42,21 @@ public class EmployeeRecordController {
         return ResponseEntity.ok(service.existsForEmployeeAndMonth(employeeId, year, month));
     }
 
+    /**
+     * The karton for one employee and month, addressed the way a calendar knows
+     * them. 204 when there is none, so the caller can offer the link or not
+     * without treating "no karton yet" as a failure.
+     */
+    @GetMapping("/by-month")
+    public ResponseEntity<EmployeeRecordRefDto> getByEmployeeAndMonth(
+            @RequestParam Long employeeId,
+            @RequestParam Integer year,
+            @RequestParam Integer month) {
+        return service.findRecordIdForEmployeeAndMonth(employeeId, year, month)
+                .map(id -> ResponseEntity.ok(new EmployeeRecordRefDto(id, employeeId, year, month)))
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<EmployeeRecordEmployeeInfo> getByEmployeeRecordId(@PathVariable Long id) {
         return ResponseEntity.ok(service.getByEmployeeRecordId(id));
