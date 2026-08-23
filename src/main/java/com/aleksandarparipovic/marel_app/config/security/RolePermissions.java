@@ -28,6 +28,7 @@ public final class RolePermissions {
             // Supervisors own the manufacturing-time workflow and production-order
             // communication, but never user approval or session revocation.
             "supervisor", EnumSet.of(
+                    AppPermission.DASHBOARD_SUPERVISOR_VIEW,
                     AppPermission.MANUFACTURING_TIME_REQUEST_PROCESS,
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,

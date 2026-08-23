@@ -26,6 +26,23 @@ public enum AppPermission {
      */
     DASHBOARD_ADMIN_VIEW,
 
+    /**
+     * See the supervisor's control board.
+     *
+     * <p>Separate from {@link #DASHBOARD_ADMIN_VIEW} because the two boards are two
+     * different screens answering two different people's questions, not one screen
+     * with rows hidden from somebody. Granting one must never imply the other.
+     */
+    DASHBOARD_SUPERVISOR_VIEW,
+
+    /**
+     * Recompute the daily analytics snapshot on demand.
+     *
+     * <p>Maintenance rather than a feature: it writes the whole snapshot, and exists
+     * so a changed threshold can be tried without waiting for the next morning.
+     */
+    DASHBOARD_INSIGHTS_RECOMPUTE,
+
     /** Approve or decline a pending self-registration. */
     USER_REGISTRATION_APPROVE,
 
