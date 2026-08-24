@@ -23,8 +23,26 @@ public class RegisterRequest {
 
     private String mobilePhone;
 
+    /**
+     * Chosen at registration and never again.
+     *
+     * <p>Optional here: left out, the server derives one from the e-mail address
+     * (dijana.rad@gmail.com → dijana.rad), which is the name the person already
+     * thinks of as theirs. The form offers that suggestion filled in and lets them
+     * type something else — this is their only chance, since a username is frozen
+     * the moment the account exists.
+     */
+    @Size(max = 32, message = "Korisničko ime je predugačko")
+    private String username;
+
+    /**
+     * Length and composition are checked by {@code PasswordPolicy}, not here.
+     *
+     * <p>The annotation used to say four characters. Keeping a second, weaker copy
+     * of the rules in an annotation is how a password accepted at registration
+     * becomes one its owner cannot re-enter when they later change it.
+     */
     @NotBlank(message = "Šifra je obavezna")
-    @Size(min = 4, message = "Šifra mora imati bar 4 karaktera")
     private String password;
 
     @NotBlank(message = "Potvrda šifre je obavezna")

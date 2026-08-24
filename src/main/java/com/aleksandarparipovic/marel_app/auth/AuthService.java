@@ -1,6 +1,8 @@
 package com.aleksandarparipovic.marel_app.auth;
 
 import com.aleksandarparipovic.marel_app.auth.dto.LoginResponse;
+import com.aleksandarparipovic.marel_app.account.PasswordPolicy;
+import com.aleksandarparipovic.marel_app.account.UsernameRules;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterRequest;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterResponse;
 import com.aleksandarparipovic.marel_app.auth.refresh.RefreshToken;
@@ -18,6 +20,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 @Slf4j
@@ -143,14 +147,22 @@ public class AuthService {
             throw new IllegalArgumentException("Email adresa je već u upotrebi");
         }
 
+        String username = resolveRequestedUsername(
+                request.getUsername(), request.getEmailAddress(),
+                request.getFirstName(), request.getLastName());
+
+        List<String> passwordProblems = PasswordPolicy.violations(
+                request.getPassword(), username, request.getEmailAddress());
+        if (!passwordProblems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", passwordProblems));
+        }
+
         Role role = roleRepository.findById(request.getRoleId())
                 .orElseThrow(() -> new IllegalArgumentException("Uloga nije pronađena"));
 
         if (EXCLUDED_ROLE.equalsIgnoreCase(role.getRoleName())) {
             throw new IllegalArgumentException("Izabrana uloga nije dostupna za registraciju");
         }
-
-        String username = generateUniqueUsername(request.getFirstName(), request.getLastName());
 
         User user = User.builder()
                 .username(username)
@@ -201,8 +213,38 @@ public class AuthService {
         );
     }
 
-    private String generateUniqueUsername(String firstName, String lastName) {
-        String base = UsernameGenerator.baseUsername(firstName, lastName);
+    /**
+     * The username this registration ends up with.
+     *
+     * <p>A TYPED username is taken as typed — validated and refused if it breaks
+     * the rules or is taken, never silently corrected. Somebody whose chosen name
+     * was quietly turned into something else would be signing in for the first
+     * time with a username they have never seen.
+     *
+     * <p>An ABSENT one is derived from the e-mail address and, only then, made
+     * unique with a numeric suffix. That is safe to do silently because the person
+     * expressed no preference — and the form shows them the suggestion anyway.
+     */
+    private String resolveRequestedUsername(
+            String requested, String email, String firstName, String lastName
+    ) {
+        if (requested != null && !requested.isBlank()) {
+            String username = requested.trim().toLowerCase(java.util.Locale.ROOT);
+
+            if (!UsernameRules.isValid(username)) {
+                throw new IllegalArgumentException(UsernameRules.requirement());
+            }
+            if (userRepository.existsByUsername(username)) {
+                throw new IllegalArgumentException("Korisničko ime je zauzeto.");
+            }
+            return username;
+        }
+
+        return makeUnique(UsernameRules.suggestFrom(email, firstName, lastName));
+    }
+
+    /** Appends the smallest numeric suffix that is free. */
+    private String makeUnique(String base) {
         String candidate = base;
         int suffix = 1;
 
@@ -213,6 +255,7 @@ public class AuthService {
 
         return candidate;
     }
+
 
     /**
      * Creates the local account for a Google-verified identity once the user has
@@ -238,7 +281,11 @@ public class AuthService {
         String safeLast = (lastName == null || lastName.isBlank()) ? "Korisnik" : lastName.trim();
 
         User user = User.builder()
-                .username(generateUniqueUsername(safeFirst, safeLast))
+                // Same rule as e-mail registration: the address is where the
+                // suggestion comes from. Google gives us a verified address and
+                // often no usable name at all, so deriving from the name here was
+                // the weaker of the two sources.
+                .username(makeUnique(UsernameRules.suggestFrom(email, safeFirst, safeLast)))
                 .passwordHash(null)
                 .firstName(safeFirst)
                 .lastName(safeLast)

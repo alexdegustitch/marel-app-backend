@@ -14,6 +14,21 @@ public final class UsernameGenerator {
     }
 
     public static String slugify(String value) {
+        return transliterate(value).replaceAll("[^a-z0-9]", "");
+    }
+
+    /**
+     * The same transliteration, keeping the separators a username may contain.
+     *
+     * <p>{@link #slugify} strips them because it builds "first.last" and adds the
+     * dot itself. A username suggested from an e-mail address must NOT: the dot in
+     * `dijana.rad` is part of the name the person already thinks of as theirs.
+     */
+    public static String slugifyKeepingSeparators(String value) {
+        return transliterate(value).replaceAll("[^a-z0-9._-]", "");
+    }
+
+    private static String transliterate(String value) {
         if (value == null) {
             return "";
         }
@@ -28,7 +43,7 @@ public final class UsernameGenerator {
         String normalized = Normalizer.normalize(transliterated, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}", "");
 
-        return normalized.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+        return normalized.toLowerCase(Locale.ROOT);
     }
 
     public static String baseUsername(String firstName, String lastName) {
