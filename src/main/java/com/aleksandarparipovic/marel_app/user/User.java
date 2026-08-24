@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.user;
 
+import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.role.Role;
 import jakarta.persistence.*;
 import lombok.*;
@@ -46,6 +47,17 @@ public class User {
     @Column(name = "full_name", insertable = false, updatable = false)
     private String fullName;
 
+    /**
+     * An optional name to be shown by, apart from the legal first/last name.
+     *
+     * <p>NULL means "use the real name", which is the case for nearly every
+     * account. It is a presentation preference and NEVER reaches a payroll
+     * document: those carry the employee record's legal name, which is a
+     * different record precisely so that this one can be informal.
+     */
+    @Column(name = "display_name", length = 150)
+    private String displayName;
+
     @Column(name = "mobile_phone")
     private String mobilePhone;
 
@@ -55,6 +67,22 @@ public class User {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "role_id")
     private Role role;
+
+    /**
+     * The worker this account belongs to, when it belongs to one.
+     *
+     * <p>NULL for administration, payroll and the developer account — those are
+     * not workers, and NULL is their permanent answer rather than a gap. Set by
+     * an administrator; never inferred from a matching name or e-mail address,
+     * because neither is unique and a wrong guess here hands somebody another
+     * person's payslip.
+     *
+     * <p>The database holds one account per worker (uq_users_employee_id), so
+     * "whose payslip is this" always has exactly one answer.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "employee_id")
+    private Employee employee;
 
     /**
      * Authoritative workflow state. Persisted as a string (never an ordinal), in

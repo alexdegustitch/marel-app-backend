@@ -31,6 +31,15 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
     @EntityGraph(attributePaths = "role")
     Optional<User> findByEmailAddressIgnoreCase(String emailAddress);
 
+    /**
+     * The account belonging to one worker, if any.
+     *
+     * <p>Returns at most one because the database says so — uq_users_employee_id
+     * is a unique index, not a convention. Used to refuse a second account for
+     * the same worker with a sentence rather than a constraint violation.
+     */
+    Optional<User> findByEmployee_Id(Long employeeId);
+
     Page<User> findByUsernameContainingIgnoreCase(String username, Pageable pageable);
 
     Page<User> findByRole_RoleNameIgnoreCase(String roleName, Pageable pageable);
