@@ -1,5 +1,10 @@
 package com.aleksandarparipovic.marel_app.user;
 
+import com.aleksandarparipovic.marel_app.account.PasswordPolicy;
+import com.aleksandarparipovic.marel_app.account.UsernameRules;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.employee.Employee;
+import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.role.Role;
 import com.aleksandarparipovic.marel_app.role.RoleRepository;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
@@ -27,6 +32,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final EmployeeRepository employeeRepository;
     private final PasswordEncoder passwordEncoder;
 
     public UserDto getCurrentUser() {
@@ -56,12 +62,24 @@ public class UserService {
 
     public UserDto create(String username, String password, String email, String firstName, String lastName, String mobilePhone, String roleName) {
 
+        if (!UsernameRules.isValid(username)) {
+            throw new IllegalArgumentException(UsernameRules.requirement());
+        }
+
         if (userRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("Username already taken");
         }
 
         if (userRepository.existsByEmailAddress(email)) {
             throw new IllegalArgumentException("Email already in use");
+        }
+
+        // An account an administrator creates gets the same password rules as one
+        // somebody registers for themselves. The person who ends up living with
+        // this password is not the one typing it.
+        List<String> passwordProblems = PasswordPolicy.violations(password, username, email);
+        if (!passwordProblems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", passwordProblems));
         }
 
         Role role = roleRepository.findByRoleNameIgnoreCase(roleName)
@@ -87,7 +105,9 @@ public class UserService {
             int page,
             int size,
             String username,
+            String search,
             String role,
+            Long employeeId,
             Boolean active,
             Sort.Direction direction,
             String sortBy
@@ -100,8 +120,16 @@ public class UserService {
             spec = spec.and(UserSpecifications.usernameContains(username));
         }
 
+        if (search != null && !search.isBlank()) {
+            spec = spec.and(UserSpecifications.matches(search));
+        }
+
         if (role != null && !role.isBlank()) {
             spec = spec.and(UserSpecifications.hasRole(role));
+        }
+
+        if (employeeId != null) {
+            spec = spec.and(UserSpecifications.hasEmployee(employeeId));
         }
 
         if (active != null) {
@@ -134,8 +162,18 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
-        if (request.getUsername() != null && !request.getUsername().isBlank()) {
-            user.setUsername(request.getUsername());
+        /*
+         * A username is chosen once, at registration, and never again — not by its
+         * owner and not by an administrator. It is what somebody signs in with and
+         * what the audit trail says did a thing, and those rows carry no second
+         * identifier to fall back on when it moves.
+         *
+         * Refused out loud rather than ignored: an administrator who types a new
+         * username and watches nothing happen will try again.
+         */
+        if (request.getUsername() != null) {
+            throw new IllegalArgumentException(
+                    "Korisničko ime se ne može promeniti nakon kreiranja naloga.");
         }
 
         if (request.getEmailAddress() != null) {
@@ -154,11 +192,24 @@ public class UserService {
             user.setMobilePhone(request.getMobilePhone());
         }
 
+        if (request.getDisplayName() != null) {
+            String displayName = request.getDisplayName().trim();
+            user.setDisplayName(displayName.isEmpty() ? null : displayName);
+        }
+
         if (request.getActive() != null) {
             user.setActive(request.getActive());
         }
 
         if (request.getPassword() != null && !request.getPassword().isBlank()) {
+            // The SAME rules a person gets when changing their own. A reset that
+            // could set "1234" would make the policy advisory, and the account it
+            // weakens is somebody else's.
+            List<String> problems = PasswordPolicy.violations(
+                    request.getPassword(), user.getUsername(), user.getEmailAddress());
+            if (!problems.isEmpty()) {
+                throw new IllegalArgumentException(String.join(" ", problems));
+            }
             user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         }
 
@@ -169,7 +220,11 @@ public class UserService {
             user.setRole(role);
         }
 
-        return UserMapper.toDto(userRepository.save(user));
+        applyEmployeeLink(user, request);
+
+        // Flushed so the DB-generated full_name is re-read before mapping —
+        // otherwise a rename answers with the new parts and the old full name.
+        return UserMapper.toDto(userRepository.saveAndFlush(user));
     }
 
 
@@ -193,4 +248,86 @@ public class UserService {
     }
 
 
+
+    /**
+     * Say which worker an account belongs to.
+     *
+     * <p>Its own operation, not a field on {@link #update}, because a different
+     * set of people may do it: supervisors know who on the floor is who, and are
+     * meant to be able to answer this without also being able to set roles and
+     * passwords. Two entry points, one rule — {@link #applyEmployeeLink} is what
+     * both go through.
+     */
+    @Transactional
+    public UserDto linkEmployee(Long userId, Long employeeId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("Korisnik nije pronađen: " + userId));
+
+        UserUpdateRequest request = new UserUpdateRequest();
+        request.setEmployeeId(employeeId);
+        applyEmployeeLink(user, request);
+
+        return UserMapper.toDto(userRepository.save(user));
+    }
+
+    /** Cut the link. The account stays; it simply stops being a worker's. */
+    @Transactional
+    public UserDto unlinkEmployee(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("Korisnik nije pronađen: " + userId));
+
+        user.setEmployee(null);
+
+        return UserMapper.toDto(userRepository.save(user));
+    }
+
+    /**
+     * Say which worker this account is, or that it is none.
+     *
+     * <p>Kept apart from {@link #update} because it is the only field there that
+     * can be wrong in a way that matters: getting a name or a phone number wrong
+     * is a typo somebody corrects, while getting this wrong shows one person
+     * another person's payslip. So it is checked rather than assigned.
+     *
+     * <p>Three refusals, all of them answered with a sentence instead of a
+     * constraint violation the caller cannot read:
+     * <ul>
+     *   <li>both fields at once — null already means "leave it", so a request
+     *       that says set-it AND clear-it has no single intention to carry out;
+     *   <li>a worker who does not exist;
+     *   <li>a worker who already has a different account. The database enforces
+     *       this too (uq_users_employee_id); this is so the person doing it is
+     *       told whose account is in the way.
+     * </ul>
+     */
+    private void applyEmployeeLink(User user, UserUpdateRequest request) {
+        boolean unlink = Boolean.TRUE.equals(request.getUnlinkEmployee());
+
+        if (unlink && request.getEmployeeId() != null) {
+            throw new IllegalArgumentException(
+                    "Ne mogu istovremeno da povežem nalog sa radnikom i da raskinem vezu.");
+        }
+
+        if (unlink) {
+            user.setEmployee(null);
+            return;
+        }
+
+        if (request.getEmployeeId() == null) {
+            return;
+        }
+
+        Employee employee = employeeRepository.findById(request.getEmployeeId())
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Radnik nije pronađen: " + request.getEmployeeId()));
+
+        userRepository.findByEmployee_Id(employee.getId())
+                .filter(existing -> !existing.getId().equals(user.getId()))
+                .ifPresent(existing -> {
+                    throw new ConflictException("Radnik " + employee.getFullName()
+                            + " je već povezan sa nalogom „" + existing.getUsername() + "”.");
+                });
+
+        user.setEmployee(employee);
+    }
 }

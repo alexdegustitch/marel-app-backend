@@ -33,7 +33,11 @@ public final class RolePermissions {
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
                     // Hands the month over and takes it back; never locks it.
-                    AppPermission.PAYROLL_HANDOVER),
+                    AppPermission.PAYROLL_HANDOVER,
+                    // Says which worker an account belongs to. They know the floor,
+                    // so they are the ones who can answer it — and this grants that
+                    // one field, not the editing of accounts.
+                    AppPermission.USER_EMPLOYEE_LINK),
 
             // Commercial staff drive production orders and who gets told about them.
             "commercial", EnumSet.of(

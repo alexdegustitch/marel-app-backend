@@ -49,6 +49,21 @@ public enum AppPermission {
     /** See every user's registration request, not just one's own. */
     USER_REGISTRATION_READ_ALL,
 
+    /**
+     * Say which worker a sign-in account belongs to, or cut that link.
+     *
+     * <p>Deliberately its OWN capability rather than part of editing a user.
+     * Editing a user sets roles and passwords; this sets one field. Supervisors
+     * are meant to be able to do this — they are the ones who know who on the
+     * floor is who — and must not thereby be able to hand themselves the admin
+     * role or reset somebody's password, which is exactly what widening
+     * {@code PATCH /api/users/{id}} to them would have allowed.
+     *
+     * <p>The consequence of getting it wrong is one person reading another
+     * person's payslip, so the two endpoints it guards do nothing else.
+     */
+    USER_EMPLOYEE_LINK,
+
     /** Claim, complete or decline a manufacturing-time request. */
     MANUFACTURING_TIME_REQUEST_PROCESS,
 

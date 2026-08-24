@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -64,6 +65,28 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/**").hasRole("admin")
                         .requestMatchers("/api/users/me").authenticated()
                         .requestMatchers("/api/users/active-users").permitAll()
+                        /*
+                         * THE DIRECTORY. Everyone signed in may look up a colleague
+                         * — name, role, e-mail, telephone. That is what an internal
+                         * directory is for, and the list carries nothing else: no
+                         * password material, no payroll, no settings.
+                         *
+                         * Listed as GET on the collection ONLY. Everything else
+                         * under /api/users — creating, editing, archiving, reading
+                         * one account by name — falls through to the admin rule
+                         * below, so relaxing the directory relaxes nothing else.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/users").authenticated()
+                        /*
+                         * Linking an account to a worker. Authenticated here and
+                         * decided by @PreAuthorize on the method, which asks for
+                         * USER_EMPLOYEE_LINK — held by admins and supervisors.
+                         * Kept OUT of the admin rule rather than widening that rule
+                         * to supervisors, which would have handed them roles and
+                         * passwords along with it.
+                         */
+                        .requestMatchers(HttpMethod.PUT, "/api/users/*/employee").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/users/*/employee").authenticated()
                         .requestMatchers("/api/users/**").hasRole("admin")
                         .requestMatchers("/api/roles/**").hasRole("admin")
                         .anyRequest().authenticated()
