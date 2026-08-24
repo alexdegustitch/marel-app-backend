@@ -65,6 +65,7 @@ import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemHand
 import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.payroll_field_access.PayrollFieldAccessService;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.MyPayrollSummaryDto;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 
 @Service
@@ -991,6 +992,93 @@ public class PayrollRunItemService {
                 locale,
                 partialView
         );
+    }
+
+    // ─── One's own payslips ─────────────────────────────────────────────────
+
+    /**
+     * The finished payroll months of ONE worker, for that worker.
+     *
+     * <p>Separate from {@link #getRecentByEmployee} rather than a parameter on
+     * it, because the two answer different questions to different people.
+     * {@code getRecentByEmployee} shows a clerk what state an employee's recent
+     * months are in, and masks the figures by role. This one answers "which
+     * payslips are mine" and is reached only through a route that has already
+     * established that the caller IS this employee — so the id must come from
+     * the session, never from the request.
+     *
+     * <p>LOCKED only. See {@code findLockedByEmployeeId}: an unfinished month is
+     * not a document anybody should be handed.
+     */
+    @Transactional(readOnly = true)
+    public List<MyPayrollSummaryDto> lockedPayrollsOf(Long employeeId) {
+        return payrollRunItemRepository.findLockedByEmployeeId(employeeId).stream()
+                .map(MyPayrollSummaryDto::new)
+                .toList();
+    }
+
+    /**
+     * One worker's OWN payslip, complete.
+     *
+     * <p><b>Why this exists at all.</b> {@link PayrollVisibilityPolicy} withholds
+     * amounts from every role but payroll's own, and per-line access narrows it
+     * further. That is right for a supervisor reading somebody else's month — and
+     * wrong for the one document the person being paid is entitled to in full.
+     * The payslip is the paper payroll hands them; it cannot arrive with the
+     * figures removed.
+     *
+     * <p><b>Why it does not simply relax the policy.</b> {@code canSeeAmounts()}
+     * does not only decide what is READ: {@code isRestrictedUser()} guards the
+     * writes as well (see {@link #patch} and {@link #resolvePermissions}). Making
+     * it answer "yes" for one's own payroll would hand the reader edit rights on
+     * it as a side effect. So the exception is made here, on one read path, and
+     * nothing about the policy moves.
+     *
+     * <p>Two conditions, both required, answered with ONE message so that the
+     * refusal cannot be used to learn whether a given month exists:
+     * <ul>
+     *   <li>the payroll is this employee's;
+     *   <li>it is LOCKED — finished, and no longer able to change under them.
+     * </ul>
+     *
+     * <p>The response comes back with every permission false. Not because the
+     * server would accept a write otherwise — a LOCKED item refuses every edit,
+     * from anybody — but because a document about oneself is a document, not a
+     * screen with actions on it, and the client should have nothing to offer.
+     *
+     * @param employeeId the worker resolved from the SESSION. A caller-supplied
+     *                   id here would make this endpoint read any payslip in the
+     *                   factory.
+     */
+    @Transactional
+    public PayrollRunItemDetailResponse ownDetails(Long monthlyReportId, Long employeeId, String requestedLocale) {
+        PayrollRunItem item = payrollRunItemRepository.findByMonthlyReport_Id(monthlyReportId).orElse(null);
+
+        boolean mine = item != null
+                && item.getEmployee() != null
+                && item.getEmployee().getId().equals(employeeId);
+
+        if (!mine || !STATUS_LOCKED.equals(item.getStatus())) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Ovaj obračun nije vaš ili još nije zaključan.");
+        }
+
+        // applyFieldAccess=false — the document as payroll produced it. The
+        // per-line configuration says which lines a ROLE may read on somebody
+        // else's payroll; it has no answer for one's own, and applying it here
+        // would hand the worker a payslip with holes where their own money is.
+        PayrollRunItemDetailResponse full = getDetails(monthlyReportId, requestedLocale, false);
+
+        return new PayrollRunItemDetailResponse(
+                full.getSummary(),
+                full.getCategories(),
+                full.getAdjustments(),
+                new PayrollRunItemPermissionsDto(false, false, false, false, false),
+                full.getResolvedLocale(),
+                // Nothing was withheld, so nothing to warn about. Taken from the
+                // response rather than written as false, so that if the document
+                // ever does come back partial the warning travels with it.
+                full.isPartialView());
     }
 
     /**

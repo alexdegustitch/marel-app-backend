@@ -40,6 +40,24 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
     @Query("SELECT pri FROM PayrollRunItem pri LEFT JOIN FETCH pri.monthlyReport WHERE pri.employee.id = :employeeId ORDER BY pri.period DESC")
     List<PayrollRunItem> findRecentByEmployeeId(@Param("employeeId") Long employeeId, Pageable pageable);
 
+    /**
+     * One worker's FINISHED payroll months, newest first — what that worker is
+     * offered on their own profile.
+     *
+     * <p>LOCKED and nothing else. A DRAFT is still being prepared and an APPROVED
+     * one is waiting for payroll's last word; handing either to the person being
+     * paid would publish a figure that can still move, and they would have a
+     * document that disagrees with the one they are paid from.
+     */
+    @Query("""
+            SELECT pri FROM PayrollRunItem pri
+            LEFT JOIN FETCH pri.monthlyReport
+            WHERE pri.employee.id = :employeeId
+              AND pri.status = 'LOCKED'
+            ORDER BY pri.period DESC
+            """)
+    List<PayrollRunItem> findLockedByEmployeeId(@Param("employeeId") Long employeeId);
+
     /** Returns summary (id, employeeId, employeeName, month, year) for all items in a given year. */
     @Query(value = """
         SELECT
