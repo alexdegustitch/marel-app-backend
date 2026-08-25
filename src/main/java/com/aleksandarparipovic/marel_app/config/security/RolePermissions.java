@@ -32,6 +32,18 @@ public final class RolePermissions {
                     AppPermission.MANUFACTURING_TIME_REQUEST_PROCESS,
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
+                    /*
+                     * Shared mailing lists. Granted so the people who actually send
+                     * production orders can reach a GLOBAL list at all — the query
+                     * behind the picker hides them from anybody without this.
+                     *
+                     * NOTE what it also carries: this one permission gates USING a
+                     * global list and MANAGING one. Holding it means they can edit
+                     * and archive somebody else's global list, and promote their own
+                     * to global. Splitting it into USE and MANAGE was the
+                     * alternative; the owner chose the single grant.
+                     */
+                    AppPermission.MAILING_LIST_GLOBAL_MANAGE,
                     // Hands the month over and takes it back; never locks it.
                     AppPermission.PAYROLL_HANDOVER,
                     // Says which worker an account belongs to. They know the floor,
@@ -41,7 +53,10 @@ public final class RolePermissions {
 
             // Commercial staff drive production orders and who gets told about them.
             "commercial", EnumSet.of(
-                    AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE)
+                    AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
+                    // Same grant, same caveat as above: using and managing a global
+                    // list are one permission here.
+                    AppPermission.MAILING_LIST_GLOBAL_MANAGE)
     );
 
     private RolePermissions() {

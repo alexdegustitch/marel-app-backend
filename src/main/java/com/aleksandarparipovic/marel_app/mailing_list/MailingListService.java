@@ -68,6 +68,95 @@ public class MailingListService {
         return toResponse(list);
     }
 
+    /**
+     * A new list of one's own, starting from somebody else's.
+     *
+     * <p>The reason to copy rather than attach: attaching a list means "these
+     * people, as the list defines them". Copying means "these people, as a
+     * starting point" — the copier then adds and removes without touching a list
+     * other people rely on. A global list edited because one order needed one
+     * extra address is how a shared list stops being trustworthy.
+     *
+     * <p><b>Always PRIVATE, always owned by the copier</b>, whatever the source
+     * was. A copy of a global list landing back in the shared pool would put a
+     * private edit in front of everybody.
+     *
+     * <p>Members are copied as they are: a user member stays a user member, so it
+     * keeps following that person's address, and an external address is carried
+     * across verbatim. Archived members are not copied — they were removed from
+     * the source on purpose. `createdBy` on the new rows is the COPIER, because
+     * they are the one who put these people on this list.
+     *
+     * <p>Reading the source is all the source-side permission needed. A caller who
+     * may see a list may take its addresses; the copy grants them nothing over the
+     * original.
+     */
+    @Transactional
+    public MailingListResponse copy(Long sourceId, MailingListCopyRequest request, Long actorId) {
+        MailingList source = loadOrThrow(sourceId);
+        requireCanRead(source, actorId);
+
+        User owner = loadUser(actorId);
+        String name = resolveCopyName(request, source, actorId);
+
+        MailingList copy = mailingListRepository.save(
+                MailingList.builder()
+                        .name(name)
+                        .description(source.getDescription())
+                        .ownerUser(owner)
+                        .visibility(MailingListVisibility.PRIVATE)
+                        .build()
+        );
+
+        for (MailingListMember member : memberRepository.findActiveByMailingListId(sourceId)) {
+            memberRepository.save(MailingListMember.builder()
+                    .mailingList(copy)
+                    .createdBy(owner)
+                    .user(member.getUser())
+                    .externalEmail(member.getExternalEmail())
+                    .displayName(member.getDisplayName())
+                    .build());
+        }
+
+        return toResponse(copy);
+    }
+
+    /**
+     * The copy's name, and a free one.
+     *
+     * <p>Names are unique per owner among active lists, so "Kupci (kopija)" fails
+     * the second time somebody copies the same list. Rather than refusing — which
+     * reads as the feature being broken when the person did nothing wrong — the
+     * suffix counts up. A name the caller typed themselves is NOT adjusted: that
+     * one they can see and correct.
+     */
+    private String resolveCopyName(MailingListCopyRequest request, MailingList source, Long ownerId) {
+        String requested = request == null ? null : normalize(request.getName());
+        if (requested != null) {
+            if (mailingListRepository
+                    .existsByOwnerUser_IdAndNameIgnoreCaseAndArchivedAtIsNull(ownerId, requested)) {
+                throw new ConflictException("Već imate aktivnu listu sa ovim nazivom.");
+            }
+            return requested;
+        }
+
+        String base = truncateForCopy(source.getName());
+        String candidate = base + " (kopija)";
+        int n = 2;
+        while (mailingListRepository
+                .existsByOwnerUser_IdAndNameIgnoreCaseAndArchivedAtIsNull(ownerId, candidate)) {
+            candidate = base + " (kopija " + n + ")";
+            n++;
+        }
+        return candidate;
+    }
+
+    /** The column holds 150; the suffix has to fit inside it, not past it. */
+    private static String truncateForCopy(String name) {
+        int room = 150 - " (kopija 99)".length();
+        return name.length() <= room ? name : name.substring(0, room).trim();
+    }
+
     @Transactional
     public MailingListResponse update(Long listId, MailingListUpdateRequest request, Long actorId) {
         MailingList list = loadOrThrow(listId);

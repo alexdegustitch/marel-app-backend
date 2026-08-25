@@ -27,8 +27,11 @@ import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.User;
+import com.aleksandarparipovic.marel_app.config.security.AppPermission;
+import com.aleksandarparipovic.marel_app.config.security.PermissionService;
 import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.customer.CustomerRepository;
+import com.aleksandarparipovic.marel_app.production_order_recipient.ProductionOrderRecipientService;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +44,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import org.springframework.security.access.AccessDeniedException;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -68,6 +73,8 @@ public class ProductionOrderService {
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
     private final CustomerRepository customerRepository;
+    private final ProductionOrderRecipientService recipientService;
+    private final PermissionService permissionService;
     private final OutboxEventPublisher outboxEventPublisher;
 
     @Transactional
@@ -91,6 +98,11 @@ public class ProductionOrderService {
         order.setUser(user);
         order.setCustomer(resolveCustomer(req.customerId()));
         order = productionOrderRepository.save(order);
+
+        // AFTER the save, because a snapshot needs the order's id — but still
+        // inside this transaction, so an order never survives with a list
+        // attached and no recipients copied, nor the other way round.
+        attachRequestedMailingLists(order.getId(), req.mailingListIds(), userId);
 
         // deadlines
         List<ProductionOrderDeadlineDto> deadlineDtos = new ArrayList<>();
@@ -543,5 +555,39 @@ public class ProductionOrderService {
         return customerRepository.findById(customerId)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Kupac nije pronađen (id=" + customerId + ")"));
+    }
+
+    /**
+     * The mailing lists chosen while the order was being written.
+     *
+     * <p>Each one goes through the ordinary attach, so every rule that guards it
+     * guards this too: read access to the list, the refusal of archived lists,
+     * and the recipient de-duplication that stops one person on three lists
+     * receiving three mails.
+     *
+     * <p><b>The permission is checked HERE and not inferred.</b> Attaching is
+     * gated by PRODUCTION_ORDER_RECIPIENT_MANAGE on the recipients controller,
+     * and this path does not go through that controller. Today every role that
+     * may create an order also holds it, so the check never fires — which is
+     * exactly why it is written down: the day somebody adds a role that may
+     * create orders and nothing else, creating one must not quietly become a way
+     * to mail whoever is on a list.
+     */
+    private void attachRequestedMailingLists(Long orderId, List<Long> mailingListIds, Long actorId) {
+        if (mailingListIds == null || mailingListIds.isEmpty()) {
+            return;
+        }
+
+        if (!permissionService.hasPermission(AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE)) {
+            throw new AccessDeniedException(
+                    "Nemate ovlašćenje da određujete kome se nalog šalje.");
+        }
+
+        // Distinct, because the same list twice is a conflict the attach would
+        // refuse — and refusing the whole order over a repeated pick in the form
+        // would be punishing somebody for a double click.
+        for (Long listId : mailingListIds.stream().filter(Objects::nonNull).distinct().toList()) {
+            recipientService.attachMailingList(orderId, listId, actorId);
+        }
     }
 }
