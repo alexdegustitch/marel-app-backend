@@ -12,6 +12,11 @@ import java.util.List;
 // immutable once created.
 public record ProductionOrderUpdateRequest(
         @NotBlank String name,
+        /**
+         * The whole form is sent on every save, as with every other field here,
+         * so null CLEARS the customer rather than leaving it alone.
+         */
+        Long customerId,
         String note,
         Boolean testingRequired,
         LocalDate creationDate,

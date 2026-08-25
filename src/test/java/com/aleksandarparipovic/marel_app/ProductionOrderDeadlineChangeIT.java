@@ -40,6 +40,7 @@ class ProductionOrderDeadlineChangeIT extends AbstractIntegrationTest {
         return productionOrderService.create(new ProductionOrderCreateRequest(
                 "IT-DEADLINE-" + CODE.incrementAndGet(),
                 "Test nalog",
+                null,               // customerId — this suite is about deadlines
                 "prva napomena",
                 false, LocalDate.of(2026, 1, 5), LocalDate.of(2026, 1, 5), null,
                 false, false, false,
@@ -49,7 +50,7 @@ class ProductionOrderDeadlineChangeIT extends AbstractIntegrationTest {
 
     private ProductionOrderUpdateRequest update(String note, LocalDate deadline, Integer quantity) {
         return new ProductionOrderUpdateRequest(
-                "Test nalog", note,
+                "Test nalog", null, note,
                 false, LocalDate.of(2026, 1, 5), LocalDate.of(2026, 1, 5), null,
                 false, false, false,
                 List.of(new ProductionOrderUpdateRequest.DeadlineRequest(null, deadline, quantity)),
