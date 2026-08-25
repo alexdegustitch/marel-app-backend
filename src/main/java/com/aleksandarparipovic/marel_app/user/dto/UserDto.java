@@ -2,8 +2,10 @@ package com.aleksandarparipovic.marel_app.user.dto;
 
 import lombok.Builder;
 import lombok.Getter;
+import lombok.Setter;
 
 @Getter
+@Setter
 @Builder
 public class UserDto {
 
@@ -44,4 +46,28 @@ public class UserDto {
 
     /** For the screen that sets the link, so it can show who was chosen. */
     private String employeeName;
+
+    /**
+     * The picture this person chose for themselves, or null for their initials.
+     *
+     * <p>Read from their own ui_settings. It is theirs to choose and chosen to
+     * be seen, so showing it to a colleague reveals nothing they did not decide
+     * to show — and a directory of faces is read far faster than one of names.
+     *
+     * <p>Only populated where a screen asked for it; the ordinary single-user
+     * responses leave it null rather than reading preferences nobody wanted.
+     */
+    private String avatarKey;
+
+    /**
+     * Whether this person is at the application right now.
+     *
+     * <p>DERIVED, never stored — a live session with a heartbeat inside the
+     * threshold. There is deliberately no users.is_online: a client that crashes
+     * never clears a flag, and the flag becomes a permanent lie about somebody
+     * who went home.
+     *
+     * <p>Null where a screen did not ask, which is not the same as false.
+     */
+    private Boolean online;
 }
