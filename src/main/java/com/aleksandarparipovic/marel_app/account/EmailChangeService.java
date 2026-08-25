@@ -69,6 +69,7 @@ public class EmailChangeService {
     private final PasswordEncoder passwordEncoder;
     private final ApplicationEventPublisher events;
     private final AccountSessionRevoker sessionRevoker;
+    private final EmailChangeAttempts attempts;
 
     @Value("${app.account.email-change-minutes:30}")
     private int validMinutes;
@@ -165,13 +166,25 @@ public class EmailChangeService {
         }
 
         if (code == null || !passwordEncoder.matches(code.trim(), request.getCodeHash())) {
-            request.setAttempts(request.getAttempts() + 1);
-            requestRepository.save(request);
+            /*
+             * Counted in its OWN transaction — see EmailChangeAttempts. Doing it
+             * here would write a row this method is about to roll back by
+             * throwing, which is exactly what used to happen: the counter never
+             * moved and the limit never engaged.
+             *
+             * `request` is stale from here on and must not be written back.
+             */
+            int left = attempts.recordFailure(request.getId());
 
-            int left = Math.max(0, MAX_ATTEMPTS - request.getAttempts());
+            /*
+             * The message does NOT carry the number. The screen keeps a live count
+             * beside the code box and refreshes it after every refusal; a second
+             * number in the message is one that disagrees the moment either side
+             * is read from a different moment in time.
+             */
             throw new IllegalArgumentException(left == 0
-                    ? "Kod nije tačan. Pokrenite promenu ponovo."
-                    : "Kod nije tačan. Preostalo pokušaja: " + left + ".");
+                    ? "Kod nije tačan i pokušaji su potrošeni. Pokrenite promenu ponovo."
+                    : "Kod nije tačan. Proverite poruku i pokušajte ponovo.");
         }
 
         // Checked AGAIN, not only at the start: minutes or days may have passed,

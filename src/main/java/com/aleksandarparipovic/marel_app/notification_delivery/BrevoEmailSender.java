@@ -4,7 +4,7 @@ import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
@@ -31,7 +31,15 @@ import java.nio.charset.StandardCharsets;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "spring.mail.username")
+/*
+ * Set AND non-empty. `@ConditionalOnProperty` asks only whether the property is
+ * PRESENT, and `application.properties` gives it an empty default — so this bean
+ * registered on every machine without credentials, which is the exact opposite of
+ * what the block above promises. Nothing revealed it until an integration test
+ * committed a transaction that fires an after-commit mail: the suite then opened
+ * SMTP connections to Brevo and posted to invented addresses.
+ */
+@ConditionalOnExpression("!'${spring.mail.username:}'.trim().isEmpty()")
 public class BrevoEmailSender implements EmailSender {
 
     private final JavaMailSender mailSender;
