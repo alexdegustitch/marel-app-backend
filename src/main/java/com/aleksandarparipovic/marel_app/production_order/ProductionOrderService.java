@@ -27,6 +27,8 @@ import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.User;
+import com.aleksandarparipovic.marel_app.customer.Customer;
+import com.aleksandarparipovic.marel_app.customer.CustomerRepository;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -65,6 +67,7 @@ public class ProductionOrderService {
     private final CurrentUserService currentUserService;
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
+    private final CustomerRepository customerRepository;
     private final OutboxEventPublisher outboxEventPublisher;
 
     @Transactional
@@ -86,6 +89,7 @@ public class ProductionOrderService {
         order.setStatus(ProductionOrderStatus.CREATED);
         order.setIsActive(true);
         order.setUser(user);
+        order.setCustomer(resolveCustomer(req.customerId()));
         order = productionOrderRepository.save(order);
 
         // deadlines
@@ -221,6 +225,9 @@ public class ProductionOrderService {
         order.setIsHighPriority(Boolean.TRUE.equals(req.isHighPriority()));
         order.setIsAnnounced(Boolean.TRUE.equals(req.isAnnounced()));
         order.setHasSuccessiveDeliveries(Boolean.TRUE.equals(req.hasSuccessiveDeliveries()));
+        // Null clears it, as with every other field on this form: the client
+        // sends the whole order back on every save.
+        order.setCustomer(resolveCustomer(req.customerId()));
         order = productionOrderRepository.save(order);
 
         // Read BEFORE the replace below. update() deactivates every deadline and
@@ -516,5 +523,25 @@ public class ProductionOrderService {
                 .toList();
 
         return productionOrderMapper.toDetailDto(order, deadlines, lineItems);
+    }
+
+    /**
+     * The customer an order says it is for.
+     *
+     * <p>Null in means null out — an order for nobody outside is the ordinary
+     * case, not a missing value. A customer id that names nothing is a different
+     * matter and is refused: silently booking the order against no customer
+     * would leave somebody believing they had recorded one.
+     *
+     * <p>A DEACTIVATED customer is accepted here. The pickers only offer active
+     * ones, but an order already booked against a customer who has since been
+     * deactivated has to survive its next edit — refusing would make that order
+     * unsaveable until somebody guessed why.
+     */
+    private Customer resolveCustomer(Long customerId) {
+        if (customerId == null) return null;
+        return customerRepository.findById(customerId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Kupac nije pronađen (id=" + customerId + ")"));
     }
 }

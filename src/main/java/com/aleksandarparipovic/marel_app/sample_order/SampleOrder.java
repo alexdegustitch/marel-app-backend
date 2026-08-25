@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.sample_order;
 
+import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.user.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -23,6 +24,18 @@ public class SampleOrder {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
+
+    /**
+     * The customer these samples are for, when they are for one.
+     *
+     * <p>Mapped, and for the moment only mapped: sample orders have no service
+     * or controller in this application, so nothing can set it yet. The column
+     * and its foreign key exist so that the day that side gets a write path,
+     * the link is already there rather than being a second migration.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private Customer customer;
 
     @Column(name = "name", nullable = false)
     private String name;

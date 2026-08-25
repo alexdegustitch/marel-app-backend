@@ -88,6 +88,8 @@ public class ProductionOrderMapper {
                 order.getIsHighPriority(),
                 order.getIsAnnounced(),
                 order.getHasSuccessiveDeliveries(),
+                order.getCustomer() != null ? order.getCustomer().getId() : null,
+                order.getCustomer() != null ? order.getCustomer().getName() : null,
                 effectiveDeadlineDate,
                 effectiveDeadlineFromLineItem,
                 deadlines
@@ -113,6 +115,8 @@ public class ProductionOrderMapper {
                 order.getIsAnnounced(),
                 order.getHasSuccessiveDeliveries(),
                 order.getUser() != null ? order.getUser().getFullName() : null,
+                order.getCustomer() != null ? order.getCustomer().getId() : null,
+                order.getCustomer() != null ? order.getCustomer().getName() : null,
                 deadlines,
                 lineItems
         );

@@ -11,6 +11,8 @@ import java.util.List;
 public record ProductionOrderCreateRequest(
         @NotBlank String code,
         @NotBlank String name,
+        /** Optional: null means the order is internal, not for an outside customer. */
+        Long customerId,
         String note,
         Boolean testingRequired,
         LocalDate creationDate,

@@ -1,4 +1,5 @@
 package com.aleksandarparipovic.marel_app.production_order;
+import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.user.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -23,6 +24,17 @@ public class ProductionOrder {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
+
+    /**
+     * The customer this order is for, when it is for one.
+     *
+     * <p>Null is a permanent, correct answer — internal trials, tooling and
+     * stock runs are for nobody outside — so nothing here treats it as a gap
+     * waiting to be filled.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "customer_id")
+    private Customer customer;
 
     @Column(name = "code", nullable = false)
     private String code;

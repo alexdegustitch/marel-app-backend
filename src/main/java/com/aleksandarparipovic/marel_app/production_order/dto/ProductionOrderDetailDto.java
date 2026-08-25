@@ -19,6 +19,9 @@ public record ProductionOrderDetailDto(
         Boolean isAnnounced,
         Boolean hasSuccessiveDeliveries,
         String userFullName,
+        /** Null when the order is internal. */
+        Long customerId,
+        String customerName,
         List<ProductionOrderDeadlineDto> deadlines,
         List<ProductionOrderLineItemDto> lineItems
 ) {

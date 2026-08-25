@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.production_order;
 import com.aleksandarparipovic.marel_app.search.EntityFieldMapper;
 import com.aleksandarparipovic.marel_app.search.JoinManager;
 import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Root;
 
@@ -31,7 +32,21 @@ public final class ProductionOrderFieldMapper implements EntityFieldMapper<Produ
                     Map.entry("isAnnounced", (root, cb, jm) -> root.get("isAnnounced")),
                     Map.entry("hasSuccessiveDeliveries", (root, cb, jm) -> root.get("hasSuccessiveDeliveries")),
                     Map.entry("isActive", (root, cb, jm) -> root.get("isActive")),
-                    Map.entry("createdAt", (root, cb, jm) -> root.get("createdAt"))
+                    Map.entry("createdAt", (root, cb, jm) -> root.get("createdAt")),
+                    /*
+                     * The customer id needs no join — it IS the foreign key column
+                     * on this table, and reaching it through one would cost a join
+                     * to answer a question the row already answers.
+                     */
+                    Map.entry("customerId", (root, cb, jm) -> root.get("customer").get("id")),
+                    /*
+                     * LEFT, and it matters. Most orders are for nobody outside, and
+                     * an inner join would drop every one of them from the list the
+                     * moment somebody sorted or filtered by customer — as a silent
+                     * shortening, not an error.
+                     */
+                    Map.entry("customerName", (root, cb, jm) -> jm.join("customer", JoinType.LEFT).get("name")),
+                    Map.entry("customerCode", (root, cb, jm) -> jm.join("customer", JoinType.LEFT).get("code"))
             );
 
     @Override

@@ -16,6 +16,9 @@ public record ProductionOrderCardRow(
         Boolean isHighPriority,
         Boolean isAnnounced,
         Boolean hasSuccessiveDeliveries,
+        /** Null when the order is internal. */
+        Long customerId,
+        String customerName,
         LocalDate effectiveDeadlineDate,
         Boolean effectiveDeadlineFromLineItem,
         List<ProductionOrderDeadlineDto> deadlines
