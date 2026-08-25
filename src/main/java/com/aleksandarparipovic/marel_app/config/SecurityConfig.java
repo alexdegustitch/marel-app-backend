@@ -89,6 +89,19 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/api/users/*/employee").authenticated()
                         .requestMatchers("/api/users/**").hasRole("admin")
                         .requestMatchers("/api/roles/**").hasRole("admin")
+                        /*
+                         * CUSTOMERS. Everyone but the supervisor, whose work is
+                         * the shop floor rather than the commercial relationship.
+                         *
+                         * Listed here rather than left to `anyRequest()` because
+                         * the rail merely HIDES the page from a supervisor, and a
+                         * hidden link is not a closed door — the address can be
+                         * typed. Nothing else in the application needs a
+                         * supervisor to read this: an order carries its customer's
+                         * name in its own response.
+                         */
+                        .requestMatchers("/api/customers/**")
+                            .hasAnyRole("admin", "developer", "commercial")
                         .anyRequest().authenticated()
                 )
                 /*

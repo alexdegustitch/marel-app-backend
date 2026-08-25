@@ -45,7 +45,8 @@ class ProductionOrderDeadlineChangeIT extends AbstractIntegrationTest {
                 false, LocalDate.of(2026, 1, 5), LocalDate.of(2026, 1, 5), null,
                 false, false, false,
                 List.of(new ProductionOrderCreateRequest.DeadlineRequest(null, deadline, 10)),
-                List.of()));
+                List.of(),
+                null));             // mailingListIds — this suite is about deadlines
     }
 
     private ProductionOrderUpdateRequest update(String note, LocalDate deadline, Integer quantity) {

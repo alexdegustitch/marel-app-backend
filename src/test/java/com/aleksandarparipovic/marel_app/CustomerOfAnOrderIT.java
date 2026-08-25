@@ -69,7 +69,8 @@ class CustomerOfAnOrderIT extends AbstractIntegrationTest {
         return new ProductionOrderCreateRequest(
                 "NAL-" + n, "Nalog " + n, customerId,
                 null, false, null, null, null, false, false, false,
-                List.of(), List.of());
+                List.of(), List.of(),
+                null);              // mailingListIds — this suite is about the customer
     }
 
     // ── The link ────────────────────────────────────────────────────────────

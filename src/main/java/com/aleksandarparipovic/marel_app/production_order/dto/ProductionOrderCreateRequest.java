@@ -22,7 +22,14 @@ public record ProductionOrderCreateRequest(
         Boolean isAnnounced,
         Boolean hasSuccessiveDeliveries,
         List<@Valid DeadlineRequest> deadlines,
-        List<@Valid LineItemRequest> lineItems
+        List<@Valid LineItemRequest> lineItems,
+        /**
+         * Mailing lists to attach as the order is created, snapshotting their
+         * members into its recipients in the SAME transaction. Empty or null
+         * means the order starts with nobody to tell; lists can still be
+         * attached afterwards from the order itself.
+         */
+        List<Long> mailingListIds
 ) {
     public record DeadlineRequest(
             LocalDate deadlineDateFrom,

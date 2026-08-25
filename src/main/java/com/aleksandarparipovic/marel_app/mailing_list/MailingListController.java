@@ -54,6 +54,21 @@ public class MailingListController {
         return ResponseEntity.ok(service.create(request, currentUserService.getCurrentUserId()));
     }
 
+    /**
+     * Copy a list into one of the caller's own.
+     *
+     * <p>Needs only READ on the source, which is the whole point: somebody who may
+     * see a global list may start from it without being able to change it.
+     */
+    @PostMapping("/{id}/copy")
+    public ResponseEntity<MailingListResponse> copy(
+            @PathVariable Long id,
+            @Valid @RequestBody(required = false) MailingListCopyRequest request
+    ) {
+        return ResponseEntity.ok(
+                service.copy(id, request, currentUserService.getCurrentUserId()));
+    }
+
     @PatchMapping("/{id}")
     public ResponseEntity<MailingListResponse> update(
             @PathVariable Long id,
