@@ -18,6 +18,11 @@ public record ProductionOrderDetailDto(
         Boolean isHighPriority,
         Boolean isAnnounced,
         Boolean hasSuccessiveDeliveries,
+        /**
+         * The account responsible, so the name can be a link to their page.
+         * Null wherever userFullName is: an order may have no author recorded.
+         */
+        Long userId,
         String userFullName,
         /** Null when the order is internal. */
         Long customerId,
