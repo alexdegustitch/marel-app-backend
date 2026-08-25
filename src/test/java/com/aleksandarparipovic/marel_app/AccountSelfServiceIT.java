@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.event.EventListener;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -298,8 +299,22 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
         assertThat(mail.notices.getFirst().newAddress()).isEqualTo(newEmail);
     }
 
+    /*
+     * NOT_SUPPORTED, and that is the whole point of this test.
+     *
+     * Refusing a code throws, and throwing out of `confirm` rolls its transaction
+     * back — counter included. Run inside the suite's usual outer transaction,
+     * the increment simply stayed in the shared persistence context and this test
+     * passed while production discarded it on every attempt: the screen read five
+     * left however many were spent, and the limit protecting a six-digit code sent
+     * by mail never engaged.
+     *
+     * Without a transaction around it the test sees exactly what a caller over
+     * HTTP sees. It has to clear up after itself, since nothing rolls back.
+     */
     @Test
-    @DisplayName("a wrong code changes nothing and is counted")
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("a wrong code changes nothing, and the count survives the refusal")
     void wrongCodeIsCounted() {
         User user = anAccount();
         String oldEmail = user.getEmailAddress();
@@ -311,6 +326,33 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
         assertThat(userRepository.findById(user.getId()).orElseThrow().getEmailAddress())
                 .isEqualTo(oldEmail);
         assertThat(emailChangeService.pending(user.getId()).orElseThrow().attemptsLeft()).isEqualTo(4);
+
+        // And again, so a counter that moves once but not twice is caught too.
+        assertThatThrownBy(() -> emailChangeService.confirm(user.getId(), "000001", "session-1"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(emailChangeService.pending(user.getId()).orElseThrow().attemptsLeft()).isEqualTo(3);
+
+        emailChangeService.cancel(user.getId());
+    }
+
+    /*
+     * The refusal states no number. The screen keeps a live count beside the code
+     * box; a second number inside the message is one that disagrees with it the
+     * moment either is read from a different moment in time — which is precisely
+     * what a reader reported seeing.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("the refusal does not carry its own count")
+    void refusalCarriesNoCount() {
+        User user = anAccount();
+        emailChangeService.start(user.getId(), "nova" + user.getId() + "@marel.rs", PASSWORD);
+
+        assertThatThrownBy(() -> emailChangeService.confirm(user.getId(), "000000", "s"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining("Preostalo pokušaja");
+
+        emailChangeService.cancel(user.getId());
     }
 
     /*
@@ -318,6 +360,7 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
      * what makes it one guess at a time instead of a million.
      */
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("guessing runs out, and the right code no longer helps")
     void guessingRunsOut() {
         User user = anAccount();
@@ -330,9 +373,13 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
+        assertThat(emailChangeService.pending(user.getId()).orElseThrow().attemptsLeft()).isZero();
+
         assertThatThrownBy(() -> emailChangeService.confirm(user.getId(), realCode, "s"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Previše pogrešnih pokušaja");
+
+        emailChangeService.cancel(user.getId());
     }
 
     @Test
