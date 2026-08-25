@@ -114,6 +114,7 @@ public class ProductionOrderMapper {
                 order.getIsHighPriority(),
                 order.getIsAnnounced(),
                 order.getHasSuccessiveDeliveries(),
+                order.getUser() != null ? order.getUser().getId() : null,
                 order.getUser() != null ? order.getUser().getFullName() : null,
                 order.getCustomer() != null ? order.getCustomer().getId() : null,
                 order.getCustomer() != null ? order.getCustomer().getName() : null,

@@ -8,6 +8,9 @@ import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.role.Role;
 import com.aleksandarparipovic.marel_app.role.RoleRepository;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
+import com.aleksandarparipovic.marel_app.user_preferences.UserPreferences;
+import com.aleksandarparipovic.marel_app.user_preferences.UserPreferencesRepository;
+import com.aleksandarparipovic.marel_app.user_session.UserSessionService;
 import com.aleksandarparipovic.marel_app.user.dto.UserOptionDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserUpdateRequest;
 import jakarta.persistence.EntityNotFoundException;
@@ -24,7 +27,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +41,8 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final UserPreferencesRepository userPreferencesRepository;
+    private final UserSessionService userSessionService;
     private final EmployeeRepository employeeRepository;
     private final PasswordEncoder passwordEncoder;
 
@@ -136,8 +147,44 @@ public class UserService {
             spec = spec.and(UserSpecifications.isActive(active));
         }
 
-        return userRepository.findAll(spec, pageable)
-                .map(UserMapper::toDto);
+        Page<UserDto> found = userRepository.findAll(spec, pageable).map(UserMapper::toDto);
+        return enrichForDirectory(found);
+    }
+
+    /**
+     * The two things the directory shows that are not on the user row: the
+     * picture they chose, and whether they are here right now.
+     *
+     * <p>Both are looked up ONCE for the whole page. Asking per row is how a
+     * twenty-five-row list becomes fifty queries, and presence in particular has
+     * a batch query written for exactly this.
+     *
+     * <p>Only the paged directory calls this. Every other response that carries a
+     * UserDto leaves both null, because nothing else displays them and reading
+     * somebody's preferences to throw the answer away is work for nobody.
+     */
+    private Page<UserDto> enrichForDirectory(Page<UserDto> page) {
+        List<Long> ids = page.getContent().stream().map(UserDto::getId).toList();
+        if (ids.isEmpty()) {
+            return page;
+        }
+
+        Set<Long> online = new HashSet<>(userSessionService.onlineUserIds(ids));
+
+        Map<Long, String> avatars = new HashMap<>();
+        for (UserPreferences preferences : userPreferencesRepository.findAllById(ids)) {
+            JsonNode settings = preferences.getUiSettings();
+            JsonNode avatar = settings == null ? null : settings.get("avatarKey");
+            if (avatar != null && avatar.isTextual() && !avatar.asText().isBlank()) {
+                avatars.put(preferences.getUserId(), avatar.asText());
+            }
+        }
+
+        return page.map(user -> {
+            user.setAvatarKey(avatars.get(user.getId()));
+            user.setOnline(online.contains(user.getId()));
+            return user;
+        });
     }
 
     @Transactional(readOnly = true)
