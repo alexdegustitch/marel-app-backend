@@ -229,6 +229,21 @@ public class SecurityConfig {
                          * would silently take it away from supervisors.
                          */
                         .requestMatchers("/api/production-orders/*/recipients/**").authenticated()
+                        /*
+                         * `search-all` is a READ done with POST — it carries the
+                         * paging and filter payload, and it is the ONLY call the
+                         * order list screen makes. Listing it by name is not a
+                         * nicety: without this line the whole screen answered 403
+                         * to the supervisor, who is precisely the person the
+                         * VIEW/MANAGE split was introduced for.
+                         *
+                         * The same shape exists on products and operations below,
+                         * and was handled there first. This one was missed, which
+                         * is why it is spelled out rather than left to be inferred
+                         * from the pattern.
+                         */
+                        .requestMatchers(HttpMethod.POST, "/api/production-orders/search-all")
+                            .access(permission(AppPermission.PRODUCTION_ORDER_VIEW))
                         .requestMatchers(HttpMethod.GET, "/api/production-orders/**")
                             .access(permission(AppPermission.PRODUCTION_ORDER_VIEW))
                         .requestMatchers("/api/production-orders/**")
