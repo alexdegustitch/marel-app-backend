@@ -1,6 +1,8 @@
 package com.aleksandarparipovic.marel_app.config;
 
 import com.aleksandarparipovic.marel_app.auth.JwtAuthenticationFilter;
+import com.aleksandarparipovic.marel_app.config.security.AppPermission;
+import com.aleksandarparipovic.marel_app.config.security.RolePermissions;
 import com.aleksandarparipovic.marel_app.auth.ratelimit.AuthRateLimitFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,7 +13,12 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.authorization.AuthorizationDecision;
+import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,6 +28,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
+import java.util.Locale;
 
 @Configuration
 @RequiredArgsConstructor
@@ -100,8 +108,157 @@ public class SecurityConfig {
                          * supervisor to read this: an order carries its customer's
                          * name in its own response.
                          */
-                        .requestMatchers("/api/customers/**")
-                            .hasAnyRole("admin", "developer", "commercial")
+                        .requestMatchers("/api/customers/**").access(permission(AppPermission.CUSTOMER_VIEW))
+
+                        /*
+                         * WHAT FOLLOWS MIRRORS THE SCREENS.
+                         *
+                         * Each block below is one area of the application, named
+                         * by the capability its screens need. The client hides a
+                         * destination somebody may not open; these rules are what
+                         * actually refuse the request when the address is typed
+                         * anyway, and they are the half that matters.
+                         *
+                         * Ordering is significant: Spring takes the FIRST matching
+                         * rule, so a narrower path or a single method is always
+                         * listed above the rule that would otherwise swallow it.
+                         */
+
+                        // Analytics. Wider than the records behind them — the
+                        // production coordinator plans against these figures.
+                        .requestMatchers("/api/analytics/**").access(permission(AppPermission.ANALYTICS_VIEW))
+
+                        /*
+                         * THE WORK RECORDS — cards, months, shifts, hours, logs.
+                         *
+                         * `/api/me/**` is deliberately NOT in this list. A worker
+                         * reading their own payslips goes through there, and that
+                         * must keep working for somebody who may not open anybody
+                         * else's card.
+                         */
+                        .requestMatchers(
+                                "/api/daily-reports/**",
+                                "/api/daily-report-categories/**",
+                                "/api/monthly-reports/**",
+                                "/api/monthly-report-categories/**",
+                                "/api/employee-records/**",
+                                "/api/work-logs/**",
+                                "/api/work-shifts/**",
+                                "/api/shifts/**",
+                                "/api/reports/summary/**",
+                                "/api/work-code-categories/**",
+                                "/api/work-code-category-mappings/**")
+                            .access(permission(AppPermission.WORK_RECORD_VIEW))
+
+                        /*
+                         * PAYROLL. Opening the screens only — which lines of a
+                         * payroll each role may READ is still decided per field by
+                         * payroll_field_access underneath, and nothing here widens
+                         * that.
+                         *
+                         * The heavier payroll steps keep their own method-level
+                         * checks (PAYROLL_LOCK, PAYROLL_MAINTENANCE_RECALCULATE,
+                         * PAYROLL_ACCESS_CONFIGURE). Both have to pass, so this
+                         * rule can only narrow, never widen.
+                         */
+                        .requestMatchers(
+                                "/api/payroll-runs/**",
+                                "/api/payroll-run-items/**",
+                                "/api/payroll-run-item-categories/**",
+                                "/api/payroll-run-item-updates/**",
+                                "/api/payroll-adjustments/**",
+                                "/api/payroll-adjustment-categories/**",
+                                "/api/payroll-maintenance/**")
+                            .access(permission(AppPermission.PAYROLL_VIEW))
+
+                        /*
+                         * THE WORKERS, and everything hanging off one — employment
+                         * periods, categories, bonuses, compensation, payroll
+                         * values. A worker's page is not the user directory.
+                         */
+                        .requestMatchers(
+                                "/api/employees/**",
+                                "/api/compensation-schemes/**")
+                            .access(permission(AppPermission.EMPLOYEE_VIEW))
+
+                        /*
+                         * MANUFACTURING TIMES — writing only.
+                         *
+                         * Reading one back stays open to everybody signed in, and
+                         * that is deliberate: the person who ASKED for a
+                         * manufacturing time downloads its report from the requests
+                         * screen. `/my` returns only the caller's own records and
+                         * `/from-requests` is shared by design, so neither leaks
+                         * anything a requester may not already see.
+                         */
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/product-manufacturing-times/**",
+                                "/api/product-manufacturing-time-operations/**")
+                            .authenticated()
+                        .requestMatchers(
+                                "/api/product-manufacturing-times/**",
+                                "/api/product-manufacturing-time-operations/**")
+                            .access(permission(AppPermission.MANUFACTURING_TIME_MANAGE))
+
+                        // The monthly bonus rules and the application parameters.
+                        .requestMatchers(
+                                "/api/bonus-categories/**",
+                                "/api/bonus-eligibility-rules/**",
+                                "/api/bonus-min-hours-rules/**")
+                            .access(permission(AppPermission.BONUS_RULE_MANAGE))
+                        .requestMatchers("/api/app-settings/**")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+
+                        /*
+                         * THE WORK CALENDAR. Everybody signed in may see which days
+                         * the factory works; entering and changing a period is the
+                         * restricted half.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/work-calendar/**").authenticated()
+                        .requestMatchers("/api/work-calendar/**")
+                            .access(permission(AppPermission.WORK_CALENDAR_MANAGE))
+
+                        /*
+                         * PRODUCTION ORDERS — read and write are two permissions.
+                         *
+                         * The supervisor reads every order and alters none. The
+                         * recipients sub-resource is listed FIRST and left to its
+                         * own @PreAuthorize: managing who gets told about an order
+                         * is a grant the owner made to supervisors and commercial
+                         * staff separately, and folding it into the write rule
+                         * would silently take it away from supervisors.
+                         */
+                        .requestMatchers("/api/production-orders/*/recipients/**").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/production-orders/**")
+                            .access(permission(AppPermission.PRODUCTION_ORDER_VIEW))
+                        .requestMatchers("/api/production-orders/**")
+                            .access(permission(AppPermission.PRODUCTION_ORDER_MANAGE))
+
+                        /*
+                         * THE CATALOGUE — products, operations and the norms on
+                         * them.
+                         *
+                         * Reading is open to everybody signed in: most of the
+                         * company has to be able to look a product or an operation
+                         * up. Writing is the shop floor's and the administration's,
+                         * because an operation's norm is what a person is paid
+                         * against.
+                         *
+                         * `search-all` is listed by name because it is a READ done
+                         * with POST — it carries the paging and filter payload for
+                         * the list screens. Without these two lines the catalogue
+                         * would have vanished for most of the company, which is the
+                         * opposite of the rule.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/products/**", "/api/operations/**")
+                            .authenticated()
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/products/search-all",
+                                "/api/operations/search-all")
+                            .authenticated()
+                        .requestMatchers("/api/products/**").access(permission(AppPermission.PRODUCT_MANAGE))
+                        .requestMatchers("/api/operations/**").access(permission(AppPermission.OPERATION_MANAGE))
+
                         .anyRequest().authenticated()
                 )
                 /*
@@ -131,6 +288,31 @@ public class SecurityConfig {
                 .addFilterBefore(authRateLimitFilter, JwtAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * A URL rule that asks {@link RolePermissions} the same question
+     * {@code @PreAuthorize("@perm.has(...)")} asks.
+     *
+     * <p>Takes the enum rather than its name, so a renamed or deleted permission
+     * is a compile error here instead of a rule that silently stops matching.
+     *
+     * <p>Fails closed on every path: no authentication, no authorities, or a role
+     * this application has no mapping for all answer "no".
+     */
+    private static AuthorizationManager<RequestAuthorizationContext> permission(AppPermission required) {
+        return (authentication, context) -> {
+            Authentication auth = authentication.get();
+            if (auth == null || !auth.isAuthenticated()) {
+                return new AuthorizationDecision(false);
+            }
+            boolean granted = auth.getAuthorities().stream()
+                    .map(GrantedAuthority::getAuthority)
+                    .filter(a -> a.startsWith("ROLE_"))
+                    .map(a -> a.substring("ROLE_".length()).toLowerCase(Locale.ROOT))
+                    .anyMatch(role -> RolePermissions.roleHas(role, required));
+            return new AuthorizationDecision(granted);
+        };
     }
 
     // 🔥 This is where we configure which origins are allowed

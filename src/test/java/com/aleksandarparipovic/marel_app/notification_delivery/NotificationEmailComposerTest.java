@@ -61,7 +61,7 @@ class NotificationEmailComposerTest {
                 null, null, "PRODUCTION_ORDER", 42L));
 
         assertThat(message.htmlBody())
-                .contains("https://app.furlytics.com/#/admin/production-orders/42");
+                .contains("https://app.furlytics.com/#/app/production-orders/42");
     }
 
     @Test

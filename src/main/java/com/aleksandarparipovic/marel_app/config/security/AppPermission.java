@@ -36,6 +36,145 @@ public enum AppPermission {
     DASHBOARD_SUPERVISOR_VIEW,
 
     /**
+     * Open the work records — the cards, the months behind them and the shifts,
+     * hours and work logs they are built from.
+     *
+     * <p>The screens this covers are where a worker's day is written down and
+     * corrected, so it is held by the people who own that record: payroll and
+     * the shop floor. It is deliberately ONE capability rather than a read and a
+     * write half — everybody who may open a card may also correct it, and a
+     * read-only card would be a screen nobody in this company needs.
+     */
+    WORK_RECORD_VIEW,
+
+    /**
+     * Open the payroll screens — the runs, their items and the adjustments on
+     * them.
+     *
+     * <p>NOT the same thing as seeing the AMOUNTS. Which lines of a payroll each
+     * role may read is decided per field by {@code payroll_field_access} and by
+     * {@code PayrollVisibilityPolicy}, and this permission changes none of that.
+     * It says only who may open the screens at all; what they find there is
+     * still filtered underneath.
+     *
+     * <p>Kept separate from {@link #PAYROLL_LOCK} and {@link #PAYROLL_HANDOVER}
+     * for that reason: opening the month, handing it over and freezing it are
+     * three different decisions belonging to three different people.
+     */
+    PAYROLL_VIEW,
+
+    /**
+     * Record or change a product's manufacturing time.
+     *
+     * <p>Writing only. Reading one back is deliberately left open, because the
+     * person who ASKED for a manufacturing time downloads its report from the
+     * requests screen — the answer belongs to whoever raised the question, and
+     * restricting the read would have taken their own answer away from them.
+     */
+    MANUFACTURING_TIME_MANAGE,
+
+    /**
+     * Open the analytics screens.
+     *
+     * <p>Wider than the records they are computed from: the production
+     * coordinator plans against efficiency figures without having any business
+     * in an individual worker's card. That is exactly why this is its own
+     * capability and not a consequence of {@link #WORK_RECORD_VIEW}.
+     */
+    ANALYTICS_VIEW,
+
+    /**
+     * See the workers — the list, one worker's page, and their work calendar.
+     *
+     * <p>Distinct from the user directory, which everybody signed in may read. A
+     * user is somebody who signs in; an employee is somebody the factory pays,
+     * and their page carries employment periods, categories and compensation.
+     */
+    EMPLOYEE_VIEW,
+
+    /** See the customers the factory makes things for. */
+    CUSTOMER_VIEW,
+
+    /**
+     * See production orders and everything hanging off them.
+     *
+     * <p>Split from {@link #PRODUCTION_ORDER_MANAGE} because the supervisor is
+     * meant to READ every order — they have to know what the floor is making —
+     * without being able to raise or alter one. Reading and writing an order are
+     * two different jobs held by two different people, so they are two
+     * permissions.
+     */
+    PRODUCTION_ORDER_VIEW,
+
+    /** Raise, alter or advance a production order. */
+    PRODUCTION_ORDER_MANAGE,
+
+    /**
+     * Raise a manufacturing-time request.
+     *
+     * <p>Held by everybody EXCEPT the supervisor, who decides requests: whoever
+     * decides them does not raise them, which is the rule the requests screen
+     * has always followed. Administrators hold it because they are also the ones
+     * who have to be able to try the workflow end to end.
+     */
+    MANUFACTURING_TIME_REQUEST_CREATE,
+
+    /** Read and change the monthly bonus rules. */
+    BONUS_RULE_MANAGE,
+
+    /** Read and change the application-wide parameters. */
+    APP_SETTING_MANAGE,
+
+    /**
+     * Enter or change a period in the work calendar.
+     *
+     * <p>Reading the calendar is open to everybody signed in — a person has to
+     * be able to see which days the factory works. Only this half is restricted.
+     */
+    WORK_CALENDAR_MANAGE,
+
+    /**
+     * See the commercial control board.
+     *
+     * <p>Its own screen for its own question, on the same reasoning as the two
+     * boards above: granting one board must never imply another.
+     */
+    DASHBOARD_COMMERCIAL_VIEW,
+
+    /** See the production coordinator's control board. */
+    DASHBOARD_PRODUCTION_COORDINATOR_VIEW,
+
+    /**
+     * Create a product, or change one.
+     *
+     * <p>Reading the catalogue is open to everybody signed in — most of the
+     * company has to be able to look a product up. Writing to it is the shop
+     * floor's and the administration's, because a product is what the norms,
+     * the operations and the manufacturing times all hang off.
+     */
+    PRODUCT_MANAGE,
+
+    /**
+     * Create or change an operation, including its norms and their versions.
+     *
+     * <p>Separate from {@link #PRODUCT_MANAGE} rather than one "catalogue"
+     * capability: granting the right to add a product must not silently grant
+     * the right to change the norm a person is paid against.
+     */
+    OPERATION_MANAGE,
+
+    /**
+     * See who gets told about a production order.
+     *
+     * <p>Split out of {@link #PRODUCTION_ORDER_RECIPIENT_MANAGE}, which used to
+     * guard reading the recipient list as well as changing it. The supervisor
+     * has to be able to SEE who was informed about an order they are running,
+     * and must not be able to add somebody to that list or take somebody off it
+     * — the same read/write split the order itself has.
+     */
+    PRODUCTION_ORDER_RECIPIENT_VIEW,
+
+    /**
      * Recompute the daily analytics snapshot on demand.
      *
      * <p>Maintenance rather than a feature: it writes the whole snapshot, and exists
@@ -73,7 +212,13 @@ public enum AppPermission {
     /** Read and edit mailing lists with GLOBAL visibility. */
     MAILING_LIST_GLOBAL_MANAGE,
 
-    /** Attach mailing lists to, and manage recipients of, a production order. */
+    /**
+     * Attach mailing lists to, and change the recipients of, a production order.
+     *
+     * <p>The WRITE half. Seeing the list is
+     * {@link #PRODUCTION_ORDER_RECIPIENT_VIEW}, which everybody holding this
+     * also holds.
+     */
     PRODUCTION_ORDER_RECIPIENT_MANAGE,
 
     /** Revoke another user's session. */

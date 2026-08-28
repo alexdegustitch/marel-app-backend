@@ -42,8 +42,17 @@ public class ManufacturingTimeRequestController {
     private final CurrentUserService currentUserService;
     private final PermissionService permissionService;
 
-    /** Any authenticated user may ask for a manufacturing time. */
+    /**
+     * Ask for a manufacturing time.
+     *
+     * <p>Open to everybody EXCEPT the supervisor, who decides requests — whoever
+     * decides them does not raise them, which is the rule the requests screen has
+     * always shown and this is what enforces it. Administrators hold the
+     * capability like everyone else, so they can raise a request as well as
+     * decide one.
+     */
     @PostMapping
+    @PreAuthorize("@perm.has('MANUFACTURING_TIME_REQUEST_CREATE')")
     public ResponseEntity<ManufacturingTimeRequestResponse> create(
             @RequestBody @Valid ManufacturingTimeRequestCreateRequest request
     ) {
