@@ -35,8 +35,8 @@ public class NotificationEmailComposer {
      * administrators' review screen would be a door they cannot open.
      */
     private static final Map<String, String> ROUTE_BY_ENTITY = Map.of(
-            "PRODUCTION_ORDER", "/admin/production-orders/",
-            "MANUFACTURING_TIME_REQUEST", "/admin/requests"
+            "PRODUCTION_ORDER", "/app/production-orders/",
+            "MANUFACTURING_TIME_REQUEST", "/app/requests"
     );
 
     public NotificationEmailComposer(

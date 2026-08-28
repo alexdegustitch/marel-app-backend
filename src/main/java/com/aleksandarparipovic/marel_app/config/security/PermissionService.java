@@ -73,7 +73,7 @@ public class PermissionService {
      * that could silently return nothing.
      */
     static final class RoleNames {
-        static final String[] ALL = {"admin", "supervisor", "commercial", "developer"};
+        static final String[] ALL = {"admin", "supervisor", "commercial", "developer", "production_coordinator", "accountant"};
 
         private RoleNames() {
         }

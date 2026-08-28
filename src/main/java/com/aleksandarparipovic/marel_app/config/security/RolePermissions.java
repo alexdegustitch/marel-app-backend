@@ -9,9 +9,15 @@ import java.util.Set;
  * The single mapping from an existing role name to the capabilities it grants.
  *
  * <p>Role names are the ones that actually exist in the {@code roles} table:
- * {@code admin}, {@code supervisor}, {@code commercial}, {@code developer}.
- * Comparison is case-insensitive, matching {@code RoleService}, which already
- * compares role names with {@code equalsIgnoreCase}.
+ * {@code admin}, {@code supervisor}, {@code commercial}, {@code developer},
+ * {@code production_coordinator} and {@code accountant}. {@code V15} inserts all
+ * six, so a database built from the migrations matches the live one. Comparison
+ * is case-insensitive, matching {@code RoleService}, which already compares role
+ * names with {@code equalsIgnoreCase}.
+ *
+ * <p>A role that is absent from this map holds NOTHING. That is the correct
+ * default and not an oversight: a role nobody has decided about must not
+ * accidentally inherit somebody else's screens.
  */
 public final class RolePermissions {
 
@@ -25,25 +31,54 @@ public final class RolePermissions {
             // from public registration). It mirrors admin so support work is possible.
             "developer", ALL,
 
-            // Supervisors own the manufacturing-time workflow and production-order
-            // communication, but never user approval or session revocation.
+            /*
+             * Supervisors run the shop floor. They own the work records and the
+             * payroll screens the floor's work feeds, the manufacturing-time
+             * workflow, the analytics, the workers, and the settings behind all of
+             * it — but never user approval, never session revocation, and never
+             * the configuration of who may see which payroll line.
+             *
+             * On ORDERS they read and do not write. That is the split
+             * PRODUCTION_ORDER_VIEW exists for: they have to know what the floor is
+             * making, and raising or altering an order is commercial work. The same
+             * split now runs through the RECIPIENTS of an order: they see who was
+             * told about it and change nobody.
+             *
+             * They also do NOT hold MANUFACTURING_TIME_REQUEST_CREATE. Whoever
+             * decides requests does not raise them.
+             *
+             * They DO write to the catalogue — products, operations and the norms
+             * on them. Reading it is open to the whole company; changing what a
+             * person is paid against is not.
+             */
             "supervisor", EnumSet.of(
                     AppPermission.DASHBOARD_SUPERVISOR_VIEW,
+                    AppPermission.WORK_RECORD_VIEW,
+                    AppPermission.PAYROLL_VIEW,
+                    AppPermission.MANUFACTURING_TIME_MANAGE,
+                    AppPermission.ANALYTICS_VIEW,
+                    AppPermission.EMPLOYEE_VIEW,
+                    AppPermission.PRODUCT_MANAGE,
+                    AppPermission.OPERATION_MANAGE,
+                    AppPermission.PRODUCTION_ORDER_VIEW,
+                    AppPermission.PRODUCTION_ORDER_RECIPIENT_VIEW,
+                    AppPermission.BONUS_RULE_MANAGE,
+                    AppPermission.APP_SETTING_MANAGE,
+                    AppPermission.WORK_CALENDAR_MANAGE,
                     AppPermission.MANUFACTURING_TIME_REQUEST_PROCESS,
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
-                    AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
                     /*
-                     * Shared mailing lists. Granted so the people who actually send
-                     * production orders can reach a GLOBAL list at all — the query
-                     * behind the picker hides them from anybody without this.
+                     * NOT MAILING_LIST_GLOBAL_MANAGE, and no longer
+                     * PRODUCTION_ORDER_RECIPIENT_MANAGE.
                      *
-                     * NOTE what it also carries: this one permission gates USING a
-                     * global list and MANAGING one. Holding it means they can edit
-                     * and archive somebody else's global list, and promote their own
-                     * to global. Splitting it into USE and MANAGE was the
-                     * alternative; the owner chose the single grant.
+                     * Both were granted while "supervisor reads orders and writes
+                     * none" did not yet exist as a rule. That one permission gated
+                     * USING a global mailing list and MANAGING one — editing and
+                     * archiving somebody else's, promoting one's own — which is
+                     * writing, on an order, by a role that no longer writes on
+                     * orders. The read half they actually need is
+                     * PRODUCTION_ORDER_RECIPIENT_VIEW above.
                      */
-                    AppPermission.MAILING_LIST_GLOBAL_MANAGE,
                     // Hands the month over and takes it back; never locks it.
                     AppPermission.PAYROLL_HANDOVER,
                     // Says which worker an account belongs to. They know the floor,
@@ -51,12 +86,42 @@ public final class RolePermissions {
                     // one field, not the editing of accounts.
                     AppPermission.USER_EMPLOYEE_LINK),
 
-            // Commercial staff drive production orders and who gets told about them.
+            // Commercial staff drive production orders, the customers behind them
+            // and who gets told about them. Nothing about the shop floor.
             "commercial", EnumSet.of(
+                    AppPermission.DASHBOARD_COMMERCIAL_VIEW,
+                    AppPermission.CUSTOMER_VIEW,
+                    AppPermission.PRODUCTION_ORDER_VIEW,
+                    AppPermission.PRODUCTION_ORDER_MANAGE,
+                    AppPermission.PRODUCTION_ORDER_RECIPIENT_VIEW,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
+                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE,
                     // Same grant, same caveat as above: using and managing a global
                     // list are one permission here.
-                    AppPermission.MAILING_LIST_GLOBAL_MANAGE)
+                    AppPermission.MAILING_LIST_GLOBAL_MANAGE),
+
+            /*
+             * The production coordinator plans against the numbers. Analytics and
+             * their own board — deliberately NOT the work records those numbers are
+             * computed from, which carry one named worker's day.
+             */
+            "production_coordinator", EnumSet.of(
+                    AppPermission.DASHBOARD_PRODUCTION_COORDINATOR_VIEW,
+                    AppPermission.ANALYTICS_VIEW,
+                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE),
+
+            /*
+             * accountant holds nothing yet.
+             *
+             * The role exists in the database and no rule has been decided for it,
+             * so it gets the screens EVERY signed-in account gets — the directory,
+             * products, operations, the work calendar, the requests screen — and
+             * nothing more. Listed explicitly rather than left out, so that reading
+             * this file answers "what about accountant?" instead of leaving it to be
+             * discovered as a missing key.
+             */
+            "accountant", EnumSet.of(
+                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE)
     );
 
     private RolePermissions() {
