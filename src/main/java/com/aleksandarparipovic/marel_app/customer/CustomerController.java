@@ -3,7 +3,9 @@ package com.aleksandarparipovic.marel_app.customer;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerCreateRequest;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerDto;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerOptionDto;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerOrderRow;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerUpdateRequest;
+import com.aleksandarparipovic.marel_app.production_order.ProductionOrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -28,6 +30,13 @@ import java.util.List;
 public class CustomerController {
 
     private final CustomerService customerService;
+
+    /*
+     * The customer's page lists the orders made for them. The orders are the
+     * production order service's to answer for — this controller only decides
+     * that the question is asked from the customer's address.
+     */
+    private final ProductionOrderService productionOrderService;
 
     @PostMapping
     public ResponseEntity<CustomerDto> create(@Valid @RequestBody CustomerCreateRequest request) {
@@ -57,6 +66,32 @@ public class CustomerController {
     @GetMapping("/{id}")
     public ResponseEntity<CustomerDto> get(@PathVariable Long id) {
         return ResponseEntity.ok(customerService.get(id));
+    }
+
+    /**
+     * The production orders made for this customer.
+     *
+     * <p>Searched, sorted and paged BY THE SERVER. {@code query} is one free-text
+     * box over the order's code, name and note and over its line items — their
+     * notes and their products' names and codes. Every order that matches
+     * anywhere comes back, with the matching line items marked so the page can
+     * say WHERE the words were found.
+     *
+     * @param query     free text; blank or absent means no search
+     * @param sortBy    {@code orderDate} (default) or {@code creationDate}
+     * @param direction {@code DESC} (default) — newest first
+     */
+    @GetMapping("/{id}/production-orders")
+    public ResponseEntity<Page<CustomerOrderRow>> productionOrders(
+            @PathVariable Long id,
+            @RequestParam(required = false) String query,
+            @RequestParam(defaultValue = "DESC") Sort.Direction direction,
+            @RequestParam(defaultValue = "orderDate") String sortBy,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size
+    ) {
+        return ResponseEntity.ok(
+                productionOrderService.getCustomerOrders(id, query, direction, sortBy, page, size));
     }
 
     @PatchMapping("/{id}")

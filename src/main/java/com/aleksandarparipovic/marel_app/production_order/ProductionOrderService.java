@@ -3,6 +3,9 @@ package com.aleksandarparipovic.marel_app.production_order;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
+import com.aleksandarparipovic.marel_app.production_order.dto.OrderCopySourceLineItemRow;
+import com.aleksandarparipovic.marel_app.production_order.dto.OrderCopySourceQuantityRow;
+import com.aleksandarparipovic.marel_app.production_order.dto.OrderCopySourceRow;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderCardRow;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderCreateRequest;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderDeadlineDto;
@@ -18,6 +21,7 @@ import com.aleksandarparipovic.marel_app.production_order_deadline.ProductionOrd
 import com.aleksandarparipovic.marel_app.production_order_deadline.repository.ProductionOrderDeadlineRepository;
 import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
 import com.aleksandarparipovic.marel_app.production_order_line_item.repository.ProductionOrderLineItemRepository;
+import com.aleksandarparipovic.marel_app.production_order_line_item_note.ProductionOrderLineItemNote;
 import com.aleksandarparipovic.marel_app.production_order_line_item_note.repository.ProductionOrderLineItemNoteRepository;
 import com.aleksandarparipovic.marel_app.production_order_line_item_quantity.ProductionOrderLineItemQuantity;
 import com.aleksandarparipovic.marel_app.production_order_line_item_quantity.repository.ProductionOrderLineItemQuantityRepository;
@@ -31,13 +35,18 @@ import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.config.security.PermissionService;
 import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.customer.CustomerRepository;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerOrderLineItemNoteRow;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerOrderLineItemRow;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerOrderRow;
 import com.aleksandarparipovic.marel_app.production_order_recipient.ProductionOrderRecipientService;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,9 +58,11 @@ import org.springframework.security.access.AccessDeniedException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -59,6 +70,16 @@ import java.util.stream.Collectors;
 public class ProductionOrderService {
 
     private static final String DEADLINE_SORT_FIELD = "deliveryDeadline";
+
+    /**
+     * The dates a customer's order list may be sorted on, and the one it sorts
+     * on when asked for anything else. A whitelist rather than a pass-through:
+     * an unknown property would reach the criteria builder as a field name and
+     * come back as a stack trace instead of a list.
+     */
+    private static final Set<String> CUSTOMER_ORDER_SORT_FIELDS = Set.of("orderDate", "creationDate");
+    private static final String DEFAULT_CUSTOMER_ORDER_SORT_FIELD = "orderDate";
+    private static final int MAX_CUSTOMER_ORDER_PAGE_SIZE = 200;
 
     /** Serbian date order, the one used everywhere else people read dates here. */
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy.");
@@ -531,12 +552,47 @@ public class ProductionOrderService {
             return searchAllSortedByEffectiveDeadline(specification, request, deadlineSortDirection);
         }
 
-        Pageable pageable = PageableBuilder.from(request);
+        Pageable pageable = stableSort(PageableBuilder.from(request));
         Page<ProductionOrder> page = productionOrderRepository.findAll(specification, pageable);
         DeadlineContext context = loadDeadlineContext(page.getContent());
         List<ProductionOrderCardRow> rows = buildCardRows(page.getContent(), context);
 
         return new PageImpl<>(rows, pageable, page.getTotalElements());
+    }
+
+    /**
+     * The sort a list can page through twice and get the same orders.
+     *
+     * <p>Two things the request cannot say for itself.
+     *
+     * <p><b>NULLS LAST.</b> A date nobody filled in is not the newest thing that
+     * happened. PostgreSQL puts nulls first on a DESC sort, so "creation date,
+     * newest first" would otherwise open on every order whose date is blank —
+     * the exact orders the reader is least likely to be looking for.
+     *
+     * <p><b>The id last.</b> Plenty of orders share a date, and rows tied on the
+     * whole sort key have no order the database is obliged to keep. It is free to
+     * return them one way for page 1 and another for page 2, which shows one
+     * order twice and hides another entirely. Nobody reports that as a bug; they
+     * report that an order "disappeared".
+     */
+    private static Pageable stableSort(Pageable pageable) {
+        Sort sort = pageable.getSort();
+        if (sort.isUnsorted()) {
+            return pageable;
+        }
+
+        List<Sort.Order> orders = new ArrayList<>();
+        boolean tieBroken = false;
+        for (Sort.Order order : sort) {
+            orders.add(order.nullsLast());
+            tieBroken |= "id".equals(order.getProperty());
+        }
+        if (!tieBroken) {
+            orders.add(new Sort.Order(Sort.Direction.DESC, "id"));
+        }
+
+        return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(orders));
     }
 
     private Page<ProductionOrderCardRow> searchAllSortedByEffectiveDeadline(
@@ -655,6 +711,382 @@ public class ProductionOrderService {
                     return productionOrderMapper.toCardRow(order, deadlineDtos, effective.date(), effective.fromLineItem());
                 })
                 .toList();
+    }
+
+    /**
+     * The orders made for one customer, for the customer's own page.
+     *
+     * <p>Filtering, searching and sorting all happen HERE. The page asks for a
+     * slice and renders what it is handed; it never receives the whole history
+     * and narrows it in the browser, which would quietly stop being the truth
+     * the moment a customer had more orders than one page.
+     *
+     * <p><b>The search.</b> One box over the order's code, name and note and
+     * over its line items — their notes, their note lists, and the product's
+     * name and code. An order is returned when ANY of those contains the text,
+     * and every line item comes back marked, so the page can point at the line
+     * the words are actually on rather than showing an order that looks, at a
+     * glance, like it should not be there.
+     *
+     * @param search free text; null or blank means no search and no marks
+     * @param sortBy {@code orderDate} or {@code creationDate}; anything else
+     *               falls back to {@code orderDate}
+     */
+    @Transactional(readOnly = true)
+    public Page<CustomerOrderRow> getCustomerOrders(
+            Long customerId,
+            String search,
+            Sort.Direction direction,
+            String sortBy,
+            int page,
+            int size
+    ) {
+        if (!customerRepository.existsById(customerId)) {
+            throw new EntityNotFoundException("Kupac nije pronađen (id=" + customerId + ")");
+        }
+
+        String text = (search == null || search.isBlank()) ? null : search.trim();
+
+        Specification<ProductionOrder> specification = ProductionOrderSpecifications.notArchived()
+                .and(ProductionOrderSpecifications.forCustomer(customerId));
+        if (text != null) {
+            specification = specification.and(ProductionOrderSpecifications.matchesText(text));
+        }
+
+        String sortField = CUSTOMER_ORDER_SORT_FIELDS.contains(sortBy)
+                ? sortBy
+                : DEFAULT_CUSTOMER_ORDER_SORT_FIELD;
+        Sort.Direction sortDirection = direction == null ? Sort.Direction.DESC : direction;
+
+        /*
+         * Nulls last and the id last, for the reasons spelled out on stableSort:
+         * a date nobody filled in is not the newest thing that happened, and
+         * orders tied on a date must keep a fixed position or they move between
+         * pages.
+         */
+        Pageable pageable = PageRequest.of(
+                Math.max(0, page),
+                Math.min(Math.max(1, size), MAX_CUSTOMER_ORDER_PAGE_SIZE),
+                Sort.by(
+                        new Sort.Order(sortDirection, sortField).nullsLast(),
+                        new Sort.Order(Sort.Direction.DESC, "id"))
+        );
+
+        Page<ProductionOrder> orders = productionOrderRepository.findAll(specification, pageable);
+        List<CustomerOrderRow> rows = buildCustomerOrderRows(orders.getContent(), text);
+
+        return new PageImpl<>(rows, pageable, orders.getTotalElements());
+    }
+
+    /**
+     * The rows for one page of a customer's orders, lines and notes included.
+     *
+     * <p>Two queries for the whole page rather than two per order — the lines
+     * of every order on the page are fetched at once, and their notes likewise.
+     */
+    private List<CustomerOrderRow> buildCustomerOrderRows(List<ProductionOrder> orders, String search) {
+        if (orders.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> orderIds = orders.stream().map(ProductionOrder::getId).toList();
+        Map<Long, List<ProductionOrderLineItem>> lineItemsByOrder = productionOrderLineItemRepository
+                .findActiveWithProductByOrderIds(orderIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        lineItem -> lineItem.getProductionOrder().getId(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+
+        List<Long> lineItemIds = lineItemsByOrder.values().stream()
+                .flatMap(List::stream)
+                .map(ProductionOrderLineItem::getId)
+                .toList();
+
+        Map<Long, List<ProductionOrderLineItemNote>> notesByLineItem = lineItemIds.isEmpty()
+                ? Map.of()
+                : productionOrderLineItemNoteRepository.findActiveByLineItemIds(lineItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                lineItemNote -> lineItemNote.getProductionOrderLineItem().getId(),
+                                LinkedHashMap::new,
+                                Collectors.toList()));
+
+        return orders.stream()
+                .map(order -> toCustomerOrderRow(order, lineItemsByOrder, notesByLineItem, search))
+                .toList();
+    }
+
+    private CustomerOrderRow toCustomerOrderRow(
+            ProductionOrder order,
+            Map<Long, List<ProductionOrderLineItem>> lineItemsByOrder,
+            Map<Long, List<ProductionOrderLineItemNote>> notesByLineItem,
+            String search
+    ) {
+        List<CustomerOrderLineItemRow> lineItems = lineItemsByOrder
+                .getOrDefault(order.getId(), List.of())
+                .stream()
+                .map(lineItem -> toCustomerOrderLineItemRow(
+                        lineItem, notesByLineItem.getOrDefault(lineItem.getId(), List.of()), search))
+                .toList();
+
+        return new CustomerOrderRow(
+                order.getId(),
+                order.getCode(),
+                order.getName(),
+                order.getNote(),
+                order.getStatus(),
+                order.getCreationDate(),
+                order.getOrderDate(),
+                order.getDeliveryDeadline(),
+                order.getTestingRequired(),
+                order.getIsHighPriority(),
+                order.getIsAnnounced(),
+                order.getHasSuccessiveDeliveries(),
+                ProductionOrderSpecifications.containsText(order.getCode(), search)
+                        || ProductionOrderSpecifications.containsText(order.getName(), search)
+                        || ProductionOrderSpecifications.containsText(order.getNote(), search),
+                (int) lineItems.stream().filter(CustomerOrderLineItemRow::matched).count(),
+                lineItems
+        );
+    }
+
+    private CustomerOrderLineItemRow toCustomerOrderLineItemRow(
+            ProductionOrderLineItem lineItem,
+            List<ProductionOrderLineItemNote> lineItemNotes,
+            String search
+    ) {
+        List<CustomerOrderLineItemNoteRow> notes = lineItemNotes.stream()
+                .map(lineItemNote -> new CustomerOrderLineItemNoteRow(
+                        lineItemNote.getId(),
+                        lineItemNote.getOrderNote(),
+                        lineItemNote.getNote(),
+                        ProductionOrderSpecifications.containsText(lineItemNote.getNote(), search)))
+                .toList();
+
+        Product product = lineItem.getProduct();
+        boolean matched = ProductionOrderSpecifications.containsText(lineItem.getNote(), search)
+                || ProductionOrderSpecifications.containsText(product.getProductName(), search)
+                || ProductionOrderSpecifications.containsText(product.getProductCode(), search)
+                || notes.stream().anyMatch(CustomerOrderLineItemNoteRow::matched);
+
+        return new CustomerOrderLineItemRow(
+                lineItem.getId(),
+                lineItem.getLineOrder(),
+                product.getId(),
+                product.getProductName(),
+                product.getProductCode(),
+                lineItem.getProductDescription(),
+                lineItem.getQuantity(),
+                lineItem.getNote(),
+                matched,
+                notes
+        );
+    }
+
+    /**
+     * Past orders to copy line items OUT of.
+     *
+     * <p>The picker behind "Kopiraj stavku". Somebody writing an order remembers
+     * having made nearly this one before, and re-typing a line — the product, the
+     * description the shop floor works from, the quantities — is both slow and
+     * how the description quietly drifts from the one that worked.
+     *
+     * <p><b>Searched, filtered, sorted and paged HERE.</b> One box over
+     * everything an order is recognised by (see {@code matchesAnything}), plus
+     * three narrowings that answer "which one was it" when the box cannot: who
+     * wrote it, who it was for, and when it was created. The browser holds one
+     * page and narrows nothing.
+     *
+     * <p>Every LIVE line of every matching order comes back, not only the lines
+     * that matched. An order found by its customer's name has ten lines and the
+     * reader may want any of them; a picker that offered only the line carrying
+     * the searched word would be answering a question nobody asked. Which lines
+     * DID match is marked, so they can be found among the rest.
+     *
+     * <p>Newest first, because the order somebody is thinking of is usually a
+     * recent one.
+     */
+    @Transactional(readOnly = true)
+    public Page<OrderCopySourceRow> searchCopySources(
+            String search,
+            Long customerId,
+            Long userId,
+            LocalDate createdFrom,
+            LocalDate createdTo,
+            int page,
+            int size
+    ) {
+        String text = (search == null || search.isBlank()) ? null : search.trim();
+
+        Specification<ProductionOrder> specification = ProductionOrderSpecifications.notArchived();
+        if (text != null) {
+            specification = specification.and(ProductionOrderSpecifications.matchesAnything(text));
+        }
+        if (customerId != null) {
+            specification = specification.and(ProductionOrderSpecifications.customerIs(customerId));
+        }
+        if (userId != null) {
+            specification = specification.and(ProductionOrderSpecifications.writtenBy(userId));
+        }
+        if (createdFrom != null || createdTo != null) {
+            specification = specification.and(
+                    ProductionOrderSpecifications.createdBetween(createdFrom, createdTo));
+        }
+
+        Pageable pageable = stableSort(PageRequest.of(
+                Math.max(0, page),
+                Math.min(Math.max(1, size), MAX_CUSTOMER_ORDER_PAGE_SIZE),
+                Sort.by(Sort.Direction.DESC, "creationDate")));
+
+        Page<ProductionOrder> orders = productionOrderRepository.findAll(specification, pageable);
+        List<OrderCopySourceRow> rows = buildCopySourceRows(orders.getContent(), text);
+
+        return new PageImpl<>(rows, pageable, orders.getTotalElements());
+    }
+
+    /**
+     * The rows for one page of copy sources — lines, quantities and notes
+     * included.
+     *
+     * <p>Three queries for the whole page rather than three per order. The
+     * quantities matter most: they are what the copy is actually made from, so a
+     * picker that fetched them lazily would fetch them for every line on screen.
+     */
+    private List<OrderCopySourceRow> buildCopySourceRows(List<ProductionOrder> orders, String search) {
+        if (orders.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> orderIds = orders.stream().map(ProductionOrder::getId).toList();
+        Map<Long, List<ProductionOrderLineItem>> lineItemsByOrder = productionOrderLineItemRepository
+                .findActiveWithProductByOrderIds(orderIds)
+                .stream()
+                .collect(Collectors.groupingBy(
+                        lineItem -> lineItem.getProductionOrder().getId(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+
+        List<Long> lineItemIds = lineItemsByOrder.values().stream()
+                .flatMap(List::stream)
+                .map(ProductionOrderLineItem::getId)
+                .toList();
+
+        Map<Long, List<ProductionOrderLineItemQuantity>> quantitiesByLineItem = lineItemIds.isEmpty()
+                ? Map.of()
+                : productionOrderLineItemQuantityRepository
+                        .findByProductionOrderLineItem_IdInAndIsActiveIsTrue(lineItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                quantity -> quantity.getProductionOrderLineItem().getId(),
+                                LinkedHashMap::new,
+                                Collectors.toList()));
+
+        Map<Long, List<ProductionOrderLineItemNote>> notesByLineItem = lineItemIds.isEmpty()
+                ? Map.of()
+                : productionOrderLineItemNoteRepository.findActiveByLineItemIds(lineItemIds)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                lineItemNote -> lineItemNote.getProductionOrderLineItem().getId(),
+                                LinkedHashMap::new,
+                                Collectors.toList()));
+
+        return orders.stream()
+                .map(order -> toCopySourceRow(order, lineItemsByOrder, quantitiesByLineItem, notesByLineItem, search))
+                .toList();
+    }
+
+    private OrderCopySourceRow toCopySourceRow(
+            ProductionOrder order,
+            Map<Long, List<ProductionOrderLineItem>> lineItemsByOrder,
+            Map<Long, List<ProductionOrderLineItemQuantity>> quantitiesByLineItem,
+            Map<Long, List<ProductionOrderLineItemNote>> notesByLineItem,
+            String search
+    ) {
+        List<OrderCopySourceLineItemRow> lineItems = lineItemsByOrder
+                .getOrDefault(order.getId(), List.of())
+                .stream()
+                .map(lineItem -> toCopySourceLineItemRow(
+                        lineItem,
+                        quantitiesByLineItem.getOrDefault(lineItem.getId(), List.of()),
+                        notesByLineItem.getOrDefault(lineItem.getId(), List.of()),
+                        search))
+                .toList();
+
+        Customer customer = order.getCustomer();
+        User user = order.getUser();
+
+        boolean matched = ProductionOrderSpecifications.containsText(order.getCode(), search)
+                || ProductionOrderSpecifications.containsText(order.getName(), search)
+                || ProductionOrderSpecifications.containsText(order.getNote(), search)
+                || (customer != null && (
+                        ProductionOrderSpecifications.containsText(customer.getName(), search)
+                        || ProductionOrderSpecifications.containsText(customer.getCode(), search)
+                        || ProductionOrderSpecifications.containsText(customer.getTaxId(), search)));
+
+        return new OrderCopySourceRow(
+                order.getId(),
+                order.getCode(),
+                order.getName(),
+                order.getNote(),
+                order.getStatus(),
+                order.getCreationDate(),
+                order.getOrderDate(),
+                customer != null ? customer.getId() : null,
+                customer != null ? customer.getName() : null,
+                customer != null ? customer.getCode() : null,
+                customer != null ? customer.getTaxId() : null,
+                user != null ? user.getId() : null,
+                user != null ? user.getFullName() : null,
+                matched,
+                lineItems
+        );
+    }
+
+    private OrderCopySourceLineItemRow toCopySourceLineItemRow(
+            ProductionOrderLineItem lineItem,
+            List<ProductionOrderLineItemQuantity> quantities,
+            List<ProductionOrderLineItemNote> lineItemNotes,
+            String search
+    ) {
+        Product product = lineItem.getProduct();
+        List<String> notes = lineItemNotes.stream()
+                .map(ProductionOrderLineItemNote::getNote)
+                .toList();
+
+        // The quantity is matched as a NUMBER, exactly as the filter matches it —
+        // see ProductionOrderSpecifications.matchesAnything for why.
+        Integer number = ProductionOrderSpecifications.parseSearchNumber(search);
+        boolean quantityMatched = number != null
+                && (number.equals(lineItem.getQuantity())
+                    || quantities.stream().anyMatch(q -> number.equals(q.getQuantity())));
+
+        boolean matched = quantityMatched
+                || ProductionOrderSpecifications.containsText(lineItem.getNote(), search)
+                || ProductionOrderSpecifications.containsText(lineItem.getProductDescription(), search)
+                || ProductionOrderSpecifications.containsText(product.getProductName(), search)
+                || ProductionOrderSpecifications.containsText(product.getProductCode(), search)
+                || notes.stream().anyMatch(note -> ProductionOrderSpecifications.containsText(note, search));
+
+        return new OrderCopySourceLineItemRow(
+                lineItem.getId(),
+                lineItem.getLineOrder(),
+                product.getId(),
+                product.getProductName(),
+                product.getProductCode(),
+                lineItem.getProductDescription(),
+                lineItem.getNote(),
+                lineItem.getQuantity(),
+                quantities.stream()
+                        .sorted(Comparator.comparing(
+                                ProductionOrderLineItemQuantity::getOrderQuantity,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                        .map(quantity -> new OrderCopySourceQuantityRow(
+                                quantity.getQuantity(), quantity.getDeliveryDeadline()))
+                        .toList(),
+                notes,
+                matched
+        );
     }
 
     public ProductionOrderDetailDto getDetail(Long id) {
