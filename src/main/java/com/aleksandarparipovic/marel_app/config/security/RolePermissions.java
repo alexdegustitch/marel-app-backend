@@ -87,7 +87,8 @@ public final class RolePermissions {
                     AppPermission.USER_EMPLOYEE_LINK),
 
             // Commercial staff drive production orders, the customers behind them
-            // and who gets told about them. Nothing about the shop floor.
+            // and who gets told about them. Nothing about the shop floor, beyond
+            // reading the manufacturing-time requests they share a queue with.
             "commercial", EnumSet.of(
                     AppPermission.DASHBOARD_COMMERCIAL_VIEW,
                     AppPermission.CUSTOMER_VIEW,
@@ -96,6 +97,15 @@ public final class RolePermissions {
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_VIEW,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
                     AppPermission.MANUFACTURING_TIME_REQUEST_CREATE,
+                    /*
+                     * They READ every manufacturing-time request, not only the ones
+                     * they raised. The requests screen is a shared queue: commercial
+                     * raises the work, the supervisor decides it, and both have to
+                     * be looking at the same list to know what is still waiting.
+                     * Deciding is still MANUFACTURING_TIME_REQUEST_PROCESS, which
+                     * they do NOT hold — this widens what they see, not what they do.
+                     */
+                    AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
                     // Same grant, same caveat as above: using and managing a global
                     // list are one permission here.
                     AppPermission.MAILING_LIST_GLOBAL_MANAGE),
