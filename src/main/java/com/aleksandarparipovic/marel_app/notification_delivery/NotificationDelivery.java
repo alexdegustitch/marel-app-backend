@@ -43,6 +43,40 @@ public class NotificationDelivery {
     @Column(name = "recipient_email", length = 320, updatable = false)
     private String recipientEmail;
 
+    /**
+     * Comma separated. Present exactly when this row is ONE message addressed to
+     * several people, which is how an order's conversation stays a conversation:
+     * everybody gets the same Message-ID, so a Reply All from any of them lands
+     * in everybody's thread. NULL means the single-recipient path above.
+     */
+    @Column(name = "recipient_emails", updatable = false)
+    private String recipientEmails;
+
+    /**
+     * Assigned when this row is CREATED, not when it is sent. A retry therefore
+     * re-sends a byte-identical message, which every client discards as a
+     * duplicate — so a send that succeeded but lost its acknowledgement cannot
+     * put the same text in the thread twice.
+     */
+    @Column(name = "message_id", length = 255, updatable = false)
+    private String messageId;
+
+    @Column(name = "in_reply_to", length = 255, updatable = false)
+    private String inReplyTo;
+
+    /**
+     * The conversation's subject as it stood when this mail was queued. Frozen
+     * here rather than read from the thread at send time: clients weigh the
+     * subject alongside References when grouping, so a subject that drifts
+     * between messages splits the very thread the headers are holding together.
+     */
+    @Column(name = "thread_subject", length = 255, updatable = false)
+    private String threadSubject;
+
+    /** The thread's ancestor chain frozen as it was when this row was queued. */
+    @Column(name = "references_header", updatable = false)
+    private String referencesHeader;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     @Builder.Default

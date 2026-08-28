@@ -49,12 +49,19 @@ public class NotificationEmailComposer {
 
     public EmailMessage compose(DeliveryBatchProcessor.PendingSend send) {
         return new EmailMessage(
-                send.recipientEmail(),
+                send.recipientEmails(),
                 send.subject(),
                 htmlBody(send),
                 // A system event has no actor and keeps the application's own name.
                 send.actorName() == null || send.actorName().isBlank() ? appName : send.actorName(),
-                send.actorEmail()
+                send.actorEmail(),
+                // Carried through untouched. These were decided when the delivery
+                // row was queued, and nothing here may second-guess them: the
+                // stored chain and the sent headers have to agree, or the next
+                // mail replies to a message that was never sent this way.
+                send.messageId(),
+                send.inReplyTo(),
+                send.references()
         );
     }
 
