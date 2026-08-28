@@ -96,6 +96,15 @@ class RolePermissionsTest {
         }
 
         @Test
+        @DisplayName("read every manufacturing-time request without deciding one")
+        void readEveryRequestWithoutDecidingOne() {
+            assertThat(RolePermissions.roleHas(
+                    "commercial", AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL)).isTrue();
+            assertThat(RolePermissions.roleHas(
+                    "commercial", AppPermission.MANUFACTURING_TIME_REQUEST_PROCESS)).isFalse();
+        }
+
+        @Test
         @DisplayName("reach nothing on the shop floor")
         void reachNothingOnTheFloor() {
             assertThat(RolePermissions.forRole("commercial")).doesNotContain(
