@@ -33,6 +33,13 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
     boolean existsByNotificationEvent_IdAndChannelAndRecipientEmail(
             Long notificationEventId, NotificationChannel channel, String recipientEmail);
 
+    /**
+     * Is there already a GROUP send for this event? recipient_email is NULL on
+     * those rows, so the (event, address) uniqueness index cannot answer it.
+     */
+    boolean existsByNotificationEvent_IdAndChannelAndRecipientEmailsIsNotNull(
+            Long notificationEventId, NotificationChannel channel);
+
     boolean existsByNotificationEvent_IdAndChannelAndRecipientUser_Id(
             Long notificationEventId, NotificationChannel channel, Long recipientUserId);
 

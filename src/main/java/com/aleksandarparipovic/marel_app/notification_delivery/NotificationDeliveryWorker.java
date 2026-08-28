@@ -41,6 +41,13 @@ public class NotificationDeliveryWorker {
             // IN_APP needs no transport: the user_notifications row IS the delivery.
             processor.markSent(send.deliveryId());
         } catch (Exception ex) {
+            // Logged in full HERE, sanitized in the database. The last_error column
+            // is operational data that anyone with delivery access can read, so it
+            // deliberately carries no stack trace — but the trace is the only thing
+            // that says WHY a provider refused, and without this line it existed
+            // nowhere at all. An unexplained "permanently failed after 5 attempts"
+            // is a dead end.
+            log.error("[NotificationDeliveryWorker] Delivery {} failed", send.deliveryId(), ex);
             processor.markFailed(send.deliveryId(), ex);
         }
     }

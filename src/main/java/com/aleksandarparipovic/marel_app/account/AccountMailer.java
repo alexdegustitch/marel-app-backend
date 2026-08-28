@@ -41,7 +41,7 @@ public class AccountMailer {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onCodeIssued(CodeIssued event) {
-        send(new EmailMessage(
+        send(EmailMessage.to(
                 event.toAddress(),
                 "Potvrda nove e-adrese",
                 codeBody(event),
@@ -56,7 +56,7 @@ public class AccountMailer {
          * confirmed. This is the only warning the rightful owner gets if somebody
          * else made the change, and it is the reason the notice exists at all.
          */
-        send(new EmailMessage(
+        send(EmailMessage.to(
                 event.oldAddress(),
                 "Vaša e-adresa je promenjena",
                 completedBody(event),

@@ -3,6 +3,8 @@ package com.aleksandarparipovic.marel_app.notification_delivery;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -22,8 +24,9 @@ class NotificationEmailComposerTest {
             String entityType, Long entityId
     ) {
         return new DeliveryBatchProcessor.PendingSend(
-                1L, NotificationChannel.EMAIL, "primalac@marel.rs",
-                subject, body, actorName, actorEmail, entityType, entityId);
+                1L, NotificationChannel.EMAIL, List.of("primalac@marel.rs"),
+                subject, body, actorName, actorEmail, entityType, entityId,
+                null, null, null);
     }
 
     @Test

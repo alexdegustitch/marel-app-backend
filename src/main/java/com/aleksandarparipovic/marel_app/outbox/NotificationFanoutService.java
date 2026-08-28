@@ -8,6 +8,9 @@ import com.aleksandarparipovic.marel_app.notification_delivery.NotificationDeliv
 import com.aleksandarparipovic.marel_app.notification_delivery.NotificationDeliveryRepository;
 import com.aleksandarparipovic.marel_app.notification_event.NotificationEvent;
 import com.aleksandarparipovic.marel_app.notification_event.NotificationEventRepository;
+import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
+import com.aleksandarparipovic.marel_app.production_order.repository.ProductionOrderRepository;
+import com.aleksandarparipovic.marel_app.production_order_email_thread.ProductionOrderEmailThreadService;
 import com.aleksandarparipovic.marel_app.production_order_recipient.ProductionOrderRecipient;
 import com.aleksandarparipovic.marel_app.production_order_recipient.ProductionOrderRecipientRepository;
 import com.aleksandarparipovic.marel_app.user.User;
@@ -24,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.List;
 import java.util.Set;
 
@@ -51,6 +55,8 @@ public class NotificationFanoutService {
     private final UserNotificationRepository userNotificationRepository;
     private final NotificationDeliveryRepository deliveryRepository;
     private final ProductionOrderRecipientRepository recipientRepository;
+    private final ProductionOrderRepository productionOrderRepository;
+    private final ProductionOrderEmailThreadService emailThreadService;
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final UserPreferencesService userPreferencesService;
@@ -62,6 +68,8 @@ public class NotificationFanoutService {
      * somebody's inbox.
      */
     private static final Set<OutboxEventType> ORDER_EMAIL_EVENT_TYPES = EnumSet.of(
+            OutboxEventType.PRODUCTION_ORDER_CREATED,
+            OutboxEventType.PRODUCTION_ORDER_UPDATED,
             OutboxEventType.PRODUCTION_ORDER_COMPLETED,
             OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED);
 
@@ -103,12 +111,7 @@ public class NotificationFanoutService {
         }
 
         if (ORDER_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
-            createEmailDeliveriesForOrder(notificationEvent, event.getAggregateId());
-            // The person who caused it gets their own copy even when they are not
-            // on the list: the application sent the mail, so it is nowhere in their
-            // Sent folder, and a copy in the inbox is the only way they can find it
-            // again later.
-            createEmailDeliveryForActor(notificationEvent);
+            createOrderConversationDelivery(notificationEvent, event.getAggregateId());
         }
 
         if (ACCOUNT_DECISION_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
@@ -167,7 +170,12 @@ public class NotificationFanoutService {
             case MANUFACTURING_TIME_REQUEST_COMPLETED, MANUFACTURING_TIME_REQUEST_DECLINED ->
                     addUser(recipients, longOf(payload, "createdByUserId"));
 
-            case PRODUCTION_ORDER_COMPLETED ->
+            // Deliberately no in-app recipient: the mail is what opens the
+            // conversation, and the only person present at creation is the
+            // one who just did it.
+            case PRODUCTION_ORDER_CREATED -> { }
+
+            case PRODUCTION_ORDER_UPDATED, PRODUCTION_ORDER_COMPLETED ->
                     addUser(recipients, longOf(payload, "responsibleUserId"));
 
             case PRODUCTION_ORDER_DEADLINE_CHANGED ->
@@ -224,10 +232,34 @@ public class NotificationFanoutService {
     }
 
     /**
-     * Email goes to the order's RECIPIENT SNAPSHOT, never to current mailing-list
-     * membership — that is the whole point of the snapshot.
+     * ONE mail about this order, addressed to everybody at once.
+     *
+     * <p>Addresses come from the order's RECIPIENT SNAPSHOT, never from current
+     * mailing-list membership — that is the whole point of the snapshot (§5.1.11).
+     *
+     * <p>One message rather than one per person, because these colleagues are
+     * having a conversation. A single message gives them all the same Message-ID,
+     * so when one of them hits Reply All the answer lands in everybody's thread.
+     * Separate copies would give each recipient a private chain, and the first
+     * reply would split the discussion along exactly that seam.
+     *
+     * <p>The actor is one of the addresses rather than getting a separate mail.
+     * The reason they need a copy is unchanged — the application sent it, so it is
+     * nowhere in their Sent folder — but a separate mail would carry its own
+     * Message-ID and sit outside the conversation it is about.
      */
-    private void createEmailDeliveriesForOrder(NotificationEvent event, Long productionOrderId) {
+    private void createOrderConversationDelivery(NotificationEvent event, Long productionOrderId) {
+        // uq_notification_deliveries_group is the real guarantee; this only spares
+        // the thread a Message-ID that would be rolled back anyway.
+        if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmailsIsNotNull(
+                event.getId(), NotificationChannel.EMAIL)) {
+            return;
+        }
+
+        // LinkedHashSet: de-duplicated, but in snapshot order, so the To line
+        // reads the way the list was built rather than in hash order.
+        Set<String> addresses = new LinkedHashSet<>();
+
         for (ProductionOrderRecipient recipient :
                 recipientRepository.findActiveByProductionOrderId(productionOrderId)) {
 
@@ -235,18 +267,51 @@ public class NotificationFanoutService {
             if (user != null && !userPreferencesService.emailNotificationsEnabled(user.getId())) {
                 continue;
             }
+            addAddress(addresses, recipient.getRecipientEmail());
+        }
 
-            if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmail(
-                    event.getId(), NotificationChannel.EMAIL, recipient.getRecipientEmail())) {
-                continue;
-            }
+        User actor = event.getActorUser();
+        if (actor != null && userPreferencesService.emailNotificationsEnabled(actor.getId())) {
+            addAddress(addresses, actor.getEmailAddress());
+        }
 
-            deliveryRepository.save(NotificationDelivery.builder()
-                    .notificationEvent(event)
-                    .channel(NotificationChannel.EMAIL)
-                    .recipientUser(user)
-                    .recipientEmail(recipient.getRecipientEmail())
-                    .build());
+        if (addresses.isEmpty()) {
+            // No snapshot yet, or everyone has e-mail switched off. Queueing a
+            // message with an empty To would fail at the relay on every retry —
+            // and, worse, would consume a Message-ID and leave the conversation
+            // pointing at a mail nobody received.
+            return;
+        }
+
+        ProductionOrder order = productionOrderRepository.findById(productionOrderId)
+                .orElse(null);
+        if (order == null) {
+            return;
+        }
+
+        // Opens the conversation on the first mail and continues it afterwards.
+        // MANDATORY inside this transaction: the id it hands out and the row that
+        // carries it must commit together.
+        ProductionOrderEmailThreadService.ThreadHeaders headers =
+                emailThreadService.nextMessage(order);
+
+        deliveryRepository.save(NotificationDelivery.builder()
+                .notificationEvent(event)
+                .channel(NotificationChannel.EMAIL)
+                // No single recipient user: this row is addressed to several
+                // people, some of whom may have no account at all.
+                .recipientEmails(String.join(",", addresses))
+                .messageId(headers.messageId())
+                .inReplyTo(headers.inReplyTo())
+                .referencesHeader(headers.references())
+                .threadSubject(headers.subject())
+                .build());
+    }
+
+    /** Normalised the same way the recipient snapshot stores addresses. */
+    private static void addAddress(Set<String> addresses, String email) {
+        if (email != null && !email.isBlank()) {
+            addresses.add(email.trim().toLowerCase(Locale.ROOT));
         }
     }
 
@@ -292,31 +357,6 @@ public class NotificationFanoutService {
                 .build());
     }
 
-    /**
-     * A copy for the actor, skipped when the snapshot already covers them so the
-     * unique index on (event, e-mail) is never the thing that catches it.
-     */
-    private void createEmailDeliveryForActor(NotificationEvent event) {
-        User actor = event.getActorUser();
-        if (actor == null || actor.getEmailAddress() == null || actor.getEmailAddress().isBlank()) {
-            return;
-        }
-        if (!userPreferencesService.emailNotificationsEnabled(actor.getId())) {
-            return;
-        }
-        if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmail(
-                event.getId(), NotificationChannel.EMAIL, actor.getEmailAddress())) {
-            return;
-        }
-
-        deliveryRepository.save(NotificationDelivery.builder()
-                .notificationEvent(event)
-                .channel(NotificationChannel.EMAIL)
-                .recipientUser(actor)
-                .recipientEmail(actor.getEmailAddress())
-                .build());
-    }
-
     private static Long longOf(JsonNode payload, String field) {
         if (payload == null || !payload.hasNonNull(field)) {
             return null;
@@ -329,6 +369,20 @@ public class NotificationFanoutService {
             return fallback;
         }
         return payload.get(field).asText(fallback);
+    }
+
+    /** The changes this save made, as one sentence. */
+    private static String joinChanges(JsonNode payload) {
+        if (payload == null || !payload.hasNonNull("changes")
+                || !payload.get("changes").isArray() || payload.get("changes").isEmpty()) {
+            // publishOrderUpdated does not publish an empty list, so this is
+            // only reachable for a replayed event written before the field
+            // existed. Say something true rather than an empty sentence.
+            return "izmenjen";
+        }
+        List<String> values = new ArrayList<>();
+        payload.get("changes").forEach(node -> values.add(node.asText()));
+        return String.join("; ", values);
     }
 
     /** A payload array of date descriptions, as one readable phrase. */
@@ -351,6 +405,8 @@ public class NotificationFanoutService {
             case MANUFACTURING_TIME_REQUEST_ASSIGNED -> "Zahtev vam je dodeljen";
             case MANUFACTURING_TIME_REQUEST_COMPLETED -> "Zahtev je završen";
             case MANUFACTURING_TIME_REQUEST_DECLINED -> "Zahtev je odbijen";
+            case PRODUCTION_ORDER_CREATED -> "Otvoren nalog za proizvodnju";
+            case PRODUCTION_ORDER_UPDATED -> "Izmenjen nalog za proizvodnju";
             case PRODUCTION_ORDER_COMPLETED -> "Nalog za proizvodnju je isporučen";
             case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Promenjen rok isporuke";
         };
@@ -379,6 +435,17 @@ public class NotificationFanoutService {
                     + textOf(payload, "productName", "-") + " je završen.";
             case MANUFACTURING_TIME_REQUEST_DECLINED -> "Zahtev za proizvod "
                     + textOf(payload, "productName", "-") + " je odbijen.";
+            // The first message of the conversation. It says what the order is,
+            // because everything that follows arrives as a reply to it.
+            case PRODUCTION_ORDER_CREATED -> "Otvoren je nalog "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-")
+                    + "). Sve izmene stižu kao odgovor na ovu poruku.";
+            // The list is the message. Naming the fields that moved is the
+            // difference between a mail somebody reads and one they archive.
+            case PRODUCTION_ORDER_UPDATED -> "Nalog "
+                    + textOf(payload, "orderCode", "-") + ": "
+                    + joinChanges(payload) + ".";
             case PRODUCTION_ORDER_COMPLETED -> "Nalog "
                     + textOf(payload, "orderCode", "-") + " je isporučen.";
             case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Nalog "

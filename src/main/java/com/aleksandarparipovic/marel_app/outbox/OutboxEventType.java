@@ -15,6 +15,19 @@ public enum OutboxEventType {
     MANUFACTURING_TIME_REQUEST_ASSIGNED,
     MANUFACTURING_TIME_REQUEST_COMPLETED,
     MANUFACTURING_TIME_REQUEST_DECLINED,
+    // Opens the order's e-mail conversation. Every later mail about the
+    // order is a reply to the one this event sends.
+    PRODUCTION_ORDER_CREATED,
+    // Any edit to an order, with the list of what changed in the payload.
+    // One event per SAVE, not per field: one save is one thing that
+    // happened, and the recipients are reading a conversation.
+    PRODUCTION_ORDER_UPDATED,
     PRODUCTION_ORDER_COMPLETED,
+    /**
+     * No longer published — PRODUCTION_ORDER_UPDATED covers a moved deadline
+     * alongside everything else that changed in the same save. Kept because
+     * rows written before that change still name it, and deserialising them
+     * must not fail.
+     */
     PRODUCTION_ORDER_DEADLINE_CHANGED
 }

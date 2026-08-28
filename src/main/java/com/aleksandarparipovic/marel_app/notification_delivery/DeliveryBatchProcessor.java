@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -69,17 +70,49 @@ public class DeliveryBatchProcessor {
             sends.add(new PendingSend(
                     delivery.getId(),
                     delivery.getChannel(),
-                    delivery.getRecipientEmail(),
-                    event.getTitle(),
+                    recipientsOf(delivery),
+                    subjectOf(delivery, event),
                     event.getMessage(),
                     actor == null ? null : actor.getFullName(),
                     actor == null ? null : actor.getEmailAddress(),
                     event.getEntityType(),
-                    event.getEntityId()
+                    event.getEntityId(),
+                    delivery.getMessageId(),
+                    delivery.getInReplyTo(),
+                    delivery.getReferencesHeader()
             ));
         }
 
         return sends;
+    }
+
+    /**
+     * One address or many, as one list — the rest of the pipeline should not have
+     * to know which kind of row this was.
+     */
+    private static List<String> recipientsOf(NotificationDelivery delivery) {
+        if (delivery.getRecipientEmails() != null && !delivery.getRecipientEmails().isBlank()) {
+            return Arrays.stream(delivery.getRecipientEmails().split(","))
+                    .map(String::trim)
+                    .filter(address -> !address.isEmpty())
+                    .toList();
+        }
+        return delivery.getRecipientEmail() == null
+                ? List.of()
+                : List.of(delivery.getRecipientEmail());
+    }
+
+    /**
+     * A threaded mail carries the conversation's frozen subject, written onto the
+     * row when it was queued. The event title is right for everything else, but
+     * using it here would change the subject as the event type changes — and a
+     * changed subject is the one thing that splits a conversation even when the
+     * References chain is perfect.
+     */
+    private static String subjectOf(NotificationDelivery delivery, NotificationEvent event) {
+        return delivery.getThreadSubject() != null && !delivery.getThreadSubject().isBlank()
+                ? delivery.getThreadSubject()
+                : event.getTitle();
     }
 
     @Transactional
@@ -111,13 +144,16 @@ public class DeliveryBatchProcessor {
     public record PendingSend(
             Long deliveryId,
             NotificationChannel channel,
-            String recipientEmail,
+            List<String> recipientEmails,
             String subject,
             String body,
             String actorName,
             String actorEmail,
             String entityType,
-            Long entityId
+            Long entityId,
+            String messageId,
+            String inReplyTo,
+            String references
     ) {
     }
 }

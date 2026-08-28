@@ -186,7 +186,9 @@ being silently patched the way `update` does in dev.
 - **Delivery retry/backoff, sessions/presence, and preferences/saved views have no
   automated tests.** All were exercised manually against a running application
   (results below), but that is not repeatable in CI.
-- The email path ends at the logging adapter — no real provider was exercised.
+- The email path now ends at Postmark (`PostmarkEmailSender`). Threading was
+  verified against live sends before it was wired; `LoggingEmailSender` still
+  takes over wherever `spring.mail.username` is empty.
 - No formatter or static analysis was run; the project configures neither.
 
 ---
@@ -277,11 +279,16 @@ The capabilities are implemented. What is left is coverage and polish.
    409 from `@Version`), two claiming the same manufacturing-time request (expect
    one to lose the `FOR UPDATE` race), two attaching the same mailing list to one
    order (expect the unique index to hold).
-3. **A real `EmailSender` adapter.** The port and the whole delivery pipeline
-   exist; only the provider is missing. Adding a bean that implements
-   `EmailSender` replaces `LoggingEmailSender` automatically — nothing else
-   changes. SMTP credentials must come from the environment, never the repo.
-4. **`PRODUCTION_ORDER_COMPLETED` is not yet emitted.** The event type, the
+3. **~~A real `EmailSender` adapter.~~ Done** — `PostmarkEmailSender`. It sets
+   `X-PM-KeepID`, without which Postmark replaces our Message-ID and every
+   notification arrives as its own conversation. Credentials come from the
+   environment: `MAIL_USERNAME` and `MAIL_PASSWORD` are BOTH the Postmark
+   Server API Token.
+4. **~~`PRODUCTION_ORDER_COMPLETED` is not yet emitted.~~ All three order events
+   are emitted.** `create` publishes `PRODUCTION_ORDER_CREATED` (which opens the
+   conversation), `update` publishes `PRODUCTION_ORDER_UPDATED` with the list of
+   what changed, and `markDelivered` publishes `PRODUCTION_ORDER_COMPLETED` on the
+   actual transition. The event type, the
    recipient-snapshot email fan-out and the delivery path are all built and
    tested, but nothing publishes the event: `ProductionOrderService` does not call
    `OutboxEventPublisher` when an order moves to `DELIVERED`. That is a one-line
@@ -332,9 +339,10 @@ New endpoints: `/api/registration-requests`, `/api/manufacturing-time-requests`,
    their writes audit as `NULL` user — the same as the existing recalc workers
    (handled by `2026-06-28-audit-trigger-null-safe-user-id.sql`). Expected, not a
    bug.
-6. **No email provider.** Deliveries will accumulate as `PENDING` until an
-   `EmailSender` adapter is wired. Decide deliberately whether the worker should
-   run at all before then.
+6. **~~No email provider.~~ Resolved.** Still outstanding on the Postmark side
+   before production: verify the sending domain (DKIM), add SPF and DMARC
+   records, and get the account out of pending approval — a new account may
+   only send to its own verified domain.
 
 ---
 

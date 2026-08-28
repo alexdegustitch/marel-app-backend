@@ -565,7 +565,55 @@ name at the call site (`PermissionService.roleNamesWith`):
 | `MANUFACTURING_TIME_REQUEST_CREATED` | Users holding `MANUFACTURING_TIME_REQUEST_PROCESS` |
 | `MANUFACTURING_TIME_REQUEST_ASSIGNED` | The assignee |
 | `MANUFACTURING_TIME_REQUEST_COMPLETED` / `_DECLINED` | The requester (`created_by`) |
-| `PRODUCTION_ORDER_COMPLETED` | The order's responsible user, plus every active `production_order_recipients` row as an EMAIL delivery |
+| `PRODUCTION_ORDER_CREATED` | Nobody in-app — the only person present is the one who just created it. It exists to send the mail that OPENS the order's conversation |
+| `PRODUCTION_ORDER_UPDATED` / `PRODUCTION_ORDER_COMPLETED` | The order's responsible user in-app; by e-mail see §6.5 |
+
+### 6.5 An order's e-mail is ONE conversation
+
+The three `PRODUCTION_ORDER_*` events queue **one** EMAIL delivery holding every
+address in `recipient_emails`, not one row per recipient.
+
+**One event per SAVE, not per field.** `PRODUCTION_ORDER_UPDATED` carries a
+`changes` array — `["rok isporuke: 10.09.2026. → 08.09.2026.", "prioritet: ne →
+da"]` — and the mail lists them. One save is one thing that happened, and the
+recipients are reading a conversation: splitting a single edit into five mails
+would put five messages in the thread for one action and bury the one that
+mattered.
+
+`PRODUCTION_ORDER_DEADLINE_CHANGED` is **no longer published** — a moved deadline
+is one entry on that list. The enum value stays because rows written before this
+still name it.
+
+**Nothing is published when nothing changed.** `update()` deactivates and
+re-inserts every deadline and line item on each save whether or not the form
+touched them, so changes are detected by comparing ordered VALUE descriptions
+taken before the first setter runs. Without that comparison, correcting a typo in
+a note would mail the entire recipient list.
+
+1. All recipients receive the SAME message, and therefore the same Message-ID.
+   That is the point: when one of them hits Reply All, the answer lands in
+   everybody's thread. Separate copies would give each recipient a private chain,
+   and the first reply would split the discussion along that seam.
+2. Addresses come from the active `production_order_recipients` snapshot (§5.1.11),
+   plus the actor's own address. The actor is **in the To line**, not sent a
+   separate mail: they still need a copy — the application sent it, so it is
+   nowhere in their Sent folder — but a separate mail carries its own Message-ID
+   and would sit outside the conversation it is about.
+3. `email_notifications_enabled` is consulted per person, so an opted-out
+   colleague is simply absent from To.
+4. With no addresses at all, nothing is queued and no conversation is opened. The
+   first later event that does have recipients opens it instead.
+5. `production_order_email_threads` holds one row per order: the frozen
+   `subject_base`, and the chain later mails attach to. **The subject is never
+   edited** — clients weigh it alongside References when grouping, so a changed
+   subject splits a thread whose headers are otherwise perfect.
+6. `message_id` is assigned when the delivery row is **created**, not when it is
+   sent, so a retry re-sends a byte-identical message that every client discards
+   as a duplicate. Assigning it at send time would put the same text in the thread
+   twice, with nothing in the logs to say so.
+7. Replay safety is `uq_notification_deliveries_group`, a partial unique index on
+   the event: `recipient_email` is NULL on a group row, so the (event, address)
+   index of §7.2 cannot see it, and NULL never equals NULL.
 
 A user's `user_preferences.in_app_notifications_enabled` /
 `email_notifications_enabled` are consulted before creating the corresponding
@@ -590,9 +638,9 @@ FAILED     -> CANCELLED
 1. External recipients have `recipient_user_id = NULL`. `recipient_email` holds
    the snapshot address used for the delivery.
 2. Delivery is **idempotent**: one email per address per event, one in-app per user
-   per event (`uq_notification_deliveries_email`,
-   `uq_notification_deliveries_in_app`). Two workers replaying the same event
-   cannot produce a duplicate send.
+   per event, one group mail per event (`uq_notification_deliveries_email`,
+   `uq_notification_deliveries_in_app`, `uq_notification_deliveries_group`). Two
+   workers replaying the same event cannot produce a duplicate send.
 3. Two workers never process the same row — claims use `FOR UPDATE SKIP LOCKED`.
 4. `attempt_count` is tracked; retry delay and maximum attempts are **configurable**
    (`app.notifications.*`, see the status document).
@@ -604,8 +652,14 @@ FAILED     -> CANCELLED
    makes `SENT` without `sent_at` impossible).
 8. Delivery rows are **never physically deleted** in normal operation.
 
-**The email provider is a port with no adapter yet.** `EmailSender` is called
-outside any database transaction — the worker loads its batch, commits the claim,
+**The email provider is Postmark, behind the `EmailSender` port.** Threading needs
+our own Message-ID to survive the relay, which is why the adapter sets
+`X-PM-KeepID`: without it Postmark replaces the header, the id stored on the row
+matches nothing, and every notification arrives as its own conversation. Brevo
+keeps the id but injects a tracking pixel and a one-click List-Unsubscribe it will
+not remove from SMTP traffic — a button that lets a worker silently drop out of
+production notifications. Resend and SES replace the id outright. All three were
+tested against live sends. `EmailSender` is called outside any database transaction — the worker loads its batch, commits the claim,
 then sends. A long provider call must never hold a transaction open.
 
 ---

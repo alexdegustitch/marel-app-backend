@@ -163,38 +163,194 @@ public class ProductionOrderService {
             }
         }
 
+        // LAST, and still inside this transaction. Last because the mail this
+        // event sends opens the order's conversation and should describe an order
+        // that is fully written, not one still being assembled. Inside, because
+        // OutboxEventPublisher is MANDATORY: an announcement must not survive a
+        // rollback of the thing it announces.
+        publishOrderCreated(order);
+
         return productionOrderMapper.toDetailDto(order, deadlineDtos, lineItemDtos);
     }
 
     /**
-     * Announces a moved delivery date, and only that.
+     * Opens the order's e-mail conversation.
      *
-     * <p>Compared as an ordered list of value descriptions rather than by row id,
-     * because update() never edits a deadline in place — it deactivates the old
-     * rows and inserts new ones. By identity every save looks like a change; by
-     * value, only a real one does.
+     * <p>Every later notification about this order is sent as a reply to the mail
+     * this event produces, which is why it goes out even though nothing has
+     * happened yet: without a first message there is nothing for the rest to hang
+     * off, and each change would arrive as an unrelated mail.
+     *
+     * <p>Recipients come from the snapshot that {@code attachRequestedMailingLists}
+     * has already written above. An order created without a mailing list has none,
+     * and then no mail is queued and no conversation is opened — the first change
+     * that does have recipients opens it instead.
      */
-    private void publishDeadlineChange(ProductionOrder order, List<String> deadlinesBefore) {
-        List<String> deadlinesAfter = describeDeadlines(
-                productionOrderDeadlineRepository.findAllByProductionOrder_IdAndIsActiveIsTrue(order.getId()));
+    private void publishOrderCreated(ProductionOrder order) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("orderCode", order.getCode());
+        payload.put("orderName", order.getName());
+        payload.put("actorUserId", currentUserService.getCurrentUserId());
 
-        if (deadlinesBefore.equals(deadlinesAfter)) {
+        outboxEventPublisher.publish(
+                OutboxEventType.PRODUCTION_ORDER_CREATED,
+                OutboxAggregateType.PRODUCTION_ORDER,
+                order.getId(),
+                payload
+        );
+    }
+
+    /**
+     * Everything about an order that a recipient would want to be told changed.
+     *
+     * <p>Deadlines and line items are held as ordered lists of VALUE descriptions
+     * rather than rows, because update() never edits either in place — it
+     * deactivates the old ones and inserts a fresh set on every save. By identity
+     * every save looks like a change; by value, only a real one does.
+     */
+    record OrderSnapshot(
+            String name,
+            String note,
+            String customer,
+            LocalDate creationDate,
+            LocalDate orderDate,
+            String deliveryDeadline,
+            Boolean testingRequired,
+            Boolean highPriority,
+            Boolean announced,
+            Boolean successiveDeliveries,
+            List<String> deadlines,
+            List<String> lineItems
+    ) {
+    }
+
+    private OrderSnapshot snapshot(ProductionOrder order) {
+        return new OrderSnapshot(
+                order.getName(),
+                order.getNote(),
+                order.getCustomer() == null ? null : order.getCustomer().getName(),
+                order.getCreationDate(),
+                order.getOrderDate(),
+                order.getDeliveryDeadline(),
+                order.getTestingRequired(),
+                order.getIsHighPriority(),
+                order.getIsAnnounced(),
+                order.getHasSuccessiveDeliveries(),
+                describeDeadlines(productionOrderDeadlineRepository
+                        .findAllByProductionOrder_IdAndIsActiveIsTrue(order.getId())),
+                describeLineItems(order.getId()));
+    }
+
+    /**
+     * Line items as one description per line, quantities included.
+     *
+     * <p>Ordered by {@code lineOrder} so that reordering the same products reads
+     * as a change — because it is one: the order of lines is what the shop floor
+     * works through.
+     */
+    private List<String> describeLineItems(Long orderId) {
+        return productionOrderLineItemRepository
+                .findByProductionOrder_IdAndIsActiveIsTrueOrderByLineOrderAsc(orderId)
+                .stream()
+                .map(item -> {
+                    String product = item.getProduct() == null
+                            ? "-" : item.getProduct().getProductName();
+                    String quantities = productionOrderLineItemQuantityRepository
+                            .findByProductionOrderLineItem_IdOrderByOrderQuantityAsc(item.getId())
+                            .stream()
+                            .filter(q -> Boolean.TRUE.equals(q.getIsActive()))
+                            .map(q -> String.valueOf(q.getQuantity()))
+                            .collect(Collectors.joining("+"));
+
+                    return product + " (" + (quantities.isEmpty()
+                            ? item.getQuantity() + " kom" : quantities + " kom") + ")";
+                })
+                .toList();
+    }
+
+    /**
+     * Announces what this save actually changed — one message listing every
+     * difference, not one message per field.
+     *
+     * <p>One save is one thing that happened, and the recipients are reading a
+     * conversation. Splitting a single edit into five mails would put five
+     * messages in the thread for one action and bury the one that mattered.
+     *
+     * <p>Nothing is published when nothing changed. update() rewrites deadlines
+     * and line items on every save whether or not the form touched them, so
+     * without the comparison every corrected typo would mail the whole recipient
+     * list.
+     */
+    private void publishOrderUpdated(ProductionOrder order, OrderSnapshot before) {
+        List<String> changes = describeChanges(before, snapshot(order));
+        if (changes.isEmpty()) {
             return;
         }
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("orderCode", order.getCode());
         payload.put("orderName", order.getName());
-        payload.put("deadlinesBefore", deadlinesBefore);
-        payload.put("deadlinesAfter", deadlinesAfter);
+        payload.put("changes", changes);
+        payload.put("responsibleUserId",
+                order.getUser() == null ? null : order.getUser().getId());
         payload.put("actorUserId", currentUserService.getCurrentUserId());
 
         outboxEventPublisher.publish(
-                OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED,
+                OutboxEventType.PRODUCTION_ORDER_UPDATED,
                 OutboxAggregateType.PRODUCTION_ORDER,
                 order.getId(),
                 payload
         );
+    }
+
+    /** Each difference as a phrase a person can read without opening the app. */
+    static List<String> describeChanges(OrderSnapshot before, OrderSnapshot after) {
+        List<String> changes = new ArrayList<>();
+
+        addChange(changes, "naziv", before.name(), after.name());
+        addChange(changes, "kupac", before.customer(), after.customer());
+        addChange(changes, "napomena", before.note(), after.note());
+        addChange(changes, "datum kreiranja", before.creationDate(), after.creationDate());
+        addChange(changes, "datum porudžbine", before.orderDate(), after.orderDate());
+        addChange(changes, "rok isporuke", before.deliveryDeadline(), after.deliveryDeadline());
+        addChange(changes, "testiranje", before.testingRequired(), after.testingRequired());
+        addChange(changes, "prioritet", before.highPriority(), after.highPriority());
+        addChange(changes, "najava", before.announced(), after.announced());
+        addChange(changes, "sukcesivne isporuke",
+                before.successiveDeliveries(), after.successiveDeliveries());
+        addChange(changes, "rokovi", before.deadlines(), after.deadlines());
+        addChange(changes, "stavke", before.lineItems(), after.lineItems());
+
+        return changes;
+    }
+
+    private static void addChange(List<String> changes, String label, Object before, Object after) {
+        if (Objects.equals(before, after)) {
+            return;
+        }
+        changes.add(label + ": " + describeValue(before) + " → " + describeValue(after));
+    }
+
+    /**
+     * Values as they should read in a sentence, not as {@code toString} leaves
+     * them: a bare "true" or "null" in a mail to the shop floor explains nothing.
+     */
+    private static String describeValue(Object value) {
+        if (value == null) {
+            return "nije postavljeno";
+        }
+        if (value instanceof Boolean flag) {
+            return flag ? "da" : "ne";
+        }
+        if (value instanceof LocalDate date) {
+            return DATE_FORMAT.format(date);
+        }
+        if (value instanceof List<?> list) {
+            return list.isEmpty() ? "nije postavljeno" : String.join(", ",
+                    list.stream().map(String::valueOf).toList());
+        }
+        String text = String.valueOf(value);
+        return text.isBlank() ? "nije postavljeno" : text;
     }
 
     /**
@@ -228,6 +384,11 @@ public class ProductionOrderService {
         ProductionOrder order = productionOrderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Proizvodni nalog nije pronađen (id=" + id + ")"));
 
+        // BEFORE the first setter. The scalars below are mutated on the managed
+        // entity in place, so a snapshot taken any later would already be the new
+        // values compared against themselves — every save would report no change.
+        OrderSnapshot before = snapshot(order);
+
         order.setName(req.name().trim());
         order.setNote(req.note());
         order.setTestingRequired(Boolean.TRUE.equals(req.testingRequired()));
@@ -241,14 +402,6 @@ public class ProductionOrderService {
         // sends the whole order back on every save.
         order.setCustomer(resolveCustomer(req.customerId()));
         order = productionOrderRepository.save(order);
-
-        // Read BEFORE the replace below. update() deactivates every deadline and
-        // inserts a fresh set on every save, even when the form did not touch them,
-        // so "were they changed" cannot be answered afterwards — and publishing
-        // without asking would e-mail the whole recipient list every time somebody
-        // fixes a note.
-        List<String> deadlinesBefore = describeDeadlines(
-                productionOrderDeadlineRepository.findAllByProductionOrder_IdAndIsActiveIsTrue(id));
 
         for (ProductionOrderDeadline existing : productionOrderDeadlineRepository.findAllByProductionOrder_IdAndIsActiveIsTrue(id)) {
             existing.setIsActive(false);
@@ -322,7 +475,7 @@ public class ProductionOrderService {
             }
         }
 
-        publishDeadlineChange(order, deadlinesBefore);
+        publishOrderUpdated(order, before);
 
         return productionOrderMapper.toDetailDto(order, deadlineDtos, lineItemDtos);
     }
