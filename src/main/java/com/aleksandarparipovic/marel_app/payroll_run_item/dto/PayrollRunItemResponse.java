@@ -67,8 +67,37 @@ public class PayrollRunItemResponse {
     private BigDecimal totalNetEarnings;
     @Setter
     private BigDecimal hourlyRate;
+
+    /**
+     * The director's note for this month's payslip.
+     *
+     * <p>{@code @Setter} so the service can withhold it: everybody without
+     * PAYROLL_DIRECTOR_NOTE gets null, the same way the hidden money figures are
+     * withheld rather than hidden by the browser.
+     */
+    @Setter
+    private String directorNote;
     private final BigDecimal hourlyRateSystem;
     private final Boolean hourlyRateOverridden;
+
+    // ── The performance mark, and what it is doing to the rate ──────────────
+
+    /** The ocena, 0–2. Null when nobody gave one — the screen shows a dash. */
+    private final BigDecimal performanceMark;
+    /** Who gave it, so the number is attributable without opening the audit log. */
+    private final String performanceMarkByName;
+    /** Whether hourlyRate above is currently the base multiplied by the mark. */
+    private final Boolean performanceMarkApplied;
+    private final String performanceMarkAppliedByName;
+    /**
+     * The rate WITHOUT the mark — what "primeni" multiplies and what "vrati"
+     * returns to.
+     *
+     * <p>Sent rather than left to the client to work out: dividing hourlyRate
+     * back by the mark loses cents to rounding, and the screen has to be able to
+     * print "bilo 500,00" exactly.
+     */
+    private final BigDecimal hourlyRateBase;
 
     // ── Meal allowance ───────────────────────────────────────────────────────
 
@@ -127,8 +156,16 @@ public class PayrollRunItemResponse {
 
         this.totalNetEarnings = item.getTotalNetEarnings();
         this.hourlyRate = item.getHourlyRate();
+        this.directorNote = item.getDirectorNote();
         this.hourlyRateSystem = item.getHourlyRateSystem();
         this.hourlyRateOverridden = item.getHourlyRateOverridden();
+        this.performanceMark = item.getPerformanceMark();
+        this.performanceMarkByName = item.getPerformanceMarkBy() != null
+                ? item.getPerformanceMarkBy().getFullName() : null;
+        this.performanceMarkApplied = Boolean.TRUE.equals(item.getPerformanceMarkApplied());
+        this.performanceMarkAppliedByName = item.getPerformanceMarkAppliedBy() != null
+                ? item.getPerformanceMarkAppliedBy().getFullName() : null;
+        this.hourlyRateBase = item.baseHourlyRate();
 
 
 

@@ -436,8 +436,15 @@ public class PayrollRunItemService {
         item.setLockedBy(currentUserService.getCurrentUserId());
         item.setUpdatedAt(OffsetDateTime.now());
 
-        log.info("PayrollRunItem {} locked by user {}", id, item.getLockedBy());
-        return payrollRunItemRepository.save(item);
+        PayrollRunItem locked = payrollRunItemRepository.save(item);
+
+        // AFTER the save, so the figures the step records are the ones that were
+        // frozen — the recalculation above may have moved them.
+        recordHandover(locked, PayrollRunItemHandover.EVENT_LOCKED,
+                STATUS_APPROVED, STATUS_LOCKED, null);
+
+        log.info("PayrollRunItem {} locked by user {}", id, locked.getLockedBy());
+        return locked;
     }
 
     /**
@@ -542,6 +549,66 @@ public class PayrollRunItemService {
     }
 
     /**
+     * Grants a change request: the month goes back to the supervisor.
+     *
+     * <p><b>From LOCKED in ONE step</b>, not by unlocking and then returning.
+     * Those are two acts for one intention, and the state between them —
+     * "submitted again, briefly" — is a moment nobody decided on and that the
+     * history would have to explain.
+     *
+     * <p>The step recorded is CHANGE_ACCEPTED rather than RETURNED, because it
+     * is a different thing: RETURNED is payroll handing the month back of its
+     * own accord, this is payroll agreeing to. Reading the two apart afterwards
+     * is the whole reason the request exists.
+     */
+    @Transactional
+    public PayrollRunItem reopenForChangeRequest(Long id, String note) {
+        markHumanDecision(id);
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        String before = item.getStatus();
+        if (STATUS_DRAFT.equals(before)) {
+            // Already open. The request is still answered — somebody decided —
+            // but there is no status to move.
+            recordHandover(item, PayrollRunItemHandover.EVENT_CHANGE_ACCEPTED,
+                    before, STATUS_DRAFT, note);
+            return item;
+        }
+
+        item.setStatus(STATUS_DRAFT);
+        // Cleared whether or not it was set: a DRAFT that still remembered being
+        // locked would read as frozen to anything that checks locked_at rather
+        // than status.
+        item.setLockedAt(null);
+        item.setLockedBy(null);
+        item.setNeedsRecalculation(true);
+        item.setUpdatedAt(OffsetDateTime.now());
+        PayrollRunItem saved = payrollRunItemRepository.save(item);
+
+        recordHandover(saved, PayrollRunItemHandover.EVENT_CHANGE_ACCEPTED,
+                before, STATUS_DRAFT, note);
+        log.info("PayrollRunItem {} reopened from {} for a change request by user {}",
+                id, before, currentUserService.getCurrentUserId());
+        return saved;
+    }
+
+    /**
+     * Records a step that does not move the payroll — the request being raised,
+     * and a refusal.
+     *
+     * <p>Both belong on the timeline beside the submission they are about: that
+     * is where somebody looks to find out why a finished month is open again, or
+     * why it is not.
+     */
+    @Transactional
+    public void recordChangeRequestStep(Long id, String event, String note) {
+        PayrollRunItem item = payrollRunItemRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+        recordHandover(item, event, item.getStatus(), item.getStatus(), note);
+    }
+
+    /**
      * Every handover step, newest first.
      *
      * <p>The same visibility rule as the live payroll applies here: a stored
@@ -551,8 +618,26 @@ public class PayrollRunItemService {
     @Transactional(readOnly = true)
     public List<PayrollRunItemHandoverDto> getHandovers(Long payrollRunItemId) {
         boolean amounts = payrollVisibilityPolicy.canSeeAmounts();
+
+        /*
+         * WHOSE HISTORY IS THIS.
+         *
+         * Payroll sees the whole chain. Everybody else sees their own half of it
+         * — the handover and the requests they raised — and not what payroll
+         * does with the month afterwards. Freezing it and reopening it are
+         * payroll's working record; a supervisor reading "završen / otključan /
+         * završen" is reading somebody else's notes about a decision that was
+         * never theirs.
+         *
+         * Filtered on the SERVER. Hiding rows in the browser would leave them in
+         * the response for anybody who looked.
+         */
+        boolean wholeChain = permissionService.hasPermission(AppPermission.PAYROLL_LOCK);
+
         List<PayrollRunItemHandoverDto> steps = new java.util.ArrayList<>(
                 handoverRepository.findByPayrollRunItemIdOrderByOccurredAtDesc(payrollRunItemId).stream()
+                .filter(h -> wholeChain
+                        || PayrollRunItemHandover.EVENTS_VISIBLE_TO_SUBMITTER.contains(h.getEvent()))
                 .map(h -> new PayrollRunItemHandoverDto(
                         h.getId(),
                         h.getEvent(),
@@ -798,8 +883,16 @@ public class PayrollRunItemService {
         item.setNeedsRecalculation(true);
         item.setUpdatedAt(OffsetDateTime.now());
 
+        PayrollRunItem reopened = payrollRunItemRepository.save(item);
+
+        // The figures here are the ones AS FROZEN: the item is marked stale but
+        // not yet recalculated, so this step records what the locked month said
+        // rather than what it is about to say.
+        recordHandover(reopened, PayrollRunItemHandover.EVENT_UNLOCKED,
+                STATUS_LOCKED, STATUS_APPROVED, null);
+
         log.info("PayrollRunItem {} unlocked by user {}", id, currentUserService.getCurrentUserId());
-        return payrollRunItemRepository.save(item);
+        return reopened;
     }
 
     // ─── Details view ───────────────────────────────────────────────────────
@@ -913,6 +1006,17 @@ public class PayrollRunItemService {
         PayrollRunItemPermissionsDto permissions = resolvePermissions(item);
 
         PayrollRunItemResponse summary = new PayrollRunItemResponse(item);
+
+        /*
+         * Withheld on the SERVER, not hidden by the browser, so there is nothing
+         * left in the network tab to read. Outside the restricted-user block
+         * below on purpose: this one is not a payroll-visibility question that a
+         * role can be granted from the settings screen — it is the director's
+         * own note, and only administrators hold it.
+         */
+        if (!permissionService.hasPermission(AppPermission.PAYROLL_DIRECTOR_NOTE)) {
+            summary.setDirectorNote(null);
+        }
         // Resolved at the period's LAST day, matching how MonthlyRecalcService caps
         // approved_performance_rate. Reading it at now() would draw an old month
         // against today's ceiling.
@@ -1073,7 +1177,9 @@ public class PayrollRunItemService {
                 full.getSummary(),
                 full.getCategories(),
                 full.getAdjustments(),
-                new PayrollRunItemPermissionsDto(false, false, false, false, false),
+                // Every one false: a document about oneself is a document, not a
+                // screen with actions on it. Six now — canEditItem joined them.
+                new PayrollRunItemPermissionsDto(false, false, false, false, false, false),
                 full.getResolvedLocale(),
                 // Nothing was withheld, so nothing to warn about. Taken from the
                 // response rather than written as false, so that if the document
@@ -1158,8 +1264,15 @@ public class PayrollRunItemService {
         PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
 
+        /*
+         * A locked payroll does not move — for anybody, through any door.
+         *
+         * ConflictException rather than IllegalStateException: this is a refusal
+         * the caller can act on, and it used to leave the screen with a 500 and
+         * an English sentence out of a stack trace.
+         */
         if (STATUS_LOCKED.equals(item.getStatus())) {
-            throw new IllegalStateException("PayrollRunItem " + id + " is LOCKED and cannot be edited");
+            throw new ConflictException("Obračun je zaključan i više se ne menja.");
         }
 
         // LAYER B — once handed over, the shop floor is done with it. Payroll may
@@ -1180,6 +1293,19 @@ public class PayrollRunItemService {
         // ── 1. Simple fields (no cascade) ────────────────────────────────────
         if (req.getNote() != null) {
             item.setNote(req.getNote());
+        }
+
+        /*
+         * The director's note. Refused LOUDLY rather than ignored: somebody who
+         * types a sentence and gets a silent success believes it is on the
+         * payslip. The same rule the hourly rate follows.
+         */
+        if (req.isDirectorNotePresent()) {
+            if (!permissionService.hasPermission(AppPermission.PAYROLL_DIRECTOR_NOTE)) {
+                throw new ConflictException("Nemate pravo da menjate napomenu direktora.");
+            }
+            String value = req.getDirectorNote();
+            item.setDirectorNote(value == null || value.isBlank() ? null : value);
         }
         // The current month's phone is edited on its LINE, through the adjustments
         // array — PHONE_CURRENT_MONTH is a MANUAL category whose editable input IS
@@ -1250,11 +1376,14 @@ public class PayrollRunItemService {
             // then set FIXED_SALARY = netEarnings - meal - SUM(applied ADDITIONS excl. FIXED_SALARY)
             BigDecimal netEarnings = req.getTotalNetEarnings().setScale(2, RoundingMode.HALF_UP);
             item.setTotalNetEarnings(netEarnings);
-            item.setHourlyRate(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-            item.setHourlyRateOverridden(
-                    item.getHourlyRateSystem() != null &&
-                    BigDecimal.ZERO.compareTo(item.getHourlyRateSystem()) != 0);
-            recalculateCategoriesForHourlyRate(id, BigDecimal.ZERO);
+            // A typed zero, so it survives recalculation like any other typed
+            // rate. Clearing the mark with it: this item is no longer paid by the
+            // hour at all, and leaving the mark in force would multiply a zero
+            // and read as though it still did something.
+            item.setHourlyRateManual(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+            clearAppliedMark(item);
+            applyDerivedHourlyRate(item);
+            recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
 
             // Every applied earning except FIXED_SALARY itself, which is the figure
             // being solved for. Meal is no longer subtracted separately: it is a
@@ -1275,16 +1404,42 @@ public class PayrollRunItemService {
             updateAdjustmentByCategoryCode(id, CAT_CODE_FIXED_SALARY, fixedValue, true);
 
         } else if (req.isHourlyRatePresent()) {
-            // null = reset to system value; value == system = overridden false
-            BigDecimal newRate = req.getHourlyRate() != null
+            /*
+             * The typed value goes to hourly_rate_manual, NOT to hourly_rate.
+             * hourly_rate is derived from it and is written by
+             * applyDerivedHourlyRate; writing it here directly would be the bug
+             * this split exists to prevent — a mark applied afterwards would
+             * multiply a figure that already had a mark in it.
+             *
+             * Explicit null = RESET: take the system rate again. A typed figure
+             * that EQUALS the system rate is also stored as null, so that typing
+             * the system value still reads as "not overridden" — the behaviour
+             * hourly_rate_overridden had before it became a derived flag.
+             */
+            BigDecimal typed = req.getHourlyRate() != null
                     ? req.getHourlyRate().setScale(2, RoundingMode.HALF_UP)
-                    : item.getHourlyRateSystem();
-            if (newRate == null) newRate = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-            item.setHourlyRate(newRate);
-            item.setHourlyRateOverridden(
-                    item.getHourlyRateSystem() != null &&
-                    newRate.compareTo(item.getHourlyRateSystem()) != 0);
-            recalculateCategoriesForHourlyRate(id, newRate);
+                    : null;
+
+            if (typed != null && item.getHourlyRateSystem() != null
+                    && typed.compareTo(item.getHourlyRateSystem()) == 0) {
+                typed = null;
+            }
+
+            /*
+             * A typed rate ENDS the mark's effect.
+             *
+             * The alternative — keeping it applied and multiplying the new
+             * figure — is how a rate gets multiplied twice without anybody
+             * noticing. And leaving it applied while ignoring it would make
+             * "vrati na prethodnu vrednost" restore a value from before this
+             * edit, which is not the value anybody was looking at. The mark
+             * itself is kept, so it can be applied again deliberately.
+             */
+            clearAppliedMark(item);
+
+            item.setHourlyRateManual(typed);
+            applyDerivedHourlyRate(item);
+            recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
         }
 
         // ── 8. Final summary totals & persist ────────────────────────────────
@@ -1451,6 +1606,42 @@ public class PayrollRunItemService {
      * Formula: amount = (effectiveMinutes / 60) * hourlyRate
      *          bonusAmount = amount * performanceCoefficient  (only if categoryAffectsBonusSnapshot)
      */
+    /**
+     * Writes the rate the month is calculated at, from the three inputs it is
+     * derived from.
+     *
+     * <p><b>The only place hourly_rate is assigned.</b> Everything else sets one
+     * of the inputs — the typed rate, the system rate, or whether the mark is in
+     * force — and calls this. That is what keeps "typed 500" and "500 because a
+     * mark of 1.1 was applied to 454.55" from ever being written into the same
+     * field and becoming indistinguishable.
+     *
+     * <p>Deliberately does NOT touch the category rows. The patch paths call
+     * {@link #recalculateCategoriesForHourlyRate} straight after; the
+     * recalculation path rewrites every category from the monthly report further
+     * down, and doing it here as well would compute the same rows twice.
+     */
+    private void applyDerivedHourlyRate(PayrollRunItem item) {
+        item.setHourlyRate(item.effectiveHourlyRate());
+        // "A person typed this rate" — NOT "this rate differs from the system's",
+        // which is a different question the moment a mark is applied.
+        item.setHourlyRateOverridden(item.getHourlyRateManual() != null);
+    }
+
+    /**
+     * Takes the mark out of force, keeping the mark itself.
+     *
+     * <p>Keeping it is the point: a mark that was withdrawn because somebody
+     * typed a rate is still the mark that supervisor gave, and having to give it
+     * again would lose both the value and who decided it. Only its EFFECT is
+     * undone.
+     */
+    private void clearAppliedMark(PayrollRunItem item) {
+        item.setPerformanceMarkApplied(false);
+        item.setPerformanceMarkAppliedBy(null);
+        item.setPerformanceMarkAppliedAt(null);
+    }
+
     private void recalculateCategoriesForHourlyRate(Long itemId, BigDecimal newHourlyRate) {
         List<PayrollRunItemCategory> categories =
                 payrollRunItemCategoryRepository.findByPayrollRunItemIdWithWorkCodeCategory(itemId);
@@ -2191,8 +2382,21 @@ public class PayrollRunItemService {
                 || fieldAccessService.accessForCurrentUser().values().stream()
                         .anyMatch(PayrollFieldAccessService.Access::canEdit);
 
+        /*
+         * The two guards patch() applies, answered here so the screen and the
+         * endpoint cannot disagree. Written out rather than derived from
+         * openForEditing above: that one is DRAFT-only for everybody, which is
+         * narrower than what the server actually accepts — payroll may still
+         * correct a submitted month.
+         */
+        boolean canEditItem = item != null
+                && !STATUS_LOCKED.equals(item.getStatus())
+                && !(STATUS_APPROVED.equals(item.getStatus())
+                        && payrollVisibilityPolicy.isRestrictedUser());
+
         return new PayrollRunItemPermissionsDto(
                 openForEditing && mayChangeSomething,
+                canEditItem,
                 canLock,
                 canApprove,
                 mayEditItemField(PayrollFieldAccessService.FIELD_HOURLY_RATE),
@@ -2280,10 +2484,19 @@ public class PayrollRunItemService {
         BigDecimal employeeRate = hourlyRateFor(item, pricingDate);
         if (employeeRate != null) {
             item.setHourlyRateSystem(employeeRate);
-            if (!Boolean.TRUE.equals(item.getHourlyRateOverridden())) {
-                item.setHourlyRate(employeeRate);
-            }
         }
+        /*
+         * Derived, and re-derived here on every recalculation — which is the
+         * whole point of storing the typed rate and the mark separately. A rate
+         * that was raised by a mark follows the system rate when THAT moves; a
+         * typed rate goes on overriding it. Neither can be silently flattened by
+         * the other, which the single `if (!overridden) setHourlyRate(system)`
+         * this replaced could not express.
+         *
+         * Unconditional: an item whose employee has no rate at all still has to
+         * end up with hourly_rate agreeing with its own three inputs.
+         */
+        applyDerivedHourlyRate(item);
 
         // ── Payroll minutes ───────────────────────────────────────────────────
         // The corrections are rows. Summing them rather than reading the column
@@ -2798,6 +3011,167 @@ public class PayrollRunItemService {
         item.setManualAdjustedMinutes(minutes);
     }
 
+    // ── The performance mark (ocena) ────────────────────────────────────────
+    //
+    // TWO DECISIONS BY TWO PEOPLE, and that is the whole shape of this feature.
+    // A supervisor (or an administrator) says what the month was worth; only an
+    // administrator turns that into money. Giving a mark changes no figure —
+    // which is what makes it safe for the person who knows the work to give one
+    // without also holding the payroll.
+
+    /** The rate a mark is applied to, and what "vrati" returns to. */
+    private static final BigDecimal MARK_MIN = BigDecimal.ZERO;
+    private static final BigDecimal MARK_MAX = new BigDecimal("2");
+
+    /**
+     * Records the mark, or takes it away when {@code mark} is null.
+     *
+     * <p>Changes NOTHING about what the employee is paid. If the mark was in
+     * force, it stops being — the rate goes back to its base and the
+     * administrator has to apply the new mark deliberately. Silently
+     * re-multiplying by an edited mark would let a supervisor move somebody's
+     * pay through a control that is supposed to be an opinion.
+     */
+    @Transactional
+    public PayrollRunItemDetailResponse setPerformanceMark(Long id, BigDecimal mark) {
+        PayrollRunItem item = loadEditableItem(id);
+        markHumanDecision(id);
+
+        if (mark == null) {
+            boolean wasApplied = Boolean.TRUE.equals(item.getPerformanceMarkApplied());
+            item.setPerformanceMark(null);
+            item.setPerformanceMarkBy(null);
+            item.setPerformanceMarkAt(null);
+            clearAppliedMark(item);
+            if (wasApplied) {
+                // The rate was the base times the mark; with no mark left it is
+                // the base again.
+                applyDerivedHourlyRate(item);
+                recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
+            }
+        } else {
+            BigDecimal value = mark.setScale(2, RoundingMode.HALF_UP);
+            if (value.compareTo(MARK_MIN) < 0 || value.compareTo(MARK_MAX) > 0) {
+                throw new IllegalArgumentException(
+                        "Ocena mora biti između 0 i 2 (uneto: " + mark + ").");
+            }
+
+            boolean wasApplied = Boolean.TRUE.equals(item.getPerformanceMarkApplied());
+            item.setPerformanceMark(value);
+            item.setPerformanceMarkBy(requireCurrentUser());
+            item.setPerformanceMarkAt(OffsetDateTime.now());
+            // A NEW mark is not the applied one. The administrator applies it.
+            clearAppliedMark(item);
+            if (wasApplied) {
+                applyDerivedHourlyRate(item);
+                recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
+            }
+        }
+
+        recalculateSummaryTotals(item);
+        item.setUpdatedAt(OffsetDateTime.now());
+        payrollRunItemRepository.save(item);
+
+        return getDetails(item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null);
+    }
+
+    /**
+     * Puts the mark in force: the rate becomes the base multiplied by it.
+     *
+     * <p>The base is NOT read out of hourly_rate. It is
+     * {@code COALESCE(typed, system)}, which is why applying twice cannot
+     * compound and why the system rate moving later carries the mark with it.
+     */
+    @Transactional
+    public PayrollRunItemDetailResponse applyPerformanceMark(Long id) {
+        PayrollRunItem item = loadEditableItem(id);
+        markHumanDecision(id);
+
+        if (item.getPerformanceMark() == null) {
+            throw new ConflictException("Ovom obračunu nije dodeljena ocena, pa nema šta da se primeni.");
+        }
+        if (Boolean.TRUE.equals(item.getPerformanceMarkApplied())) {
+            throw new ConflictException("Ocena je već primenjena na ovaj obračun.");
+        }
+
+        item.setPerformanceMarkApplied(true);
+        item.setPerformanceMarkAppliedBy(requireCurrentUser());
+        item.setPerformanceMarkAppliedAt(OffsetDateTime.now());
+
+        applyDerivedHourlyRate(item);
+        recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
+        recalculateSummaryTotals(item);
+        item.setUpdatedAt(OffsetDateTime.now());
+        payrollRunItemRepository.save(item);
+
+        return getDetails(item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null);
+    }
+
+    /**
+     * Takes the mark out of force. The rate returns to its base.
+     *
+     * <p>Always available, which was the requirement: whatever the mark did to
+     * the rate can be undone. It is exact rather than a division — the base was
+     * never overwritten, so there is nothing to reconstruct and no rounding to
+     * lose.
+     */
+    @Transactional
+    public PayrollRunItemDetailResponse revertPerformanceMark(Long id) {
+        PayrollRunItem item = loadEditableItem(id);
+        markHumanDecision(id);
+
+        if (!Boolean.TRUE.equals(item.getPerformanceMarkApplied())) {
+            throw new ConflictException("Ocena nije primenjena na ovaj obračun.");
+        }
+
+        clearAppliedMark(item);
+
+        applyDerivedHourlyRate(item);
+        recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
+        recalculateSummaryTotals(item);
+        item.setUpdatedAt(OffsetDateTime.now());
+        payrollRunItemRepository.save(item);
+
+        return getDetails(item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null);
+    }
+
+    /**
+     * The same two doors {@code patch} goes through, and for the same reasons:
+     * a locked month is a record of what was paid, and a month the shop floor
+     * has handed over is theirs no longer.
+     *
+     * <p>Written out here rather than reused from patch() because patch()
+     * interleaves them with its own field checks; sharing would have meant
+     * either moving those or passing flags to say which to skip.
+     */
+    private PayrollRunItem loadEditableItem(Long id) {
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        if (STATUS_LOCKED.equals(item.getStatus())) {
+            throw new ConflictException("Obračun je zaključan i više se ne menja.");
+        }
+        if (STATUS_APPROVED.equals(item.getStatus()) && payrollVisibilityPolicy.isRestrictedUser()) {
+            throw new ConflictException(
+                    "Obračun je predat i više se ne menja. Vratite ga na doradu da biste ga menjali.");
+        }
+        return item;
+    }
+
+    /**
+     * Who is doing this. Required rather than optional: the schema refuses a
+     * mark that nobody signed, and an unattributable change to somebody's pay is
+     * the thing this table's audit exists to prevent.
+     */
+    private com.aleksandarparipovic.marel_app.user.User requireCurrentUser() {
+        Long userId = currentUserService.getCurrentUserId();
+        if (userId == null) {
+            throw new ConflictException("Ocenu može da upiše samo prijavljeni korisnik.");
+        }
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Korisnik nije pronađen: " + userId));
+    }
+
     private static int safe(Integer v) { return v != null ? v : 0; }
 
     private void initializeCreateDefaults(PayrollRunItem item) {
@@ -2822,6 +3196,9 @@ public class PayrollRunItemService {
         if (item.getHourlyRate() == null)               item.setHourlyRate(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getHourlyRateSystem() == null)         item.setHourlyRateSystem(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         if (item.getHourlyRateOverridden() == null)     item.setHourlyRateOverridden(false);
+        // NOT NULL in the schema, and false is the honest default: a brand new
+        // item has no mark, so it cannot have one in force.
+        if (item.getPerformanceMarkApplied() == null)   item.setPerformanceMarkApplied(false);
 
 
         if (item.getPreviouslyPaidAmount() == null)     item.setPreviouslyPaidAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));

@@ -8,5 +8,8 @@ package com.aleksandarparipovic.marel_app.outbox;
 public enum OutboxAggregateType {
     USER_REGISTRATION_REQUEST,
     MANUFACTURING_TIME_REQUEST,
-    PRODUCTION_ORDER
+    ORDER_SCOPE_REQUEST,
+    PRODUCTION_ORDER,
+    SAMPLE_ORDER,
+    PAYROLL_CHANGE_REQUEST
 }

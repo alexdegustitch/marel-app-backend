@@ -34,4 +34,14 @@ public class ManufacturingTimeRequestCreateRequest {
      * mismatch rather than quietly picking one of the two.
      */
     private Long productionOrderLineItemId;
+
+    /**
+     * Optional: the sample-order line the request was raised on. Same rule as
+     * above — when it is set, {@code productId} must be that line's product.
+     *
+     * <p>Sending both this and {@code productionOrderLineItemId} is refused: a
+     * request has one occasion, and picking one of the two for the caller would
+     * file the request against an order nobody named.
+     */
+    private Long sampleOrderLineItemId;
 }

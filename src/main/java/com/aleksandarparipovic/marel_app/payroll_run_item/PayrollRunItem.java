@@ -126,14 +126,108 @@ public class PayrollRunItem {
     @Column(name = "total_net_earnings")
     private BigDecimal totalNetEarnings;
 
+    /**
+     * The rate this month was actually calculated at — DERIVED from the three
+     * fields below, and written to the row so every downstream reader (the
+     * categories, the totals, the payslip, the reports) goes on reading one
+     * column that means one thing.
+     *
+     * <p>Never set directly. {@link #baseHourlyRate()} and
+     * {@link #effectiveHourlyRate()} are the derivation, and
+     * {@code PayrollRunItemService.applyDerivedHourlyRate} is the only place
+     * that writes it.
+     */
     @Column(name = "hourly_rate", nullable = false)
     private BigDecimal hourlyRate;
 
+    /** What the employee's rate history says the rate was for this period. */
     @Column(name = "hourly_rate_system", nullable = false)
     private BigDecimal hourlyRateSystem;
 
+    /**
+     * The rate a PERSON typed. Null means nobody did and the system rate stands.
+     *
+     * <p>Separate from {@link #hourlyRate} because the two stop being the same
+     * thing the moment a mark is applied: without it, applying a mark would
+     * overwrite the typed value and applying it twice would compound.
+     *
+     * <p>Stored as null when the typed figure EQUALS the system one, so that
+     * typing the system value still reads as "not overridden" — the behaviour
+     * this column replaced.
+     */
+    @Column(name = "hourly_rate_manual")
+    private BigDecimal hourlyRateManual;
+
+    /**
+     * Whether a person typed the rate — {@code hourlyRateManual != null}.
+     *
+     * <p>Kept as a column because the screens and the payslip read it, and
+     * because it is what the partial audit trigger watches. It is NOT the same
+     * question as "does the rate differ from the system's": a rate raised by an
+     * applied mark differs from the system's and was typed by nobody.
+     */
     @Column(name = "hourly_rate_overridden", nullable = false)
     private Boolean hourlyRateOverridden;
+
+    // ── Performance mark (ocena) ────────────────────────────────────────────
+
+    /**
+     * The ocena, between 0 and 2.
+     *
+     * <p>Given by a supervisor or an administrator; it changes NOTHING on its
+     * own. Multiplying the rate by it is {@link #performanceMarkApplied}, which
+     * is a separate decision by a separate person — the administrator.
+     */
+    @Column(name = "performance_mark")
+    private BigDecimal performanceMark;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "performance_mark_by")
+    private com.aleksandarparipovic.marel_app.user.User performanceMarkBy;
+
+    @Column(name = "performance_mark_at")
+    private OffsetDateTime performanceMarkAt;
+
+    /**
+     * Whether {@link #hourlyRate} is currently the base multiplied by the mark.
+     *
+     * <p>Cleared whenever the rate is typed by hand, because the value then no
+     * longer comes from the mark and "vrati na prethodnu vrednost" would
+     * otherwise restore a figure from before that edit.
+     */
+    @Column(name = "performance_mark_applied", nullable = false)
+    private Boolean performanceMarkApplied = false;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "performance_mark_applied_by")
+    private com.aleksandarparipovic.marel_app.user.User performanceMarkAppliedBy;
+
+    @Column(name = "performance_mark_applied_at")
+    private OffsetDateTime performanceMarkAppliedAt;
+
+    /**
+     * The rate before any mark — what "primeni" multiplies and what "vrati"
+     * returns to.
+     *
+     * <p>Not a stored snapshot of the pre-mark value, deliberately. The system
+     * rate can move while a mark is applied; a snapshot would then have "vrati"
+     * restore a figure that is no longer anybody's rate, and the mark would
+     * silently stop tracking. Read fresh, the mark re-applies to whatever the
+     * base is now.
+     */
+    public BigDecimal baseHourlyRate() {
+        BigDecimal base = hourlyRateManual != null ? hourlyRateManual : hourlyRateSystem;
+        return base != null ? base : BigDecimal.ZERO;
+    }
+
+    /** The base, multiplied by the mark when — and only when — it is applied. */
+    public BigDecimal effectiveHourlyRate() {
+        BigDecimal base = baseHourlyRate();
+        if (!Boolean.TRUE.equals(performanceMarkApplied) || performanceMark == null) {
+            return base.setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        return base.multiply(performanceMark).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
 
     // ── Meal allowance ──────────────────────────────────────────────────────
 
@@ -208,6 +302,20 @@ public class PayrollRunItem {
 
     @Column(name = "note")
     private String note;
+
+    /**
+     * The note printed on THIS MONTH'S payslip under "Napomena Direktora".
+     *
+     * <p>Rich text, like {@link #note}. Distinct from the worker's standing
+     * general note ({@code employees.notes}), which the payslip used to print
+     * under that heading and no longer does — a heading that names one thing and
+     * prints another is worse than no heading.
+     *
+     * <p>Withheld from anybody without PAYROLL_DIRECTOR_NOTE by the service, not
+     * by the schema.
+     */
+    @Column(name = "director_note")
+    private String directorNote;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

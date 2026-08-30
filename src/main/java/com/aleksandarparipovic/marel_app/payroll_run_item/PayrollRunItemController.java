@@ -22,6 +22,57 @@ import java.util.Map;
 public class PayrollRunItemController {
 
     private final PayrollRunItemService payrollRunItemService;
+    /**
+     * Locking asks for the caller's password as well as their permission. Done
+     * HERE rather than in the service: it is a question about the session, and a
+     * service method that demanded one would demand it from every internal
+     * caller that has neither.
+     */
+    private final com.aleksandarparipovic.marel_app.auth.StepUpVerificationService stepUp;
+
+    // ── The performance mark (ocena) ────────────────────────────────────────
+    //
+    // Three endpoints rather than three fields on the patch body, because the
+    // two halves are held by two different people. Folding them into patch would
+    // mean one permission for the whole request and a supervisor who could apply
+    // a mark by sending the right JSON.
+
+    /**
+     * Gives the mark, or takes it away with a null body value.
+     *
+     * <p>Changes no figure. The rate only moves when somebody APPLIES the mark,
+     * which is the endpoint below and a different permission.
+     */
+    @PatchMapping("/{id}/performance-mark")
+    @PreAuthorize("@perm.has('PAYROLL_MARK_EDIT')")
+    public ResponseEntity<PayrollRunItemDetailResponse> setPerformanceMark(
+            @PathVariable Long id,
+            @RequestBody PerformanceMarkRequest request
+    ) {
+        return ResponseEntity.ok(payrollRunItemService.setPerformanceMark(id, request.mark()));
+    }
+
+    /** Puts the mark in force: the hourly rate becomes the base times the mark. */
+    @PostMapping("/{id}/performance-mark/apply")
+    @PreAuthorize("@perm.has('PAYROLL_MARK_APPLY')")
+    public ResponseEntity<PayrollRunItemDetailResponse> applyPerformanceMark(@PathVariable Long id) {
+        return ResponseEntity.ok(payrollRunItemService.applyPerformanceMark(id));
+    }
+
+    /** Takes it out of force. The rate returns to its base, exactly. */
+    @PostMapping("/{id}/performance-mark/revert")
+    @PreAuthorize("@perm.has('PAYROLL_MARK_APPLY')")
+    public ResponseEntity<PayrollRunItemDetailResponse> revertPerformanceMark(@PathVariable Long id) {
+        return ResponseEntity.ok(payrollRunItemService.revertPerformanceMark(id));
+    }
+
+    /**
+     * A record rather than a bare BigDecimal, so that {@code null} can arrive as
+     * a real value — {@code {"mark": null}} means "take the mark away", which a
+     * plain body could not express.
+     */
+    public record PerformanceMarkRequest(java.math.BigDecimal mark) {
+    }
 
     @GetMapping("/last-activity")
     public ResponseEntity<List<PayrollRunItemActivityDto>> getLastActivity(
@@ -123,10 +174,26 @@ public class PayrollRunItemController {
      * list of the lines still waiting for input — a month must not be frozen with a
      * zero nobody decided on.
      */
+    /**
+     * Freezes the month.
+     *
+     * <p>Carries the caller's own password on top of PAYROLL_LOCK. Locking
+     * publishes the payroll to the employee and closes it to every further edit,
+     * and it cannot be taken back by simply doing the opposite — reopening
+     * leaves both steps in the history for good. Verified BEFORE anything else,
+     * so a wrong password costs no work and changes nothing.
+     */
     @PostMapping("/{id}/lock")
     @PreAuthorize("@perm.has('PAYROLL_LOCK')")
-    public ResponseEntity<PayrollRunItemResponse> lock(@PathVariable Long id) {
+    public ResponseEntity<PayrollRunItemResponse> lock(
+            @PathVariable Long id,
+            @RequestBody(required = false) LockRequest request) {
+        stepUp.requireCurrentPassword(request == null ? null : request.password());
         return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.lock(id)));
+    }
+
+    /** The password of the account pressing the button, nobody else's. */
+    public record LockRequest(String password) {
     }
 
     /**
@@ -146,8 +213,17 @@ public class PayrollRunItemController {
     }
 
     /** Send it back for correction. Same people who may hand it over. */
+    /**
+     * Payroll handing a submitted month back of its own accord.
+     *
+     * <p>PAYROLL_LOCK, not PAYROLL_HANDOVER: once the month is submitted, payroll
+     * may already have worked on it, and taking it back underneath them
+     * invalidates that. The supervisor's way back is a change request, which
+     * payroll answers. PAYROLL_HANDOVER still lets them SUBMIT — that half is
+     * unchanged.
+     */
     @PostMapping("/{id}/return-to-draft")
-    @PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
+    @PreAuthorize("@perm.has('PAYROLL_LOCK')")
     public ResponseEntity<PayrollRunItemResponse> returnToDraft(
             @PathVariable Long id,
             @RequestBody(required = false) HandoverRequest request) {

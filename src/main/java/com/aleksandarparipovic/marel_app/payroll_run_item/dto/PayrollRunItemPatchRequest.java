@@ -24,6 +24,17 @@ public class PayrollRunItemPatchRequest {
     private String note;
     private BigDecimal totalNetEarnings;
 
+    /**
+     * The director's note for this month's payslip.
+     *
+     * <p>Carries a presence flag for the same reason the hourly rate does: an
+     * explicit {@code null} means CLEAR IT, and an absent field means leave it
+     * alone. Without the flag the two are the same value and the note could
+     * never be emptied.
+     */
+    private String directorNote;
+    private boolean directorNotePresent;
+
     // ── Overridable fields (null = reset to system value) ────────────────────
     // Each field has a companion "present" flag so the service can distinguish
     // "field absent from JSON" (flag=false) from "field explicitly sent as null" (flag=true, value=null).
@@ -75,5 +86,12 @@ public class PayrollRunItemPatchRequest {
     public void setHourlyRate(BigDecimal v) {
         this.hourlyRate = v;
         this.hourlyRatePresent = true;
+    }
+
+    /** An explicit {@code null} empties the note; an absent field leaves it. */
+    @JsonSetter("directorNote")
+    public void setDirectorNote(String v) {
+        this.directorNote = v;
+        this.directorNotePresent = true;
     }
 }

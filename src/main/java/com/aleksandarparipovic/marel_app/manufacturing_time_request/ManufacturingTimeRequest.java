@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.ProductManufacturingTime;
 import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
+import com.aleksandarparipovic.marel_app.sample_order_line_item.SampleOrderLineItem;
 import com.aleksandarparipovic.marel_app.user.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -105,6 +106,23 @@ public class ManufacturingTimeRequest {
     @JoinColumn(name = "production_order_line_item_id", updatable = false)
     private ProductionOrderLineItem productionOrderLineItem;
 
+    /**
+     * The sample-order line the request was raised on. Same meaning, same
+     * not-updatable reasoning as {@link #productionOrderLineItem}, and MUTUALLY
+     * EXCLUSIVE with it: a request comes from one line or from none.
+     *
+     * <p>Samples are where somebody first notices that a product has no
+     * manufacturing time — the piece is made once, by hand, and the question
+     * "how long will this take in a run" is asked right there.
+     *
+     * <p>{@code chk_manufacturing_time_requests_single_occasion} enforces the
+     * exclusion; {@link #occasionLineItemId()} is what reads it back without a
+     * caller having to remember which of the two is set.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "sample_order_line_item_id", updatable = false)
+    private SampleOrderLineItem sampleOrderLineItem;
+
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 
@@ -123,6 +141,22 @@ public class ManufacturingTimeRequest {
     @Version
     @Column(name = "version", nullable = false)
     private Long version;
+
+    /**
+     * The line this request was raised on, whichever kind of order it belongs
+     * to, or null when it was raised on its own.
+     *
+     * <p>Exists so that "does this request have an occasion" is one question
+     * rather than two — the database already guarantees at most one of the two
+     * columns is set, and a caller that checks only the production one would
+     * silently treat every sample-raised request as standalone.
+     */
+    public Long occasionLineItemId() {
+        if (productionOrderLineItem != null) {
+            return productionOrderLineItem.getId();
+        }
+        return sampleOrderLineItem == null ? null : sampleOrderLineItem.getId();
+    }
 
     /**
      * Take ownership. Only an unowned, still-pending request can be claimed;

@@ -8,13 +8,17 @@ import lombok.*;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(
-        name = "sample_order_line_items",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uq_sample_order_line_items_order_line",
-                columnNames = {"sample_order_id", "order_line"}
-        )
-)
+/*
+ * No uniqueConstraints here, deliberately.
+ *
+ * The rule is "one LIVE line per position", which JPA cannot express: it is a
+ * PARTIAL unique index (uq_sample_order_line_items_order_line_active, on
+ * sample_order_id and order_line WHERE is_active AND archived_at IS NULL). A
+ * plain UNIQUE was declared here and in the database until V17, and it was
+ * wrong — editing an order archives its lines and inserts a fresh set at the
+ * same positions, so the second save of any order collided with its own history.
+ */
+@Table(name = "sample_order_line_items")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -34,6 +38,11 @@ public class SampleOrderLineItem {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
+    /**
+     * Where the line sits in the order, from 1. Unique among the order's LIVE
+     * lines (uq_sample_order_line_items_order_line_active) — archived revisions
+     * are history and keep whatever position they had.
+     */
     @Column(name = "order_line")
     private Integer orderLine;
 
@@ -41,8 +50,27 @@ public class SampleOrderLineItem {
     @Column(name = "catalog_no")
     private String catalogNo;
 
+    /**
+     * How many. ONE number, unlike a production order's list of dated quantity
+     * rows: samples are made in a single run, so a second row with its own rok
+     * would describe a delivery that does not happen. It can still be changed
+     * afterwards, and each change is kept as a revision in
+     * sample_order_line_item_quantities.
+     *
+     * <p>The database requires it to be positive
+     * ({@code chk_sample_order_line_items_quantity_valid}).
+     */
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
+
+    /**
+     * What to make out of this product for this order — the "opis za radnike".
+     * Distinct from {@link #note}, which is a remark ABOUT the line: the
+     * description is the instruction, and the note is what somebody adds beside
+     * it.
+     */
+    @Column(name = "product_description")
+    private String productDescription;
 
     @Column(name = "note")
     private String note;

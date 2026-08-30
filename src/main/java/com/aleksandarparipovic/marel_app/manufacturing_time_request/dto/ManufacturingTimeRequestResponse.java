@@ -30,6 +30,17 @@ public record ManufacturingTimeRequestResponse(
         /** The line's own description, which may name a variant the product does not. */
         String productionOrderLineDescription,
         /**
+         * The same five for a sample order, all null together when the request
+         * came from a production line or from nowhere. Two sets of fields rather
+         * than one pair plus a kind flag: a reader of this record should be able
+         * to see WHICH kind of order is waiting without decoding a discriminator.
+         */
+        Long sampleOrderLineItemId,
+        Long sampleOrderId,
+        String sampleOrderCode,
+        String sampleOrderName,
+        String sampleOrderLineDescription,
+        /**
          * The record that answers this request, once completed. It may answer
          * other requests too — one manufacturing time settles everyone who asked
          * for the same product's time.

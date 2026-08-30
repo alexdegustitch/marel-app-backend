@@ -55,6 +55,17 @@ class RolePermissionsTest {
         }
 
         @Test
+        @DisplayName("reads sample orders on exactly the same terms")
+        void readsSampleOrdersOnly() {
+            // The split is granted, not inherited: opening one kind of order to
+            // somebody must never silently open the other.
+            assertThat(RolePermissions.roleHas("supervisor", AppPermission.SAMPLE_ORDER_VIEW)).isTrue();
+            assertThat(RolePermissions.roleHas("supervisor", AppPermission.SAMPLE_ORDER_MANAGE)).isFalse();
+            assertThat(RolePermissions.roleHas("supervisor", AppPermission.SAMPLE_ORDER_RECIPIENT_VIEW)).isTrue();
+            assertThat(RolePermissions.roleHas("supervisor", AppPermission.SAMPLE_ORDER_RECIPIENT_MANAGE)).isFalse();
+        }
+
+        @Test
         @DisplayName("writes the catalogue the norms hang off")
         void writesTheCatalogue() {
             assertThat(RolePermissions.forRole("supervisor")).contains(
@@ -145,9 +156,13 @@ class RolePermissionsTest {
         @DisplayName("holds nothing beyond what every signed-in account holds")
         void holdsNothingYet() {
             // No rule has been decided for this role. Until one is, it must get
-            // the screens everybody gets and not one screen more.
+            // the screens everybody gets and not one screen more — today that is
+            // raising the two kinds of request, which the requests screen offers
+            // to every signed-in account that is not the one deciding them.
             assertThat(RolePermissions.forRole("accountant"))
-                    .containsExactly(AppPermission.MANUFACTURING_TIME_REQUEST_CREATE);
+                    .containsExactlyInAnyOrder(
+                            AppPermission.MANUFACTURING_TIME_REQUEST_CREATE,
+                            AppPermission.ORDER_SCOPE_REQUEST_CREATE);
         }
     }
 

@@ -15,6 +15,23 @@ public interface SampleOrderLineItemRepository extends JpaRepository<SampleOrder
     List<SampleOrderLineItem> findBySampleOrder_IdAndIsActiveIsTrueOrderByOrderLineAsc(Long sampleOrderId);
 
     /**
+     * The live lines of several orders at once, with their products.
+     *
+     * <p>One query for a whole page rather than one per order. The product is
+     * fetched with them because every caller reads its name, and leaving it lazy
+     * turns a page of twenty orders into a query per line.
+     */
+    @Query("""
+            select li from SampleOrderLineItem li
+            join fetch li.product
+            where li.sampleOrder.id in :orderIds
+              and li.isActive = true
+              and li.archivedAt is null
+            order by li.sampleOrder.id, li.orderLine
+            """)
+    List<SampleOrderLineItem> findActiveWithProductByOrderIds(@Param("orderIds") List<Long> orderIds);
+
+    /**
      * Every live sample order the product appears on, newest first. Same
      * both-sides filtering as the production-order query.
      */

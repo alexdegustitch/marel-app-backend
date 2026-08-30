@@ -26,6 +26,8 @@ public interface ManufacturingTimeRequestRepository
             left join fetch r.resultManufacturingTime
             left join fetch r.productionOrderLineItem lineItem
             left join fetch lineItem.productionOrder productionOrder
+            left join fetch r.sampleOrderLineItem sampleLineItem
+            left join fetch sampleLineItem.sampleOrder sampleOrder
             where r.id = :id
             """)
     Optional<ManufacturingTimeRequest> findDetailById(@Param("id") Long id);
@@ -46,7 +48,7 @@ public interface ManufacturingTimeRequestRepository
      * The processor queue and history list. Every filter is optional so one query
      * backs the whole screen; all are bound parameters, never concatenated.
      */
-    @Query("""
+    @Query(value = """
             select r
             from ManufacturingTimeRequest r
             join fetch r.product
@@ -57,6 +59,8 @@ public interface ManufacturingTimeRequestRepository
             left join fetch r.resultManufacturingTime
             left join fetch r.productionOrderLineItem lineItem
             left join fetch lineItem.productionOrder productionOrder
+            left join fetch r.sampleOrderLineItem sampleLineItem
+            left join fetch sampleLineItem.sampleOrder sampleOrder
             where (:status is null or r.status = :status)
               and (:productId is null or r.product.id = :productId)
               and (:createdById is null or r.createdBy.id = :createdById)
@@ -75,7 +79,41 @@ public interface ManufacturingTimeRequestRepository
                          when :declined then 3
                          else 4
                      end
-            """)
+            """,
+            /*
+             * COUNTED SEPARATELY, ON PURPOSE.
+             *
+             * Spring derives a count query from the one above when none is given,
+             * and its derivation turns every `left join fetch` into an INNER join.
+             * The fetches here are all optional — an unclaimed request has no
+             * assignee, a free-standing one has no order line — so the derived
+             * count silently dropped exactly those rows. Worse than a wrong number:
+             * when the count comes back SMALLER than the page already holds,
+             * PageImpl decides the count cannot be right and reports
+             * `offset + rows on this page` instead. The total then equals the page
+             * size whatever the queue holds, "prikazi jos" never appears because
+             * `shown < total` is never true, and answering a request does not move
+             * the number.
+             *
+             * So: no fetches here, and only the joins the filters actually read.
+             */
+            countQuery = """
+                    select count(r)
+                    from ManufacturingTimeRequest r
+                    left join r.productionOrderLineItem lineItem
+                    left join lineItem.productionOrder productionOrder
+                    where (:status is null or r.status = :status)
+                      and (:productId is null or r.product.id = :productId)
+                      and (:createdById is null or r.createdBy.id = :createdById)
+                      and (:assignedToId is null or r.assignedTo.id = :assignedToId)
+                      and (:productionOrderId is null
+                           or productionOrder.id = :productionOrderId)
+                      and (:mineUserId is null
+                           or r.createdBy.id = :mineUserId
+                           or r.assignedTo.id = :mineUserId)
+                      and r.createdAt >= :createdFrom
+                      and r.createdAt < :createdTo
+                    """)
     Page<ManufacturingTimeRequest> search(
             @Param("status") ManufacturingTimeRequestStatus status,
             @Param("productId") Long productId,
@@ -163,6 +201,8 @@ public interface ManufacturingTimeRequestRepository
             left join fetch r.targetManufacturingTime
             left join fetch r.productionOrderLineItem lineItem
             left join fetch lineItem.productionOrder productionOrder
+            left join fetch r.sampleOrderLineItem sampleLineItem
+            left join fetch sampleLineItem.sampleOrder sampleOrder
             where (r.status = :pending
                    or (r.status = :inReview and r.assignedTo.id = :actorId))
               and (:createdById is null or r.createdBy.id = :createdById)
@@ -173,6 +213,35 @@ public interface ManufacturingTimeRequestRepository
             @Param("inReview") ManufacturingTimeRequestStatus inReview,
             @Param("actorId") Long actorId,
             @Param("createdById") Long createdById);
+
+    /**
+     * The same question for a sample order: what its lines have to say about
+     * their manufacturing time. Refused and withdrawn requests are left out —
+     * they leave the line exactly as it was, still free to ask again.
+     *
+     * <p>{@code createdById} narrows the answer to one person's own requests,
+     * which is what a caller without the read-all permission is allowed to see.
+     */
+    @Query("""
+            select r
+            from ManufacturingTimeRequest r
+            join fetch r.product
+            join fetch r.createdBy
+            left join fetch r.assignedTo
+            left join fetch r.resultManufacturingTime
+            join fetch r.sampleOrderLineItem lineItem
+            join fetch lineItem.sampleOrder sampleOrder
+            where sampleOrder.id = :sampleOrderId
+              and r.status in :statuses
+              and (:createdById is null or r.createdBy.id = :createdById)
+            """)
+    java.util.List<ManufacturingTimeRequest> findBySampleOrderAndStatusIn(
+            @Param("sampleOrderId") Long sampleOrderId,
+            @Param("statuses") java.util.Collection<ManufacturingTimeRequestStatus> statuses,
+            @Param("createdById") Long createdById);
+
+    boolean existsBySampleOrderLineItem_IdAndStatusIn(
+            Long lineItemId, java.util.Collection<ManufacturingTimeRequestStatus> statuses);
 
     boolean existsByProductionOrderLineItem_IdAndStatusIn(
             Long lineItemId, java.util.Collection<ManufacturingTimeRequestStatus> statuses);
