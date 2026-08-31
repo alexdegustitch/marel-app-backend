@@ -19,10 +19,12 @@ import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRe
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -36,13 +38,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * bank, the bank buys a full day off, and the day it buys stops spoiling the
  * weekend bonus.
  *
- * <p>Not {@code @Transactional}: the recalculation commits in its own
- * transaction, and what this test is about is what ends up committed.
- *
- * <p>The ND and NO categories, and the single operation that carries ND, are
- * created here. They exist in the production database but not in any migration,
- * so a test database has neither — which is itself worth knowing.
+ * <p>{@code @Transactional}, for the reason ProbationRecalcIT already gives: the
+ * recalculation's {@code TransactionTemplate} JOINS the caller's transaction
+ * rather than opening its own, so the whole chain is visible here and none of it
+ * is committed. Without it this class committed eleven scenarios into the
+ * container the whole suite shares, and the adjustment catalogue they left
+ * behind made the rule matrix incomplete for every scheme a later test tried to
+ * activate — nineteen tests in three other classes, none of them about absence.
  */
+@Transactional
 class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
 
     private static final YearMonth MONTH = YearMonth.of(2026, 8);
@@ -60,6 +64,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     @Autowired private AbsenceCompensationAllocator allocator;
     @Autowired private DailyReportRepository dailyReportRepository;
     @Autowired private WorkLogRepository workLogRepository;
+    @Autowired private EntityManager entityManager;
 
     private Employee employee;
     private WorkCodeCategory workCategory;
@@ -122,10 +127,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         WorkShift shift = workedShift(WEDNESDAY, 6, 600);
         assertThat(overtimeFor(WEDNESDAY)).isPresent();
 
-        WorkLog log = workLogRepository.findActiveLogsWithRefsForShift(shift.getId()).get(0);
-        log.setEndAt(shift.getStartAt().plusMinutes(FULL_SHIFT));
-        workLogRepository.saveAndFlush(log);
-        fixture.recalculate(shift);
+        changeWorkTo(shift, FULL_SHIFT);
 
         assertThat(overtimeFor(WEDNESDAY)).isEmpty();
     }
@@ -181,10 +183,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         allocator.allocate(employee.getId(), MONTH);
         assertThat(reload(absence).getOutcome()).isEqualTo(AbsenceOutcome.NO);
 
-        WorkLog log = workLogRepository.findActiveLogsWithRefsForShift(wednesday.getId()).get(0);
-        log.setEndAt(wednesday.getStartAt().plusMinutes(960));
-        workLogRepository.saveAndFlush(log);
-        fixture.recalculate(wednesday);
+        changeWorkTo(wednesday, 960);
 
         allocator.allocate(employee.getId(), MONTH);
         assertThat(reload(absence).getOutcome()).isEqualTo(AbsenceOutcome.ND);
@@ -200,10 +199,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         Long ndLogId = reload(absence).getNdWorkLog().getId();
         assertThat(workLogRepository.findById(ndLogId)).isPresent();
 
-        WorkLog log = workLogRepository.findActiveLogsWithRefsForShift(wednesday.getId()).get(0);
-        log.setEndAt(wednesday.getStartAt().plusMinutes(FULL_SHIFT));
-        workLogRepository.saveAndFlush(log);
-        fixture.recalculate(wednesday);
+        changeWorkTo(wednesday, FULL_SHIFT);
 
         allocator.allocate(employee.getId(), MONTH);
 
@@ -291,6 +287,28 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
                 employee.getId(), weekStart, day, 180);
     }
 
+    /**
+     * Change a shift's recorded work, then rebuild the day.
+     *
+     * <p>The clear() is what makes a SECOND recalculation in one test behave the
+     * way production does. The recalc queue is driven by native SQL, so the
+     * version it bumps never reaches the DailyRecalcQueue instance this
+     * transaction already cached — and processJob's stale-version guard then
+     * reschedules the job instead of writing anything. In production each pass
+     * gets a fresh session and never sees that; here the session is the test's,
+     * and it has to be emptied to match.
+     */
+    private void changeWorkTo(WorkShift shift, int minutes) {
+        WorkLog log = workLogRepository.findActiveLogsWithRefsForShift(shift.getId()).get(0);
+        log.setEndAt(shift.getStartAt().plusMinutes(minutes));
+        workLogRepository.saveAndFlush(log);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        fixture.recalculate(shift);
+    }
+
     private WorkShift workedShift(LocalDate date, int startHour, int minutes) {
         WorkShift shift = fixture.workShift(employee, date, startHour, minutes);
         fixture.workLog(shift, workOperation, workCategory, 0, minutes, 100);
@@ -330,10 +348,10 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     }
 
     /**
-     * Find or create: this class is not {@code @Transactional}, so setUp runs
-     * again against the rows the previous test committed, and
-     * {@code ex_work_code_categories_no_overlap} refuses a second 'NO' whose
-     * validity overlaps the first.
+     * Find or create rather than create: the rollback normally clears these
+     * between tests, but the seeded ND and NO from V25 are already there and
+     * {@code ex_work_code_categories_no_overlap} refuses a second one whose
+     * validity overlaps.
      */
     private WorkCodeCategory absenceCategory(String categoryNo, String name) {
         return categoryRepository

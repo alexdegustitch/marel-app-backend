@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
@@ -107,8 +108,28 @@ public class AbsenceCompensationAllocator {
                 absence.getId(),
                 shift.getWorkDate(),
                 absence.getAbsenceMinutes() == null ? 0 : absence.getAbsenceMinutes(),
-                shift.getTotalMinutes() == null ? 0 : shift.getTotalMinutes(),
+                shiftMinutes(shift),
                 compensable);
+    }
+
+    /**
+     * How long the shift is, from its own boundaries.
+     *
+     * <p>NOT {@code shift.getTotalMinutes()}. That is a generated column mapped
+     * {@code insertable/updatable = false} and WITHOUT {@code @Generated}, so
+     * Hibernate never reads it back: on a shift created or changed in the same
+     * persistence context it is still null. Read from there, every shift measures
+     * zero, no absence ever covers its whole shift, and NOTHING becomes ND —
+     * silently, because zero is a plausible-looking number.
+     *
+     * <p>start_at and end_at are NOT NULL and the database's own generated column
+     * is defined as exactly this difference, so the two cannot disagree.
+     */
+    private static int shiftMinutes(WorkShift shift) {
+        if (shift.getStartAt() == null || shift.getEndAt() == null) {
+            return 0;
+        }
+        return (int) Duration.between(shift.getStartAt(), shift.getEndAt()).toMinutes();
     }
 
     /**

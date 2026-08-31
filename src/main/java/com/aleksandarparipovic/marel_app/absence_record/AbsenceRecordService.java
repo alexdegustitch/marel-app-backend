@@ -124,23 +124,29 @@ public class AbsenceRecordService {
     }
 
     /**
-     * The absences somebody may choose, as of a date.
+     * What this screen may record: neplaćeno odsustvo, and nothing else.
      *
-     * <p>Not the work-log dropdown: that one offers what can be WORKED, and an
-     * absence is the opposite. ND is excluded here for the same reason it is
-     * excluded there — it follows from the overtime bank covering a whole shift
-     * and is never something anybody picks.
+     * <p>NO ONLY, deliberately. This feature is about the absence the overtime
+     * bank can buy back and the weekend bonus it decides. Godišnji odmor, plaćeno
+     * odsustvo and službeno odsutan are paid, take no part in any of it, and are
+     * not this screen's business — offering them here would quietly become a new
+     * way to record them, with new totals behind it.
+     *
+     * <p>ND is not offered either, and for a different reason: it is written by
+     * the application when the bank covers a whole shift, never chosen.
+     *
+     * <p>Returned as a list rather than a single value so the shape survives the
+     * day somebody decides a second kind belongs here.
      */
     @Transactional(readOnly = true)
     public List<AbsenceCategoryDto> selectableCategories(LocalDate workDate) {
-        return categoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc().stream()
+        return categoryRepository
+                .findInForceByCategoryNo(AbsenceCategoryCodes.UNPAID_ABSENCE, workDate)
+                .filter(c -> Boolean.TRUE.equals(c.getIsActive()))
                 .filter(c -> TYPE_ABSENCE.equalsIgnoreCase(c.getType()))
-                .filter(c -> !AbsenceCategoryCodes.NON_WORKING_DAY.equals(c.getCategoryNo()))
-                .filter(c -> (c.getValidFrom() == null || !c.getValidFrom().isAfter(workDate))
-                        && (c.getValidUntil() == null || !c.getValidUntil().isBefore(workDate)))
-                .map(c -> new AbsenceCategoryDto(c.getId(), c.getCategoryNo(), c.getCategoryName(),
-                        Boolean.TRUE.equals(c.getIsPaid())))
-                .toList();
+                .map(c -> List.of(new AbsenceCategoryDto(c.getId(), c.getCategoryNo(),
+                        c.getCategoryName(), Boolean.TRUE.equals(c.getIsPaid()))))
+                .orElseGet(List::of);
     }
 
     /**
