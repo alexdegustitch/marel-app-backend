@@ -3,6 +3,8 @@ package com.aleksandarparipovic.marel_app.work_log;
 import com.aleksandarparipovic.marel_app.common.jpa.EntityReferenceProvider;
 import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
+import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.utils.dates.DateUtil;
 import com.aleksandarparipovic.marel_app.utils.dto.StartEndResult;
 import com.aleksandarparipovic.marel_app.work_category_resolution.WorkCategoryResolution;
@@ -15,17 +17,24 @@ import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 @RequiredArgsConstructor
 @Component
 public class WorkLogMapper {
 
+    /** Matches work_logs.norm_multiplier_manual and the report rows' own column. */
+    private static final int COEFFICIENT_SCALE = 2;
+
     private final WorkLogValidator workLogValidator;
     private final EntityReferenceProvider referenceProvider;
     private final DateUtil dateUtil;
     private final WorkLogCompensationSnapshot compensationSnapshot;
+    private final CurrentUserService currentUserService;
 
     public WorkLogDto toDto(WorkLog workLog) {
         Operation operation = workLog.getOperation();
@@ -64,12 +73,73 @@ public class WorkLogMapper {
                 workLog.getEffectiveWorkCode() == null ? null : workLog.getEffectiveWorkCode().getCategoryNo(),
                 workLog.getIsActive(),
                 workLog.getNormMultiplierSnapshot(),
+                workLog.getNormMultiplierManual(),
                 workLog.getWorkCode() == null ? null : workLog.getWorkCode().getAllowsParallelWork()
         );
     }
 
     private Instant toInstant(java.time.OffsetDateTime value) {
         return value == null ? null : value.toInstant();
+    }
+
+    /**
+     * Write, keep or clear the coefficient somebody typed over the resolved one.
+     *
+     * <p>Three cases, and the last two are why this is not a plain setter:
+     *
+     * <ul>
+     *   <li><b>Nothing sent</b> — the override, if any, is removed and the log
+     *       goes back to what the scheme resolved. That is how a supervisor takes
+     *       it back: clear the field.</li>
+     *   <li><b>The resolved value sent back</b> — not an override at all. Stored
+     *       as none, so nothing claims to be "changed" when it matches the
+     *       default, and typing the default is another way to undo.</li>
+     *   <li><b>The same override sent back</b> — an open form round-tripping what
+     *       it was given. The value stays and so do the name and the moment;
+     *       rewriting them would credit the last person to press Save rather than
+     *       the person who made the decision.</li>
+     * </ul>
+     */
+    private void applyManualCoefficient(WorkLog log, WorkLogFormDto dto, WorkCategoryResolution resolution) {
+        BigDecimal typed = dto.getNormMultiplierManual();
+        BigDecimal scaled = typed == null ? null : typed.setScale(COEFFICIENT_SCALE, RoundingMode.HALF_UP);
+
+        if (scaled != null && scaled.signum() < 0) {
+            throw new IllegalArgumentException("Koeficijent kategorije ne može biti negativan.");
+        }
+
+        // Same as the default: that is the default, not a decision to depart from it.
+        if (scaled != null && resolution != null && resolution.coefficient() != null
+                && scaled.compareTo(resolution.coefficient().setScale(COEFFICIENT_SCALE, RoundingMode.HALF_UP)) == 0) {
+            scaled = null;
+        }
+
+        BigDecimal current = log.getNormMultiplierManual();
+
+        if (scaled == null) {
+            if (current == null) {
+                return;
+            }
+            log.setNormMultiplierManual(null);
+            log.setNormMultiplierManualBy(null);
+            log.setNormMultiplierManualAt(null);
+            return;
+        }
+
+        if (current != null && current.compareTo(scaled) == 0) {
+            return;
+        }
+
+        Long authorId = currentUserService.getCurrentUserId();
+        if (authorId == null) {
+            throw new IllegalStateException(
+                    "Koeficijent može ručno da izmeni samo prijavljeni korisnik.");
+        }
+
+        log.setNormMultiplierManual(scaled);
+        log.setNormMultiplierManualBy(referenceProvider.getRequiredReference(
+                User.class, authorId, "normMultiplierManualBy"));
+        log.setNormMultiplierManualAt(OffsetDateTime.now());
     }
 
     /**
@@ -106,10 +176,15 @@ public class WorkLogMapper {
                 .approvedPerformanceRate(dto.getApprovedPerformanceRate())
                 .build();
 
-        // The coefficient and effective category come from the resolver, never
-        // from the request body: a client must not be able to choose what its own
-        // work is worth.
+        // The RESOLVED coefficient and the effective category come from the
+        // resolver, never from the request body: a client must not be able to
+        // quietly choose what its own work is worth.
         compensationSnapshot.apply(workLog, resolution);
+
+        // A coefficient typed on purpose is the one exception, and it is not
+        // quiet: it lands in its own column, beside the resolved value it
+        // replaced, with a name and a moment attached.
+        applyManualCoefficient(workLog, dto, resolution);
 
         return workLog;
     }
@@ -147,6 +222,7 @@ public class WorkLogMapper {
         // liked and a stale value round-tripped from an open form could overwrite
         // a correct one.
         compensationSnapshot.apply(entity, resolution);
+        applyManualCoefficient(entity, dto, resolution);
 
         if (dto.getIsActive() != null) {
             entity.setIsActive(dto.getIsActive());

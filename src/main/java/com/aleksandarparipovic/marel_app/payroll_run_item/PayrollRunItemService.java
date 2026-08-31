@@ -1475,12 +1475,24 @@ public class PayrollRunItemService {
 
         if (monthlyCategories.isEmpty()) return;
 
-        // Build lookup: workCodeCategoryId → MonthlyReportCategory
-        java.util.Map<Long, MonthlyReportCategory> byWcc = monthlyCategories.stream()
+        /*
+         * Keyed by CATEGORY AND COEFFICIENT, because a month can hold the same
+         * category twice.
+         *
+         * <p>This used to be keyed on the category alone, with `(a, b) -> a` to
+         * settle collisions — which was correct only while collisions were
+         * impossible. Once a supervisor can type a coefficient over one operation,
+         * four hours of J arrive as two hours at 1.10 and two at 1.20, and keeping
+         * the first would have dropped the other two hours out of the payroll
+         * entirely. Not a display fault: that is money the employee worked for and
+         * would not have been paid.
+         */
+        java.util.Map<CategoryCoefficientKey, MonthlyReportCategory> byWcc = monthlyCategories.stream()
                 .collect(java.util.stream.Collectors.toMap(
-                        c -> c.getWorkCodeCategory().getId(),
+                        PayrollRunItemService::keyOf,
                         c -> c,
-                        (a, b) -> a));
+                        (a, b) -> a,
+                        java.util.LinkedHashMap::new));
 
         List<PayrollRunItemCategory> itemCategories =
                 new java.util.ArrayList<>(
@@ -1499,21 +1511,25 @@ public class PayrollRunItemService {
         // Created regardless of what the scheme allows: this row exists because
         // the work is REAL and already recorded. Refusing it here would lose
         // money to make a display rule tidy.
-        java.util.Set<Long> existingCategoryIds = itemCategories.stream()
-                .map(c -> c.getWorkCodeCategory().getId())
-                .collect(java.util.stream.Collectors.toSet());
+        java.util.Set<CategoryCoefficientKey> existingKeys = itemCategories.stream()
+                .map(PayrollRunItemService::keyOf)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
 
-        for (MonthlyReportCategory mrc : monthlyCategories) {
-            Long wccId = mrc.getWorkCodeCategory().getId();
-            if (existingCategoryIds.contains(wccId)) {
+        for (java.util.Map.Entry<CategoryCoefficientKey, MonthlyReportCategory> entry : byWcc.entrySet()) {
+            if (existingKeys.contains(entry.getKey())) {
                 continue;
             }
-            PayrollRunItemCategory created =
-                    payrollRunItemCategoryRepository.save(newItemCategory(item, mrc.getWorkCodeCategory()));
+            MonthlyReportCategory mrc = entry.getValue();
+            PayrollRunItemCategory created = newItemCategory(item, mrc.getWorkCodeCategory());
+            // Stamped before the row is keyed, or the pair it was created FOR would
+            // not be the pair it answers to a line below.
+            created.setCategoryCoefficientSnapshot(entry.getKey().coefficient());
+            created = payrollRunItemCategoryRepository.save(created);
             itemCategories.add(created);
-            existingCategoryIds.add(wccId);
-            log.info("PayrollRunItem {}: added missing category row for {} — the monthly report has activity there",
-                    item.getId(), mrc.getWorkCodeCategory().getCategoryNo());
+            existingKeys.add(entry.getKey());
+            log.info("PayrollRunItem {}: added missing category row for {} at coefficient {}"
+                            + " — the monthly report has activity there",
+                    item.getId(), mrc.getWorkCodeCategory().getCategoryNo(), entry.getKey().coefficient());
         }
 
         BigDecimal hourlyRate = item.getHourlyRate() != null ? item.getHourlyRate() : BigDecimal.ZERO;
@@ -1522,11 +1538,14 @@ public class PayrollRunItemService {
         OffsetDateTime now = OffsetDateTime.now();
 
         for (PayrollRunItemCategory cat : itemCategories) {
-            Long wccId = cat.getWorkCodeCategory().getId();
-            MonthlyReportCategory mrc = byWcc.get(wccId);
+            MonthlyReportCategory mrc = byWcc.get(keyOf(cat));
 
             if (mrc == null) {
-                // No activity for this category this month — zero it out
+                // No activity for this category AT THIS COEFFICIENT this month —
+                // zero it out. A row can arrive here because the category went
+                // quiet, or because the coefficient its work was recorded at has
+                // since changed; either way the minutes are somewhere else now and
+                // leaving old figures on this row would double-count them.
                 cat.setTotalMinutes(0);
                 cat.setTotalPaidMinutes(0);
                 cat.setTotalQuantity(0);
@@ -1560,8 +1579,21 @@ public class PayrollRunItemService {
             var wcc = cat.getWorkCodeCategory();
             cat.setCategoryIsPaidSnapshot(wcc.getIsPaid());
             cat.setCategoryAffectsNormSnapshot(wcc.getNormMultiplier() != null && wcc.getNormMultiplier() > 0);
-            cat.setCategoryCoefficientSnapshot(wcc.getNormMultiplier() != null
-                    ? BigDecimal.valueOf(wcc.getNormMultiplier()) : BigDecimal.ONE);
+            // The coefficient THIS ROW was recorded at, not whatever the category
+            // says today. A supervisor may have typed one over on the operation,
+            // and two rows of the same category may carry two different numbers —
+            // reading the category here would price both of them wrong and would
+            // silently re-price every closed month an administrator edits.
+            cat.setCategoryCoefficientSnapshot(mrc.getNormMultiplier() != null
+                    ? mrc.getNormMultiplier()
+                    : (wcc.getNormMultiplier() != null
+                            ? BigDecimal.valueOf(wcc.getNormMultiplier()) : BigDecimal.ONE));
+            // What this category is worth when nobody has typed anything. Equal to
+            // the above on every ordinary row; the payslip uses it to fold a
+            // category's rows back into one line.
+            cat.setCategoryDefaultCoefficientSnapshot(mrc.getNormMultiplierDefault() != null
+                    ? mrc.getNormMultiplierDefault()
+                    : cat.getCategoryCoefficientSnapshot());
 
             // ── effectiveMinutes = weighted norm minutes (already weighted by daily recalc) ──
             BigDecimal effectiveMinutes = cat.getWeightedNormMinutes().multiply(cat.getCategoryCoefficientSnapshot());
@@ -1598,7 +1630,69 @@ public class PayrollRunItemService {
             cat.setUpdatedAt(now);
         }
 
+        /*
+         * LINES THAT ONLY EVER EXISTED BECAUSE SOMEBODY TYPED A NUMBER.
+         *
+         * Swept AFTER the figures are written rather than while they are, because
+         * a line empties in two different ways and only the finished row shows
+         * both: the month may no longer hold that coefficient at all (the override
+         * was withdrawn, changed again, or the operation moved), or it may still
+         * hold it with nothing on it. Deciding from the monthly rows alone caught
+         * the first and left the second sitting on the payroll as "J, 1.20, 0:00"
+         * — which reads as a fault rather than as the leftover it is.
+         *
+         * A line at the category's OWN coefficient is kept even at zero: "this
+         * category, nothing this month" is an answer somebody may be looking for.
+         *
+         * Safe to delete: a LOCKED item never reaches this method at all
+         * (loadForPayrollAccess returns early), so no frozen payroll can lose a
+         * line, and these rows carry no human input of their own.
+         */
+        List<PayrollRunItemCategory> spentOverrideRows = itemCategories.stream()
+                .filter(PayrollRunItemService::isSpentOverrideRow)
+                .toList();
+
+        if (!spentOverrideRows.isEmpty()) {
+            itemCategories.removeAll(spentOverrideRows);
+        }
+
         payrollRunItemCategoryRepository.saveAll(itemCategories);
+
+        if (!spentOverrideRows.isEmpty()) {
+            payrollRunItemCategoryRepository.deleteAll(spentOverrideRows);
+            log.info("PayrollRunItem {}: removed {} empty override line(s)", item.getId(),
+                    spentOverrideRows.size());
+        }
+    }
+
+    /**
+     * A line at a coefficient somebody typed, with nothing left on it.
+     *
+     * <p>Both halves matter. It must be an OVERRIDE — a coefficient the category
+     * itself does not carry — because a line at the category's own coefficient is
+     * meaningful when empty. And it must be EMPTY: no norm hours and no minutes.
+     *
+     * <p>Both, not either. A line with minutes but no norm hours is not unused —
+     * it is work that measured at nothing, and deleting it would hide time
+     * somebody was present for.
+     *
+     * <p>A row with no default recorded predates the column and is never treated
+     * as an override: nothing is known about what it departed from, and guessing
+     * would delete a line on a hunch.
+     */
+    private static boolean isSpentOverrideRow(PayrollRunItemCategory cat) {
+        BigDecimal ownCoefficient = cat.getCategoryDefaultCoefficientSnapshot();
+        if (ownCoefficient == null) {
+            return false;
+        }
+        boolean overridden = coefficientKey(cat.getCategoryCoefficientSnapshot())
+                .compareTo(coefficientKey(ownCoefficient)) != 0;
+        if (!overridden) {
+            return false;
+        }
+        BigDecimal normMinutes = cat.getWeightedNormMinutes();
+        return (normMinutes == null || normMinutes.compareTo(BigDecimal.ZERO) == 0)
+                && safe(cat.getTotalMinutes()) == 0;
     }
 
     /**
@@ -2316,6 +2410,38 @@ public class PayrollRunItemService {
         return Boolean.TRUE.equals(wcc.getFixedHourlyRate()) && wcc.getHourlyRate() != null
                 ? wcc.getHourlyRate()
                 : itemRate;
+    }
+
+    /**
+     * What identifies one payroll line: a category AT ONE COEFFICIENT.
+     *
+     * <p>Two lines of the same category are not a mistake — they are the same work
+     * priced differently, one of them because somebody decided so. The payslip
+     * folds them back into one; the payroll itself keeps them apart, because that
+     * is where the money is computed.
+     */
+    private record CategoryCoefficientKey(Long categoryId, BigDecimal coefficient) {}
+
+    /**
+     * Normalised so 1.1 and 1.10 are one key.
+     *
+     * <p>They arrive from different places — a report row is NUMERIC(38,2), a
+     * category multiplier is a double — and BigDecimal equality, which is what a
+     * map key uses, calls them different.
+     */
+    private static BigDecimal coefficientKey(BigDecimal coefficient) {
+        return (coefficient == null ? BigDecimal.ONE : coefficient)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static CategoryCoefficientKey keyOf(MonthlyReportCategory mrc) {
+        return new CategoryCoefficientKey(
+                mrc.getWorkCodeCategory().getId(), coefficientKey(mrc.getNormMultiplier()));
+    }
+
+    private static CategoryCoefficientKey keyOf(PayrollRunItemCategory cat) {
+        return new CategoryCoefficientKey(
+                cat.getWorkCodeCategory().getId(), coefficientKey(cat.getCategoryCoefficientSnapshot()));
     }
 
     private PayrollRunItemCategory newItemCategory(PayrollRunItem item,

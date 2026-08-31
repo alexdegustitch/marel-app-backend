@@ -114,7 +114,22 @@ public final class RolePermissions {
                     // Says which worker an account belongs to. They know the floor,
                     // so they are the ones who can answer it — and this grants that
                     // one field, not the editing of accounts.
-                    AppPermission.USER_EMPLOYEE_LINK),
+                    AppPermission.USER_EMPLOYEE_LINK,
+                    /*
+                     * Takes a whole shift back out of the month.
+                     *
+                     * <p>They are the ones who enter shifts and the ones who
+                     * notice a wrong one, so needing an administrator to undo
+                     * their own entry made the correction slower than the mistake.
+                     *
+                     * <p>Safe to grant because the month itself is the guard: a
+                     * payroll that has been handed over or locked refuses the
+                     * removal outright (WorkShiftService.refuseWhenMonthIsClosed),
+                     * so this reaches only months still in the supervisor's own
+                     * hands. And it removes rather than destroys — the work logs
+                     * stay recorded either way.
+                     */
+                    AppPermission.WORK_SHIFT_ARCHIVE),
 
             // Commercial staff drive production orders, the customers behind them
             // and who gets told about them. Nothing about the shop floor, beyond

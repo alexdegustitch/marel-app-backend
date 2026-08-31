@@ -19,6 +19,8 @@ public class PayrollRunItemCategoryResponse {
     private final BigDecimal weightedNormMinutes;
     private final BigDecimal performanceCoefficient;
     private final BigDecimal categoryCoefficientSnapshot;
+    /** The category's own coefficient; what the payslip prints. */
+    private final BigDecimal categoryDefaultCoefficientSnapshot;
     private final BigDecimal effectiveMinutes;
     private final BigDecimal hourlyRate;
     private final BigDecimal amount;
@@ -43,6 +45,7 @@ public class PayrollRunItemCategoryResponse {
         this.weightedNormMinutes = cat.getWeightedNormMinutes();
         this.performanceCoefficient = cat.getPerformanceCoefficient();
         this.categoryCoefficientSnapshot = cat.getCategoryCoefficientSnapshot();
+        this.categoryDefaultCoefficientSnapshot = cat.getCategoryDefaultCoefficientSnapshot();
         this.effectiveMinutes = cat.getEffectiveMinutes();
         this.hourlyRate = cat.getHourlyRate();
         this.amount = cat.getAmount();

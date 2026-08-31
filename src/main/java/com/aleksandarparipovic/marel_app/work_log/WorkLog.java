@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.work_log;
 import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationScheme;
 import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
+import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.WorkCodeCategorySchemeRule;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
@@ -123,6 +124,30 @@ public class WorkLog {
      */
     @Column(name = "norm_multiplier_snapshot", precision = 38, scale = 2)
     private BigDecimal normMultiplierSnapshot;
+
+    /**
+     * The coefficient somebody typed over the resolved one, or null when nobody
+     * did.
+     *
+     * <p><b>Deliberately not written into the snapshot above.</b> That field is
+     * derived — the recalc engine rewrites it whenever the scheme resolves
+     * differently — so a hand-entered value stored there would be erased by the
+     * next recalculation. Kept apart, the resolved coefficient stays available
+     * as the DEFAULT the override is shown against, and the override survives.
+     *
+     * <p>The effective coefficient is this when present and the snapshot
+     * otherwise; see {@code WorkLogCompensationSnapshot.coefficientOf}, which is
+     * the only place that decision is made.
+     */
+    @Column(name = "norm_multiplier_manual", precision = 38, scale = 2)
+    private BigDecimal normMultiplierManual;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "norm_multiplier_manual_by")
+    private User normMultiplierManualBy;
+
+    @Column(name = "norm_multiplier_manual_at")
+    private OffsetDateTime normMultiplierManualAt;
 
     @Column(name = "performance_rate", precision = 38, scale = 2)
     private BigDecimal performanceRate;

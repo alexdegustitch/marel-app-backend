@@ -69,6 +69,16 @@ public class WorkShiftService {
         WorkShift ws = repository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Shift not found"));
         DailyReport dr = dailyReportRepository.findByWorkShiftId(id).orElse(null);
+        /*
+         * Deliberately does NOT report whether the shift is empty.
+         *
+         * <p>It did briefly, so the screen could hide the outright delete for a
+         * shift that holds something. That cost a COUNT over three tables on
+         * every shift card, on every karton, for everybody — to tidy one menu
+         * item that is used a few times a year. The screen offers both actions
+         * and the server refuses the one that cannot run, with a sentence saying
+         * why; the refusal is rare and cheap, the query was neither.
+         */
         return workShiftMapper.toInfoDto(ws, dr);
     }
 
@@ -598,7 +608,7 @@ public class WorkShiftService {
         if (shift.getArchivedAt() != null) {
             throw new ConflictException("Smena je već arhivirana.");
         }
-        refuseWhenMonthIsLocked(shift);
+        refuseWhenMonthIsClosed(shift);
 
         shift.setArchivedAt(OffsetDateTime.now());
         shift.setArchivedBy(currentUserService.getCurrentUserId());
@@ -629,7 +639,7 @@ public class WorkShiftService {
         if (shift.getArchivedAt() == null) {
             return;
         }
-        refuseWhenMonthIsLocked(shift);
+        refuseWhenMonthIsClosed(shift);
 
         shift.setArchivedAt(null);
         shift.setArchivedBy(null);
@@ -660,13 +670,13 @@ public class WorkShiftService {
         WorkShift shift = repository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Smena ne postoji: " + id));
 
-        refuseWhenMonthIsLocked(shift);
+        refuseWhenMonthIsClosed(shift);
 
         long children = countChildren(id);
         if (children > 0) {
             throw new ConflictException(
                     "Smena ima unete radne naloge ili odsustva i ne može se obrisati. "
-                            + "Arhivirajte je — unosi ostaju zabeleženi.");
+                            + "Uklonite je — unosi ostaju zabeleženi.");
         }
 
         dailyReportRepository.findByWorkShiftId(id).ifPresent(dailyReportRepository::delete);
@@ -686,17 +696,27 @@ public class WorkShiftService {
         return count != null ? count.longValue() : 0L;
     }
 
-    private void refuseWhenMonthIsLocked(WorkShift shift) {
+    /**
+     * Refuse to change a month the payroll has already been handed.
+     *
+     * <p>Covers LOCKED and APPROVED alike. Locked is a record of what was paid.
+     * Approved means the shop floor said the month was finished and payroll
+     * started from it — removing a shift then moves their totals with nothing on
+     * screen to explain it, which is worse than a refusal because nobody looks
+     * for a cause they were never told about.
+     */
+    private void refuseWhenMonthIsClosed(WorkShift shift) {
         LocalDate date = shift.getWorkDate();
         if (date == null || shift.getEmployee() == null) {
             return;
         }
-        long locked = payrollRunItemRepository.countLockedForEmployeeAndMonth(
+        long closed = payrollRunItemRepository.countClosedForEmployeeAndMonth(
                 shift.getEmployee().getId(), date.getYear(), date.getMonthValue());
-        if (locked > 0) {
+        if (closed > 0) {
             throw new ConflictException(
                     "Obračun za " + date.getMonthValue() + "/" + date.getYear()
-                            + " je zaključan. Otključajte ga pre nego što uklonite smenu.");
+                            + " je predat ili zaključan. Vratite ga na doradu"
+                            + " pre nego što uklonite smenu.");
         }
     }
 

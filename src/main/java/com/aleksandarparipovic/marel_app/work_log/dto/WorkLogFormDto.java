@@ -24,4 +24,11 @@ public class WorkLogFormDto {
     private BigDecimal performanceRate;
     private BigDecimal approvedPerformanceRate;
     private BigDecimal normMultiplierSnapshot;
+
+    /**
+     * The coefficient somebody typed over the resolved one, or null to go back to
+     * it. Unlike the snapshot above this IS read from the request: it is the one
+     * coefficient a person is allowed to decide, and who decided it is recorded.
+     */
+    private BigDecimal normMultiplierManual;
 }

@@ -376,8 +376,13 @@ public enum AppPermission {
      *
      * <p>Its own permission because it is not a correction: taking a shift back
      * removes a day of work from what somebody is paid, which is a heavier
-     * decision than fixing the hours on it. Admin and developer hold every
-     * permission; nobody else is given this one.
+     * decision than fixing the hours on it.
+     *
+     * <p>Held by the supervisor as well as admin and developer: they enter the
+     * shifts and they are the ones who spot a wrong one. What keeps that safe is
+     * not the permission but the MONTH — a payroll already handed over or locked
+     * refuses the removal, so this only ever reaches a month still being worked
+     * on.
      */
     WORK_SHIFT_ARCHIVE
 }

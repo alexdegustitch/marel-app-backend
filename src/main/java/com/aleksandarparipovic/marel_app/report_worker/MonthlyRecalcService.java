@@ -15,7 +15,6 @@ import com.aleksandarparipovic.marel_app.notification.ReportNotificationService;
 import com.aleksandarparipovic.marel_app.recalc_queue.MonthlyRecalcQueue;
 import com.aleksandarparipovic.marel_app.recalc_queue.MonthlyRecalcQueueRepository;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
-import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +28,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -44,7 +44,6 @@ public class MonthlyRecalcService {
     private final DailyReportRepository dailyReportRepo;
     private final DailyReportCategoryRepository dailyCategoryRepo;
     private final ReportNotificationService notificationService;
-    private final WorkCodeCategoryRepository workCodeCategoryRepository;
     private final RecalcWorkerProperties properties;
     private final MeterRegistry meterRegistry;
     private final EmployeeRecordService employeeRecordService;
@@ -214,10 +213,18 @@ public class MonthlyRecalcService {
             return List.of();
         }
 
-        Map<Long, List<DailyReportCategory>> byCategory = dailyCategories.stream()
-                .collect(Collectors.groupingBy(dc -> dc.getWorkCodeCategory().getId()));
+        // Grouped by category AND coefficient, exactly as the daily rows are: a
+        // month that saw the same category at two coefficients keeps them apart
+        // all the way to the payroll, which is where they are priced.
+        Map<CategoryRowKey, List<DailyReportCategory>> byCategory = dailyCategories.stream()
+                .collect(Collectors.groupingBy(
+                        dc -> new CategoryRowKey(
+                                dc.getWorkCodeCategory().getId(), coefficientKey(dc.getNormMultiplier())),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
 
-        return byCategory.values().stream().map(rows -> {
+        return byCategory.entrySet().stream().map(bucket -> {
+            List<DailyReportCategory> rows = bucket.getValue();
             WorkCodeCategory category = rows.getFirst().getWorkCodeCategory();
             int totalMinutes = rows.stream().mapToInt(c -> safeInt(c.getTotalMinutes())).sum();
             int totalPaidMinutes = rows.stream().mapToInt(c -> safeInt(c.getTotalPaidMinutes())).sum();
@@ -236,6 +243,11 @@ public class MonthlyRecalcService {
                     .totalQuantity(totalQuantity)
                     .totalScrap(totalScrap)
                     .totalWeightedNormMinutes(totalWeightedNormMinutes)
+                    .normMultiplier(bucket.getKey().coefficient())
+                    // Every daily row in this bucket shares the category, so they
+                    // share what the category resolves to; the first is as good as
+                    // any and cheaper than proving they agree.
+                    .normMultiplierDefault(coefficientKey(rows.getFirst().getNormMultiplierDefault()))
                     .totalApprovedMinutes(null)
                     .sourceType(category.getType() != null ? category.getType() : "WORK")
                     .build();
@@ -263,8 +275,11 @@ public class MonthlyRecalcService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(4, RoundingMode.HALF_UP);
 
+        // The coefficient the row was BUILT at, not the one the category carries
+        // today. Recalculating a closed month must reproduce it, and a row whose
+        // coefficient somebody typed has no other place to read it from.
         BigDecimal totalApprovedMinutes = monthlyCategories.stream()
-                .map(mc -> mc.getTotalWeightedNormMinutes().multiply(resolveMultiplier(mc.getWorkCodeCategory(), periodStart)))
+                .map(mc -> mc.getTotalWeightedNormMinutes().multiply(coefficientKey(mc.getNormMultiplier())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(4, RoundingMode.HALF_UP);
 
@@ -317,12 +332,13 @@ public class MonthlyRecalcService {
         }
     }
 
-    private BigDecimal resolveMultiplier(WorkCodeCategory category, LocalDate atDate) {
-        if (category == null || category.getCategoryNo() == null) {
-            return BigDecimal.ONE;
-        }
-        return workCodeCategoryRepository.findEffectiveNormMultiplier(category.getCategoryNo(), atDate)
-                .orElse(BigDecimal.valueOf(category.getNormMultiplier() == null ? 1d : category.getNormMultiplier()));
+    /** One month row per category AT ONE COEFFICIENT — see DailyRecalcService. */
+    private record CategoryRowKey(Long categoryId, BigDecimal coefficient) {}
+
+    /** Rows group by value, not by how the value happens to be written. */
+    private static BigDecimal coefficientKey(BigDecimal coefficient) {
+        return (coefficient == null ? BigDecimal.ONE : coefficient)
+                .setScale(2, RoundingMode.HALF_UP);
     }
 
     private int safeInt(Integer value) {

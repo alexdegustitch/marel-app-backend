@@ -27,12 +27,25 @@ public interface PayrollRunItemCategoryRepository extends JpaRepository<PayrollR
      *
      * <p>{@code id} breaks ties so the order is total even if two categories are
      * ever given the same display_order.
+     *
+     * <p><b>Within one category</b>, the category's own coefficient comes first
+     * and the ones somebody typed follow, ascending. A category is no longer one
+     * line, and "which of these two is the ordinary one" is the first thing a
+     * reader asks — so it is always the one above.
+     *
+     * <p>A line with no default recorded predates the column and sorts with the
+     * ordinary ones: nothing is known about what it departed from, and it is the
+     * only line of its category anyway.
      */
     @Query("""
             SELECT c FROM PayrollRunItemCategory c
             JOIN FETCH c.workCodeCategory wcc
             WHERE c.payrollRunItem.id = :itemId
-            ORDER BY wcc.displayOrder ASC, wcc.id ASC
+            ORDER BY wcc.displayOrder ASC, wcc.id ASC,
+                     CASE WHEN c.categoryDefaultCoefficientSnapshot IS NULL
+                               OR c.categoryCoefficientSnapshot = c.categoryDefaultCoefficientSnapshot
+                          THEN 0 ELSE 1 END ASC,
+                     c.categoryCoefficientSnapshot ASC
             """)
     List<PayrollRunItemCategory> findByPayrollRunItemIdWithWorkCodeCategory(@Param("itemId") Long itemId);
 

@@ -83,12 +83,21 @@ public class WorkLogCompensationSnapshot {
     /**
      * The coefficient this log should be calculated with.
      *
-     * <p>The snapshot wins whenever it exists. It is absent only on rows created
-     * before compensation schemes did, and those fall back to the source
-     * category's multiplier — which is exactly the value they were calculated
-     * with at the time.
+     * <p><b>The one place the choice is made</b>, which is what lets every
+     * consumer — the recalc engine, the interval engine behind PL/PLB, the fast
+     * read path — agree without any of them knowing about schemes or overrides.
+     *
+     * <p>Three sources, in order. A coefficient somebody TYPED wins: it is a
+     * decision, and the resolved value it replaced is still on the row to be
+     * shown beside it. Otherwise the resolved snapshot. It is absent only on rows
+     * created before compensation schemes did, and those fall back to the source
+     * category's multiplier — exactly the value they were calculated with at the
+     * time.
      */
     public static BigDecimal coefficientOf(WorkLog log) {
+        if (log.getNormMultiplierManual() != null) {
+            return log.getNormMultiplierManual();
+        }
         if (log.getNormMultiplierSnapshot() != null) {
             return log.getNormMultiplierSnapshot();
         }

@@ -33,5 +33,6 @@ public class WorkLogDtoImpl implements WorkLogDto {
     private final String effectiveWorkCodeCategoryNo;
     private final Boolean isActive;
     private final java.math.BigDecimal normMultiplierSnapshot;
+    private final java.math.BigDecimal normMultiplierManual;
     private final Boolean allowsParallelWork;
 }
