@@ -161,6 +161,10 @@ public class SecurityConfig {
                                 "/api/daily-report-categories/**",
                                 "/api/monthly-reports/**",
                                 "/api/monthly-report-categories/**",
+                                // Scrap counted at month end, entered from the
+                                // monthly records screen — the same area, so the
+                                // same door.
+                                "/api/monthly-scraps/**",
                                 "/api/employee-records/**",
                                 "/api/work-logs/**",
                                 "/api/work-shifts/**",
