@@ -190,13 +190,13 @@ COMMENT ON COLUMN public.absence_compensations.archived_at IS
 
 
 -- -----------------------------------------------------------------------------
--- 4. The two categories, and the operation ND hangs from
+-- 4. The two categories, and the operations they are drawn with
 -- -----------------------------------------------------------------------------
 -- WHY THIS IS HERE AT ALL
 --   NO and ND exist in the production database and in no migration, so they were
 --   configuration one environment happened to have. A fresh deployment — or a
---   test database — had neither, and NonWorkingDayWriter would refuse to write a
---   neradni dan on a database where the feature is supposed to work.
+--   test database — had neither, and AbsenceLogWriter would refuse to draw a
+--   full day off on a database where the feature is supposed to work.
 --
 -- WHY IT CANNOT SIMPLY INSERT
 --   Production already has both, at ids nothing here may assume, and
@@ -204,24 +204,14 @@ COMMENT ON COLUMN public.absence_compensations.archived_at IS
 --   validity overlaps the first. Every insert below is therefore guarded by the
 --   code it is about: where the row exists, this does nothing at all.
 --
--- WHY ND NEEDS A PRODUCT
---   work_logs.operation_id is NOT NULL and operations.product_id is NOT NULL, so
---   the ND log — which is not work performed on anything — still needs an
---   operation, and that operation still needs a product. norm_required = false,
---   so it carries no norm and is never measured against one.
---
---   NO gets no operation: an unpaid absence is never written as a work log by
---   this application. It is recorded in absence_records, and only ND is drawn on
---   the shift.
+-- WHY EACH NEEDS A PRODUCT
+--   A whole shift nobody came in is drawn on the karton as one operation across
+--   it — NO while it is an unpaid absence, ND once the overtime bank has covered
+--   it. work_logs.operation_id is NOT NULL and operations.product_id is NOT NULL,
+--   so each category needs an operation, and each operation needs a product.
+--   norm_required = false: neither carries a norm or is measured against one.
 -- -----------------------------------------------------------------------------
 
--- valid_from IS EXPLICIT, and that matters more than it reads.
---   The column defaults to CURRENT_DATE, so a seeded row would be in force only
---   from the day the migration ran — and findInForceByCategoryNo, which resolves
---   these by code AT A WORK DATE, would find nothing for any earlier day. An
---   absence recorded for last week would then fail on a category that is plainly
---   sitting in the table. 2020-01-01 is the date the baseline's own seeded
---   category uses, and these are structural codes rather than versions of one.
 INSERT INTO public.work_code_categories
     (category_no, category_name, type, norm_multiplier, is_paid, is_active,
      valid_from, affects_norm, affects_bonus, affects_meal_allowance, base_category,
@@ -241,27 +231,40 @@ WHERE NOT EXISTS (
 );
 
 INSERT INTO public.products (product_name, product_code, description)
-SELECT 'Neradni dan', 'ND', 'Technical product. Exists so the ND operation has one; nothing is produced against it.'
+SELECT v.product_name, v.product_code,
+       'Technical product. Exists so the absence operation has one; nothing is produced against it.'
+FROM (VALUES
+        ('Neplaćeno odsustvo', 'NO'),
+        ('Neradni dan', 'ND')
+     ) AS v(product_name, product_code)
 WHERE NOT EXISTS (
     SELECT 1 FROM public.operations o
     JOIN public.work_code_categories c ON c.id = o.work_code_category_id
-    WHERE c.category_no = 'ND'
+    WHERE c.category_no = v.product_code
+      AND o.is_active = true AND o.archived_at IS NULL
+)
+AND NOT EXISTS (
+    SELECT 1 FROM public.products p WHERE p.product_code = v.product_code
 );
 
 INSERT INTO public.operations
     (product_id, op_name, work_code_category_id, norm_required, is_active, description)
-SELECT p.id, 'Neradni dan', c.id, false, true,
-       'The single operation an ND work log hangs from; work_logs.operation_id is NOT NULL.'
-FROM public.products p
+SELECT p.id, v.op_name, c.id, false, true,
+       'The single operation an absence log hangs from; work_logs.operation_id is NOT NULL.'
+FROM (VALUES
+        ('NO', 'Neplaćeno odsustvo'),
+        ('ND', 'Neradni dan')
+     ) AS v(category_no, op_name)
+JOIN public.products p ON p.product_code = v.category_no
 CROSS JOIN LATERAL (
     SELECT id FROM public.work_code_categories
-    WHERE category_no = 'ND' AND archived_at IS NULL
+    WHERE category_no = v.category_no AND archived_at IS NULL
     ORDER BY valid_from DESC NULLS LAST
     LIMIT 1
 ) c
-WHERE p.product_code = 'ND'
-  AND NOT EXISTS (
+WHERE NOT EXISTS (
     SELECT 1 FROM public.operations o
     JOIN public.work_code_categories wc ON wc.id = o.work_code_category_id
-    WHERE wc.category_no = 'ND'
+    WHERE wc.category_no = v.category_no
+      AND o.is_active = true AND o.archived_at IS NULL
 );

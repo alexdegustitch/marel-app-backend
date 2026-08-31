@@ -4,7 +4,7 @@ import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
-import com.aleksandarparipovic.marel_app.absence_record.NonWorkingDayWriter;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceLogWriter;
 import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecord;
 import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecordRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
@@ -58,7 +58,7 @@ public class AbsenceCompensationAllocator {
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final WorkShiftRepository workShiftRepository;
     private final RecalcQueueService recalcQueueService;
-    private final NonWorkingDayWriter nonWorkingDayWriter;
+    private final AbsenceLogWriter absenceLogWriter;
 
     /**
      * @return the shifts whose NO/ND outcome actually moved. Empty means the
@@ -198,9 +198,14 @@ public class AbsenceCompensationAllocator {
             }
 
             if (verdict.outcome() == AbsenceOutcome.ND) {
-                absence.setNdWorkLog(nonWorkingDayWriter.write(absence));
-            } else {
-                nonWorkingDayWriter.remove(absence);
+                absence.setNdWorkLog(absenceLogWriter.promoteToNonWorkingDay(absence));
+            } else if (before == AbsenceOutcome.ND) {
+                // ONLY on the way OUT of ND. An absence reaching NO for the first
+                // time has no ND log to take back, and writing a NO log for it
+                // here would draw a full day across a shift somebody was only
+                // partly away from — the log belongs to full days alone, and the
+                // side that recorded one already wrote it.
+                absenceLogWriter.demoteToUnpaidAbsence(absence);
             }
             changed.add(absence);
         }

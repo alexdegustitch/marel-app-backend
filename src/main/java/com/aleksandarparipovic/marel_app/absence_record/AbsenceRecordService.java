@@ -61,7 +61,7 @@ public class AbsenceRecordService {
     private final WorkCodeCategoryRepository categoryRepository;
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final RecalcQueueService recalcQueueService;
-    private final NonWorkingDayWriter nonWorkingDayWriter;
+    private final AbsenceLogWriter absenceLogWriter;
     private final WorkIntervalCalculator intervalCalculator;
     private final CurrentUserService currentUserService;
 
@@ -250,7 +250,7 @@ public class AbsenceRecordService {
         WorkShift shift = absence.getWorkShift();
         refuseWhenMonthIsClosed(shift);
 
-        nonWorkingDayWriter.remove(absence);
+        absenceLogWriter.removeAll(absence);
         absence.setIsActive(false);
         absence.setOutcome(null);
         absence.setCompensatedMinutes(0);

@@ -128,27 +128,32 @@ public class DailyRecalcService {
 
         // Heavy reads are executed before the write transaction to reduce lock hold time.
         /*
-         * THE ND LOG IS NOT WORK, AND IS NOT MEASURED AS ANY.
+         * AN ABSENCE LOG IS NOT WORK, AND IS NOT MEASURED AS ANY.
          *
-         * A neradni dan is written as a work log so it shows on the shift beside
-         * everything else. Fed into the aggregation, though, it would be counted
-         * as time present with a coefficient of zero — and since the monthly
-         * efficiency is totalWeightedNormMinutes / totalShiftMinutes, one excused
-         * day would drag a whole month's efficiency down. (On probation it is
-         * worse and the other way: the probation rule credits every row at 100 %,
-         * so an ND day would INFLATE the month instead.)
+         * Both NO and ND are written as work logs so a full day off shows on the
+         * shift beside everything else. Fed into the aggregation, though, either
+         * would be counted as time present with a coefficient of zero — and since
+         * the monthly efficiency is totalWeightedNormMinutes / totalShiftMinutes,
+         * one such day would drag a whole month's efficiency down. (On probation
+         * it is worse and the other way: the probation rule credits every row at
+         * 100 %, so the day would INFLATE the month instead.)
+         *
+         * It also keeps the overtime honest. Overtime is measured from the day's
+         * covered minutes; an eight-hour absence counted as presence would earn
+         * overtime on a day nobody worked.
          *
          * Removed here, once, rather than guarded at each of the four places that
          * would otherwise have to remember: the interval engine, the category
          * rows, the two coefficient denominators, and the analytics facts.
          *
          * The minutes are not lost. They reach total_absence_unpaid_minutes
-         * through the absence record the ND was written for, which carries the
-         * same span — see fillDailyTotals.
+         * through the absence record these logs mirror, which carries the same
+         * span — see fillDailyTotals. Counting BOTH would report a full shift of
+         * absence twice on a day that had one.
          */
         List<WorkLog> logs = workLogRepo.findActiveLogsWithRefsForShift(workShiftId).stream()
                 .filter(wl -> wl.getWorkCode() == null
-                        || !AbsenceCategoryCodes.NON_WORKING_DAY.equals(wl.getWorkCode().getCategoryNo()))
+                        || !AbsenceCategoryCodes.isAbsenceLog(wl.getWorkCode().getCategoryNo()))
                 .toList();
 
         Boolean processed = transactionTemplate.execute(status -> processJobWritePhase(

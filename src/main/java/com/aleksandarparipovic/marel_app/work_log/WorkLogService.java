@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.work_log;
 
+import com.aleksandarparipovic.marel_app.absence_record.FullDayAbsenceSync;
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
 import com.aleksandarparipovic.marel_app.report_worker.DailyRecalcRequestedEvent;
 import com.aleksandarparipovic.marel_app.work_log.dto.CreateUpdateWorkLogsRequest;
@@ -38,6 +39,7 @@ public class WorkLogService {
     private final WorkShiftService workShiftService;
     private final WorkShiftRepository workShiftRepository;
     private final WorkCategoryResolutionService resolutionService;
+    private final FullDayAbsenceSync fullDayAbsenceSync;
 
     public List<WorkLogDto> fetchAllActiveLogsForShift(Long shiftId) {
         return repository.getAllActiveLogsForShift(shiftId);
@@ -114,6 +116,22 @@ public class WorkLogService {
             WorkShift shift = wl.getWorkShift();
             if (shift == null) continue;
             if (processedShiftIds.add(shift.getId())) {
+                /*
+                 * A WHOLE SHIFT NOBODY CAME IN IS TWO WRITES, NOT ONE.
+                 *
+                 * The NO log is how the day is drawn on the karton; the absence
+                 * record is what the overtime bank and the weekend bonus are
+                 * decided from. Entering one without the other would leave the
+                 * feature silently doing nothing for that employee — no error, no
+                 * message, just a day that can never become a neradni dan.
+                 *
+                 * Refuses the batch when the two could not agree: a NO log over
+                 * part of a shift, or one standing beside recorded work. Both are
+                 * conflicts rather than corrections, and the message says where
+                 * such an absence goes instead.
+                 */
+                fullDayAbsenceSync.syncForShift(shift);
+
                 workShiftService.recalculateShiftBoundaries(shift);
                 recalcQueueService.enqueueDailyJob(shift, "WORK_LOG_MUTATION");
             }

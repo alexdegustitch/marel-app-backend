@@ -4,7 +4,11 @@ import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensatio
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationRepository;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceLogWriter;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
+import com.aleksandarparipovic.marel_app.absence_record.FullDayAbsenceSync;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
 import com.aleksandarparipovic.marel_app.employee.Employee;
@@ -22,6 +26,7 @@ import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,6 +37,7 @@ import java.time.YearMonth;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The whole chain, against a real database: hours worked over eight become a
@@ -65,6 +71,8 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     @Autowired private DailyReportRepository dailyReportRepository;
     @Autowired private WorkLogRepository workLogRepository;
     @Autowired private EntityManager entityManager;
+    @Autowired private FullDayAbsenceSync fullDayAbsenceSync;
+    @Autowired private AbsenceLogWriter absenceLogWriter;
 
     private Employee employee;
     private WorkCodeCategory workCategory;
@@ -280,7 +288,126 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         assertThat(missingDaysBefore(monday, saturday)).isZero();
     }
 
+    // ── The NO log and the absence record it mirrors ─────────────────────────
+
+    @Nested
+    @DisplayName("a whole shift entered as a NO operation")
+    class TheUnpaidAbsenceLog {
+
+        @Test
+        @DisplayName("writes the absence record behind it, so the bank can see the day at all")
+        void mirrorsIntoAnAbsenceRecord() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+
+            fullDayAbsenceSync.syncForShift(shift);
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId()))
+                    .singleElement()
+                    .satisfies(a -> {
+                        assertThat(a.getAbsenceMinutes()).isEqualTo(FULL_SHIFT);
+                        assertThat(a.getWorkCodeCategory().getCategoryNo())
+                                .isEqualTo(AbsenceCategoryCodes.UNPAID_ABSENCE);
+                    });
+        }
+
+        @Test
+        @DisplayName("counts its minutes ONCE — the log and the record are one fact, not two")
+        void doesNotCountTheDayTwice() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+            fullDayAbsenceSync.syncForShift(shift);
+
+            fixture.recalculate(shift);
+
+            DailyReport report = dailyReportRepository.findByWorkShiftId(shift.getId()).orElseThrow();
+            assertThat(report.getTotalAbsenceUnpaidMinutes()).isEqualTo(FULL_SHIFT);
+            assertThat(report.getTotalShiftMinutes()).isZero();
+        }
+
+        @Test
+        @DisplayName("removing the log withdraws the absence with it")
+        void removingTheLogWithdrawsTheAbsence() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            WorkLog noLog = absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+            fullDayAbsenceSync.syncForShift(shift);
+            assertThat(absenceRepository.findActiveForShift(shift.getId())).hasSize(1);
+
+            workLogRepository.delete(noLog);
+            entityManager.flush();
+            fullDayAbsenceSync.syncForShift(shift);
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("is refused over part of a shift — that is a gap, and gaps go through the dialog")
+        void refusesAPartialUnpaidLog() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            fixture.workLog(shift, unpaidOperation(), unpaidAbsence, 360, 120, 0);
+
+            assertThatThrownBy(() -> fullDayAbsenceSync.syncForShift(shift))
+                    .isInstanceOf(ConflictException.class)
+                    .hasMessageContaining("celu smenu");
+        }
+
+        @Test
+        @DisplayName("is refused beside recorded work — a day off is not half a day")
+        void refusesUnpaidLogBesideWork() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            fixture.workLog(shift, workOperation, workCategory, 0, 240, 50);
+            absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+
+            assertThatThrownBy(() -> fullDayAbsenceSync.syncForShift(shift))
+                    .isInstanceOf(ConflictException.class)
+                    .hasMessageContaining("uz uneti rad");
+        }
+    }
+
+    @Nested
+    @DisplayName("the log swaps when the bank decides")
+    class TheLogSwaps {
+
+        @Test
+        @DisplayName("NO becomes ND, and the two never stand on the shift together")
+        void theNoLogBecomesAndLog() {
+            workedShift(WEDNESDAY, 6, 960);
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absenceLogWriter.ensureUnpaidAbsenceLog(thursday);
+            fullDayAbsenceSync.syncForShift(thursday);
+
+            allocator.allocate(employee.getId(), MONTH);
+
+            assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.UNPAID_ABSENCE)).isEmpty();
+            assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.NON_WORKING_DAY)).isPresent();
+        }
+
+        @Test
+        @DisplayName("and comes back as NO when the bank no longer covers it")
+        void andSwapsBackWhenTheBankShrinks() {
+            WorkShift wednesday = workedShift(WEDNESDAY, 6, 960);
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absenceLogWriter.ensureUnpaidAbsenceLog(thursday);
+            fullDayAbsenceSync.syncForShift(thursday);
+            allocator.allocate(employee.getId(), MONTH);
+
+            changeWorkTo(wednesday, FULL_SHIFT);
+            allocator.allocate(employee.getId(), MONTH);
+
+            assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.NON_WORKING_DAY)).isEmpty();
+            assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.UNPAID_ABSENCE)).isPresent();
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /** The seeded operation NO logs hang from; work_logs.operation_id is NOT NULL. */
+    private Operation unpaidOperation() {
+        return operationRepository
+                .findActiveByWorkCodeCategoryNo(AbsenceCategoryCodes.UNPAID_ABSENCE)
+                .get(0);
+    }
+
 
     private int missingDaysBefore(LocalDate weekStart, LocalDate day) {
         return dailyReportRepository.countPreviousDaysWithInsufficientBonusMinutes(

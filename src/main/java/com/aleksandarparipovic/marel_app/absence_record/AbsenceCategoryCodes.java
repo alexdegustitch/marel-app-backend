@@ -23,6 +23,20 @@ public final class AbsenceCategoryCodes {
      */
     public static final String NON_WORKING_DAY = "ND";
 
+    /**
+     * TRUE for the two categories that stand for time nobody worked.
+     *
+     * <p>Both are drawn on the shift as a work log — NO because a supervisor
+     * records a whole day nobody came in that way, ND because the application
+     * writes it when the overtime bank covers such a day. Neither is WORK, and
+     * neither may be measured as any: they carry no coefficient, they are not
+     * time present, and the minutes they stand for reach the day's totals through
+     * the absence record instead. See {@code DailyRecalcService}.
+     */
+    public static boolean isAbsenceLog(String categoryNo) {
+        return UNPAID_ABSENCE.equals(categoryNo) || NON_WORKING_DAY.equals(categoryNo);
+    }
+
     private AbsenceCategoryCodes() {
     }
 }
