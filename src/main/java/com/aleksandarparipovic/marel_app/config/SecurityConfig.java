@@ -168,6 +168,9 @@ public class SecurityConfig {
                                 "/api/employee-records/**",
                                 "/api/work-logs/**",
                                 "/api/work-shifts/**",
+                                // Absences are recorded on a shift, by the same
+                                // people and through the same screen as the work is.
+                                "/api/absences/**",
                                 "/api/shifts/**",
                                 "/api/reports/summary/**",
                                 "/api/work-code-categories/**",

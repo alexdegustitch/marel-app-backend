@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationScheme;
 import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistory;
 import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.EmployeeCompensationSchemeHistoryRepository;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import com.aleksandarparipovic.marel_app.work_code_category_scheme_rules.WorkCodeCategorySchemeRule;
@@ -158,6 +159,11 @@ public class WorkCategoryResolutionService {
                         .stream()
                         .filter(c -> Boolean.TRUE.equals(c.getIsActive()))
                         .filter(c -> isCategoryInForce(c, workDate))
+                        // ND is written by the application across a shift the
+                        // overtime bank paid for. Offering it would let somebody
+                        // declare their own neradni dan, which is the one thing
+                        // the bank is there to decide.
+                        .filter(c -> !AbsenceCategoryCodes.NON_WORKING_DAY.equals(c.getCategoryNo()))
                         .toList();
 
         List<WorkCategoryResolution> allowed = new ArrayList<>();
@@ -181,7 +187,16 @@ public class WorkCategoryResolutionService {
      */
     @Transactional(readOnly = true)
     public WorkCategoryResolution requireAllowed(Long employeeId, LocalDate workDate, Long sourceCategoryId) {
-        return contextFor(employeeId, workDate).requireAllowed(sourceCategoryId);
+        WorkCategoryResolution resolution = contextFor(employeeId, workDate).requireAllowed(sourceCategoryId);
+        // Refused here and not only hidden from the dropdown: the dropdown is a
+        // convenience and this is the rule. A neradni dan is a consequence of the
+        // overtime bank covering a whole shift, never something anybody types.
+        if (AbsenceCategoryCodes.NON_WORKING_DAY.equals(resolution.sourceCategoryCode())) {
+            throw new ConflictException(
+                    "Neradni dan (ND) se ne unosi ručno. Upisuje se sam kada"
+                            + " prekovremeni rad pokrije celu smenu.");
+        }
+        return resolution;
     }
 
     // ------------------------------------------------------------------------
