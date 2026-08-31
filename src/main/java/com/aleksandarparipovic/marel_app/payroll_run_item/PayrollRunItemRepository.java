@@ -236,22 +236,27 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
                                                 @Param("month") int month);
 
     /**
-     * Whether this employee's month is closed.
+     * Whether this employee's month has been handed on.
      *
      * <p>Asked before anything that would change what the month is built from.
-     * A locked payroll is a record of what was paid and is never recalculated,
-     * so the change is refused rather than accepted into a month that cannot
-     * follow it.
+     *
+     * <p><b>Both states, not only LOCKED.</b> A locked payroll is a record of
+     * what was paid and is never recalculated — an obvious refusal. An APPROVED
+     * one is subtler and was the real gap: the shop floor has handed the month
+     * over and payroll is working from it, so removing a shift underneath them
+     * changes their figures silently, with nothing on screen to say why. Whoever
+     * needs the change asks for the month back first, which is what the payroll
+     * change request exists for.
      */
     @Query("""
         SELECT count(pri) FROM PayrollRunItem pri
         WHERE pri.employee.id = :employeeId
           AND YEAR(pri.period) = :year
           AND MONTH(pri.period) = :month
-          AND pri.status = 'LOCKED'
+          AND pri.status IN ('LOCKED', 'APPROVED')
           AND pri.archivedAt IS NULL
         """)
-    long countLockedForEmployeeAndMonth(@Param("employeeId") Long employeeId,
+    long countClosedForEmployeeAndMonth(@Param("employeeId") Long employeeId,
                                         @Param("year") int year,
                                         @Param("month") int month);
 

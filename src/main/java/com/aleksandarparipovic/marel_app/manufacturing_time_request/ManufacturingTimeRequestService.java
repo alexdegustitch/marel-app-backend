@@ -15,6 +15,8 @@ import com.aleksandarparipovic.marel_app.product_manufacturing_time.ProductManuf
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeUpdateRequest;
 import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
 import com.aleksandarparipovic.marel_app.production_order_line_item.repository.ProductionOrderLineItemRepository;
+import com.aleksandarparipovic.marel_app.sample_order_line_item.SampleOrderLineItem;
+import com.aleksandarparipovic.marel_app.sample_order_line_item.repository.SampleOrderLineItemRepository;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -48,6 +50,7 @@ public class ManufacturingTimeRequestService {
     private final ManufacturingTimeRequestRepository requestRepository;
     private final ProductRepository productRepository;
     private final ProductionOrderLineItemRepository lineItemRepository;
+    private final SampleOrderLineItemRepository sampleLineItemRepository;
     private final ProductManufacturingTimeRepository manufacturingTimeRepository;
     private final ProductManufacturingTimeService manufacturingTimeService;
     private final UserRepository userRepository;
@@ -77,7 +80,9 @@ public class ManufacturingTimeRequestService {
                         "Proizvod nije pronađen: " + request.getProductId()));
 
         ProductManufacturingTime target = resolveTarget(request, product);
+        requireAtMostOneOccasion(request);
         ProductionOrderLineItem lineItem = resolveLineItem(request, product);
+        SampleOrderLineItem sampleLineItem = resolveSampleLineItem(request, product);
 
         ManufacturingTimeRequest saved = requestRepository.save(
                 ManufacturingTimeRequest.builder()
@@ -87,6 +92,7 @@ public class ManufacturingTimeRequestService {
                         .description(request.getDescription().trim())
                         .targetManufacturingTime(target)
                         .productionOrderLineItem(lineItem)
+                        .sampleOrderLineItem(sampleLineItem)
                         .status(ManufacturingTimeRequestStatus.PENDING)
                         .build()
         );
@@ -137,6 +143,65 @@ public class ManufacturingTimeRequestService {
         }
 
         return target;
+    }
+
+    /**
+     * A request has ONE occasion, or none.
+     *
+     * <p>Checked before either line is loaded, so the refusal costs nothing and
+     * says the one thing that is wrong. The database states the same rule
+     * ({@code chk_manufacturing_time_requests_single_occasion}), but as a
+     * constraint violation — which tells the caller that something failed, not
+     * which two fields disagree.
+     */
+    private static void requireAtMostOneOccasion(ManufacturingTimeRequestCreateRequest request) {
+        if (request.getProductionOrderLineItemId() != null
+                && request.getSampleOrderLineItemId() != null) {
+            throw new IllegalArgumentException(
+                    "Zahtev može da bude vezan za stavku proizvodnog naloga ILI za stavku "
+                            + "naloga za uzorke, ne za obe.");
+        }
+    }
+
+    /**
+     * Resolves the sample-order line the request was raised on.
+     *
+     * <p>Same three rules as the production-order line below, for the same
+     * reasons: the line must still be live, its product and the request's must be
+     * the same one, and a line that already has an open request does not get a
+     * second. Written out rather than shared, because the two speak about
+     * different documents and the messages have to name the right one — "stavka
+     * proizvodnog naloga" on a sample order would send somebody looking in the
+     * wrong list.
+     */
+    private SampleOrderLineItem resolveSampleLineItem(
+            ManufacturingTimeRequestCreateRequest request, Product product
+    ) {
+        Long lineItemId = request.getSampleOrderLineItemId();
+        if (lineItemId == null) {
+            return null;
+        }
+
+        SampleOrderLineItem lineItem = sampleLineItemRepository.findById(lineItemId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Stavka naloga za uzorke nije pronađena: " + lineItemId));
+
+        if (!Boolean.TRUE.equals(lineItem.getIsActive())) {
+            throw new ConflictException(
+                    "Stavka naloga za uzorke više nije aktivna, pa zahtev ne može da se veže za nju.");
+        }
+
+        if (!lineItem.getProduct().getId().equals(product.getId())) {
+            throw new IllegalArgumentException(
+                    "Izabrana stavka naloga za uzorke ne pripada izabranom proizvodu.");
+        }
+
+        if (requestRepository.existsBySampleOrderLineItem_IdAndStatusIn(lineItemId, OPEN_STATUSES)) {
+            throw new ConflictException(
+                    "Za ovu stavku naloga za uzorke već postoji otvoren zahtev.");
+        }
+
+        return lineItem;
     }
 
     /**
@@ -448,6 +513,22 @@ public class ManufacturingTimeRequestService {
                 .toList();
     }
 
+    /**
+     * The same, for a sample order's lines.
+     * {@code restrictToCreatedById} is the caller's own id when they may not read
+     * everybody's requests, and NULL when they may.
+     */
+    @Transactional(readOnly = true)
+    public List<ManufacturingTimeRequestResponse> forSampleOrder(
+            Long sampleOrderId, Long restrictToCreatedById
+    ) {
+        return requestRepository
+                .findBySampleOrderAndStatusIn(sampleOrderId, LIVE_STATUSES, restrictToCreatedById)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public ManufacturingTimeRequestResponse getById(Long requestId) {
         return toResponse(loadDetail(requestId));
@@ -527,6 +608,12 @@ public class ManufacturingTimeRequestService {
             payload.put("productionOrderCode", order.getCode());
             payload.put("productionOrderName", order.getName());
         }
+        if (request.getSampleOrderLineItem() != null) {
+            var order = request.getSampleOrderLineItem().getSampleOrder();
+            payload.put("sampleOrderId", order.getId());
+            payload.put("sampleOrderCode", order.getCode());
+            payload.put("sampleOrderName", order.getName());
+        }
         if (request.getAssignedTo() != null) {
             payload.put("assignedToUserId", request.getAssignedTo().getId());
         }
@@ -540,6 +627,7 @@ public class ManufacturingTimeRequestService {
         // requests.
         ProductManufacturingTime result = r.getResultManufacturingTime();
         ProductionOrderLineItem lineItem = r.getProductionOrderLineItem();
+        SampleOrderLineItem sampleLineItem = r.getSampleOrderLineItem();
 
         return new ManufacturingTimeRequestResponse(
                 r.getId(),
@@ -562,6 +650,11 @@ public class ManufacturingTimeRequestService {
                 lineItem == null ? null : lineItem.getProductionOrder().getCode(),
                 lineItem == null ? null : lineItem.getProductionOrder().getName(),
                 lineItem == null ? null : lineItem.getProductDescription(),
+                sampleLineItem == null ? null : sampleLineItem.getId(),
+                sampleLineItem == null ? null : sampleLineItem.getSampleOrder().getId(),
+                sampleLineItem == null ? null : sampleLineItem.getSampleOrder().getCode(),
+                sampleLineItem == null ? null : sampleLineItem.getSampleOrder().getName(),
+                sampleLineItem == null ? null : sampleLineItem.getProductDescription(),
                 result == null ? null : result.getId(),
                 result == null ? null : result.getManufacturingTimeSeconds(),
                 result == null ? null : result.getProductsPerHour(),

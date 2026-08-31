@@ -13,7 +13,7 @@ import java.time.OffsetDateTime;
         name = "monthly_report_categories",
         uniqueConstraints = @UniqueConstraint(
                 name = "uq_monthly_report_category_report_category",
-                columnNames = {"monthly_report_id", "work_code_category_id"}
+                columnNames = {"monthly_report_id", "work_code_category_id", "norm_multiplier"}
         )
 )
 @Getter
@@ -52,6 +52,38 @@ public class MonthlyReportCategory {
 
     @Column(name = "total_approved_minutes")
     private BigDecimal totalApprovedMinutes;
+
+    /**
+     * The coefficient this row's work was calculated at.
+     *
+     * <p>Part of the unique key, because one category is no longer one row: an
+     * operation whose coefficient a supervisor typed over sits beside the rest of
+     * the same category at the resolved one, and a single number could not
+     * represent both.
+     *
+     * <p>Read by the payroll instead of the category's CURRENT multiplier, so
+     * recalculating an old month prices it the way it was recorded.
+     */
+    // Defaulted rather than left null: the column is NOT NULL with a database
+    // DEFAULT, but Hibernate names every mapped column in the INSERT, so an unset
+    // field arrives as an explicit NULL and the default never applies. One is the
+    // neutral weight — a row nobody stated a coefficient for is a row that is not
+    // weighted.
+    @Builder.Default
+    @Column(name = "norm_multiplier", nullable = false)
+    private BigDecimal normMultiplier = BigDecimal.ONE;
+
+    /**
+     * What this row WOULD have been calculated at.
+     *
+     * <p>Equal to {@link #normMultiplier} unless somebody typed one over. Two
+     * things need it and neither can reconstruct it: a screen saying "1.20,
+     * izmenjeno, podrazumevano 1.10", and the payslip, which folds a category's
+     * rows back into one line at this coefficient.
+     */
+    @Builder.Default
+    @Column(name = "norm_multiplier_default", nullable = false)
+    private BigDecimal normMultiplierDefault = BigDecimal.ONE;
 
     @Column(name = "source_type", nullable = false)
     private String sourceType;

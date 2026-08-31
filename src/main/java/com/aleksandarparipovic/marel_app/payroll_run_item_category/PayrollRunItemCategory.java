@@ -53,6 +53,17 @@ public class PayrollRunItemCategory {
     @Column(name = "category_coefficient_snapshot", nullable = false)
     private BigDecimal categoryCoefficientSnapshot;
 
+    /**
+     * The category's own coefficient, beside the one this row was priced at.
+     *
+     * <p>Nullable only for rows written before the column existed. The payslip
+     * folds a category's rows into one line at THIS coefficient and scales the
+     * hours so the amount is unchanged — a worker reading it sees their category
+     * once, at the number they know it by.
+     */
+    @Column(name = "category_default_coefficient_snapshot")
+    private BigDecimal categoryDefaultCoefficientSnapshot;
+
     @Column(name = "effective_minutes", nullable = false)
     private BigDecimal effectiveMinutes;
 

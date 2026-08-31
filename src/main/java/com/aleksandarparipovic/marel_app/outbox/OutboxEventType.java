@@ -15,6 +15,13 @@ public enum OutboxEventType {
     MANUFACTURING_TIME_REQUEST_ASSIGNED,
     MANUFACTURING_TIME_REQUEST_COMPLETED,
     MANUFACTURING_TIME_REQUEST_DECLINED,
+    // The order-scope workflow: which operations an order actually needs.
+    // Same four moments as above, because it is the same workflow over
+    // different subject matter.
+    ORDER_SCOPE_REQUEST_CREATED,
+    ORDER_SCOPE_REQUEST_ASSIGNED,
+    ORDER_SCOPE_REQUEST_COMPLETED,
+    ORDER_SCOPE_REQUEST_DECLINED,
     // Opens the order's e-mail conversation. Every later mail about the
     // order is a reply to the one this event sends.
     PRODUCTION_ORDER_CREATED,
@@ -29,5 +36,24 @@ public enum OutboxEventType {
      * rows written before that change still name it, and deserialising them
      * must not fail.
      */
-    PRODUCTION_ORDER_DEADLINE_CHANGED
+    PRODUCTION_ORDER_DEADLINE_CHANGED,
+    /**
+     * The same three moments for a nalog za izradu uzoraka. Its own values
+     * rather than a reuse of the production-order ones: the two are different
+     * documents with different words in the mail, and a shared type would make
+     * "which order is this about" a question with two tables to look in.
+     */
+    SAMPLE_ORDER_CREATED,
+    SAMPLE_ORDER_UPDATED,
+    SAMPLE_ORDER_COMPLETED,
+    /**
+     * A supervisor asking payroll to reopen a month, and payroll's answer.
+     *
+     * <p>In-app only, like the other request workflows: these reach colleagues
+     * who are signed in and working, and the answer is on a screen they already
+     * have open.
+     */
+    PAYROLL_CHANGE_REQUEST_CREATED,
+    PAYROLL_CHANGE_REQUEST_ACCEPTED,
+    PAYROLL_CHANGE_REQUEST_DECLINED
 }

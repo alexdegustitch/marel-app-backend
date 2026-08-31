@@ -141,6 +141,22 @@ public class ManufacturingTimeRequestController {
         return ResponseEntity.ok(service.forProductionOrder(productionOrderId, restrictTo));
     }
 
+    /**
+     * The same, for one sample order's lines. Narrowed to the caller's own
+     * requests by the same rule as above.
+     */
+    @GetMapping("/open-by-sample-order/{sampleOrderId}")
+    public ResponseEntity<java.util.List<ManufacturingTimeRequestResponse>> openBySampleOrder(
+            @PathVariable Long sampleOrderId
+    ) {
+        Long restrictTo =
+                permissionService.hasPermission(AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL)
+                        ? null
+                        : currentUserService.getCurrentUserId();
+
+        return ResponseEntity.ok(service.forSampleOrder(sampleOrderId, restrictTo));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ManufacturingTimeRequestResponse> getById(@PathVariable Long id) {
         ManufacturingTimeRequestResponse response = service.getById(id);

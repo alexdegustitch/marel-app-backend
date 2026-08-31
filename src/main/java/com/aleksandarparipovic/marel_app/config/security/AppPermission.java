@@ -209,6 +209,28 @@ public enum AppPermission {
     /** See every manufacturing-time request, not just one's own. */
     MANUFACTURING_TIME_REQUEST_READ_ALL,
 
+    /**
+     * Ask the floor which operations a production order actually needs.
+     *
+     * <p>Held by the same people who raise manufacturing-time requests, and
+     * withheld from the supervisor for the same reason: whoever decides a
+     * request does not raise it.
+     *
+     * <p>Deliberately its OWN capability rather than a reuse of
+     * {@link #MANUFACTURING_TIME_REQUEST_CREATE}. The two workflows answer
+     * different questions — how long one piece takes, and what this order is
+     * made of — and one day one of them may be opened to somebody the other is
+     * not. Sharing a capability today would make that a change to who holds
+     * which role.
+     */
+    ORDER_SCOPE_REQUEST_CREATE,
+
+    /** Claim, answer or decline an order-scope request. */
+    ORDER_SCOPE_REQUEST_PROCESS,
+
+    /** See every order-scope request, not just one's own. */
+    ORDER_SCOPE_REQUEST_READ_ALL,
+
     /** Read and edit mailing lists with GLOBAL visibility. */
     MAILING_LIST_GLOBAL_MANAGE,
 
@@ -254,6 +276,61 @@ public enum AppPermission {
     PAYROLL_LOCK,
 
     /**
+     * Ask payroll to reopen a month that has already been handed over.
+     *
+     * <p>The supervisor's replacement for pulling it back themselves. Once
+     * payroll has begun working on a submitted month, taking it away underneath
+     * them invalidates whatever they have done since — so the direction reverses
+     * and the supervisor asks, with a reason.
+     */
+    PAYROLL_CHANGE_REQUEST_CREATE,
+
+    /**
+     * Answer such a request — grant the month back, or refuse.
+     *
+     * <p>Payroll's, on the same reasoning as {@link #PAYROLL_LOCK}: whoever owns
+     * the month decides when it opens. Accepting takes the payroll to DRAFT, so
+     * this is a status change wearing a different name and belongs to the same
+     * people.
+     */
+    PAYROLL_CHANGE_REQUEST_PROCESS,
+
+    /**
+     * Read and write the director's note that goes on the payslip.
+     *
+     * <p>Administrators alone. Narrower than the payroll screens themselves,
+     * which the supervisor and payroll both open: this is a sentence signed by
+     * the director and printed over their name, and a note somebody else can
+     * edit is not that.
+     *
+     * <p>Narrower on SCREEN than on paper, deliberately. Withholding it here
+     * keeps it out of the application for everybody but the author; the payslip
+     * that carries it to the employee is the one the administration renders and
+     * hands over.
+     */
+    PAYROLL_DIRECTOR_NOTE,
+
+    /**
+     * Give or change the performance mark (ocena) on a payroll item.
+     *
+     * <p>Held by the supervisor as well as payroll, and deliberately: the mark
+     * is an opinion about the month's work, and the person who knows the work is
+     * the one on the floor. Giving it moves no money — {@link #PAYROLL_MARK_APPLY}
+     * is what does — which is exactly what makes it safe to grant this widely.
+     */
+    PAYROLL_MARK_EDIT,
+
+    /**
+     * Put a performance mark in force, or take it out of force.
+     *
+     * <p>THIS is the one that changes what somebody is paid: the hourly rate
+     * becomes the base multiplied by the mark. Payroll's alone, on the same
+     * reasoning as {@link #PAYROLL_LOCK} — the supervisor says what the month
+     * was worth, and payroll decides whether that becomes money.
+     */
+    PAYROLL_MARK_APPLY,
+
+    /**
      * Decide which payroll lines each role may see and change.
      *
      * <p>Payroll's own, and nobody else's: this is the control over who sees
@@ -262,12 +339,50 @@ public enum AppPermission {
     PAYROLL_ACCESS_CONFIGURE,
 
     /**
+     * See sample orders — nalozi za izradu uzoraka — and everything hanging off
+     * them.
+     *
+     * <p>Its OWN capability rather than a reuse of {@link #PRODUCTION_ORDER_VIEW},
+     * even though the same people hold both today. The two are different
+     * documents for different work: samples are agreed with a customer before
+     * anything is ordered, and the day somebody may see one and not the other,
+     * that has to be a change to this file rather than a change to who holds
+     * which role.
+     */
+    SAMPLE_ORDER_VIEW,
+
+    /**
+     * Raise, alter or close a sample order.
+     *
+     * <p>Split from {@link #SAMPLE_ORDER_VIEW} for the same reason production
+     * orders are split: the supervisor reads every sample order — they have to
+     * know what the floor is making — and writes none.
+     */
+    SAMPLE_ORDER_MANAGE,
+
+    /** See who gets told about a sample order. The read half. */
+    SAMPLE_ORDER_RECIPIENT_VIEW,
+
+    /**
+     * Attach mailing lists to, and change the recipients of, a sample order.
+     *
+     * <p>The WRITE half. Seeing the list is {@link #SAMPLE_ORDER_RECIPIENT_VIEW},
+     * which everybody holding this also holds.
+     */
+    SAMPLE_ORDER_RECIPIENT_MANAGE,
+
+    /**
      * Withdraw a whole shift, or delete one that never held anything.
      *
      * <p>Its own permission because it is not a correction: taking a shift back
      * removes a day of work from what somebody is paid, which is a heavier
-     * decision than fixing the hours on it. Admin and developer hold every
-     * permission; nobody else is given this one.
+     * decision than fixing the hours on it.
+     *
+     * <p>Held by the supervisor as well as admin and developer: they enter the
+     * shifts and they are the ones who spot a wrong one. What keeps that safe is
+     * not the permission but the MONTH — a payroll already handed over or locked
+     * refuses the removal, so this only ever reaches a month still being worked
+     * on.
      */
     WORK_SHIFT_ARCHIVE
 }

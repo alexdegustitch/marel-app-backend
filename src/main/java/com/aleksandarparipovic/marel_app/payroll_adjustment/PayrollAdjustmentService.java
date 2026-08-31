@@ -43,6 +43,7 @@ public class PayrollAdjustmentService {
 
     @Transactional
     public PayrollAdjustmentResponse create(PayrollAdjustmentCreateRequest request) {
+        requireItemUnlocked(request.getPayrollRunItemId());
         // Payroll initialisation already skips the lines a scheme excludes, but
         // this endpoint can add one directly. Checked here too, or the exclusion
         // would be a UI convention rather than a rule.
@@ -70,6 +71,8 @@ public class PayrollAdjustmentService {
     public PayrollAdjustmentResponse update(Long id, PayrollAdjustmentUpdateRequest request) {
         PayrollAdjustment entity = payrollAdjustmentRepository.findByIdWithCategory(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollAdjustment not found"));
+        requireItemUnlocked(entity.getPayrollRunItem() == null
+                ? null : entity.getPayrollRunItem().getId());
         if (request.getSystemQuantity() != null)   entity.setSystemQuantity(request.getSystemQuantity());
         if (request.getQuantity() != null)          entity.setQuantity(request.getQuantity());
         if (request.getSystemUnitAmount() != null)  entity.setSystemUnitAmount(request.getSystemUnitAmount());
@@ -86,10 +89,36 @@ public class PayrollAdjustmentService {
 
     @Transactional
     public void delete(Long id) {
-        if (!payrollAdjustmentRepository.existsById(id)) {
-            throw new IllegalArgumentException("PayrollAdjustment not found");
+        PayrollAdjustment entity = payrollAdjustmentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollAdjustment not found"));
+        requireItemUnlocked(entity.getPayrollRunItem() == null
+                ? null : entity.getPayrollRunItem().getId());
+        payrollAdjustmentRepository.delete(entity);
+    }
+
+    /**
+     * A locked payroll does not move, and that has to be true of every door.
+     *
+     * <p>These three endpoints are their own door. PayrollRunItemService.patch
+     * refuses a locked item, so the payroll SCREEN could not touch one — but
+     * these add, change and remove the very lines the item's totals are computed
+     * from, and until now they would happily do it to a month somebody had
+     * signed off and paid.
+     *
+     * <p>Read through the repository rather than trusted from the caller: the
+     * update and delete paths are given a line id, and which item it belongs to
+     * is the line's own answer.
+     */
+    private void requireItemUnlocked(Long payrollRunItemId) {
+        if (payrollRunItemId == null) {
+            return;
         }
-        payrollAdjustmentRepository.deleteById(id);
+        payrollRunItemRepository.findById(payrollRunItemId).ifPresent(item -> {
+            if ("LOCKED".equals(item.getStatus())) {
+                throw new ConflictException(
+                        "Obračun je zaključan — njegove stavke se više ne menjaju.");
+            }
+        });
     }
 
     /**

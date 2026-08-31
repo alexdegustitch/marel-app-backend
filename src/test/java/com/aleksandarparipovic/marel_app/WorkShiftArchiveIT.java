@@ -181,7 +181,7 @@ class WorkShiftArchiveIT extends AbstractIntegrationTest {
 
         assertThatThrownBy(() -> workShiftService.deleteEmpty(shiftId))
                 .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("Arhivirajte");
+                .hasMessageContaining("Uklonite");
     }
 
     @Test
@@ -202,5 +202,53 @@ class WorkShiftArchiveIT extends AbstractIntegrationTest {
         assertThatThrownBy(() -> workShiftService.archive(shiftId, null))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining("zaključan");
+    }
+
+    @Test
+    @DisplayName("a month already handed to payroll refuses it too")
+    void anApprovedMonthIsRefused() {
+        Setup s = setUp();
+        Long shiftId = createShift(s, "2026-09-02");
+
+        /*
+         * APPROVED, not LOCKED. This was the gap: the shop floor has said the
+         * month is finished and payroll is working from it, so taking a shift
+         * out moves their totals with nothing on screen to explain it. Locked
+         * was refused; approved went through quietly.
+         */
+        entityManager.createNativeQuery("""
+                UPDATE payroll_run_items SET status = 'APPROVED'
+                WHERE employee_id = :employeeId
+                  AND EXTRACT(YEAR FROM period) = 2026
+                  AND EXTRACT(MONTH FROM period) = 9""")
+                .setParameter("employeeId", s.employeeId())
+                .executeUpdate();
+        entityManager.flush();
+
+        assertThatThrownBy(() -> workShiftService.archive(shiftId, null))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("predat");
+    }
+
+    @Test
+    @DisplayName("a month still in draft lets the shift go")
+    void aDraftMonthAllowsIt() {
+        Setup s = setUp();
+        Long shiftId = createShift(s, "2026-09-02");
+
+        entityManager.createNativeQuery("""
+                UPDATE payroll_run_items SET status = 'DRAFT'
+                WHERE employee_id = :employeeId
+                  AND EXTRACT(YEAR FROM period) = 2026
+                  AND EXTRACT(MONTH FROM period) = 9""")
+                .setParameter("employeeId", s.employeeId())
+                .executeUpdate();
+        entityManager.flush();
+
+        // The guard must refuse a handed-over month without refusing every month.
+        workShiftService.archive(shiftId, null);
+        entityManager.flush();
+
+        assertThat(workShiftRepository.findById(shiftId).orElseThrow().getArchivedAt()).isNotNull();
     }
 }

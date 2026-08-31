@@ -70,6 +70,16 @@ public class DailyRecalcService {
     private static final int WEEKEND_BONUS_MIN_MINUTES = 180;
     private static final int MAX_ERROR_LENGTH = 255;
 
+    /**
+     * The scale coefficients are compared and stored at.
+     *
+     * <p>Matches work_logs.norm_multiplier_snapshot and the report rows' own
+     * column. Two rows must not split apart because one holds 1.1 and the other
+     * 1.10, and BigDecimal equality — which is what a map key uses — would do
+     * exactly that.
+     */
+    private static final int COEFFICIENT_SCALE = 2;
+
     private final DailyRecalcQueueRepository queueRepo;
     private final DailyReportRepository reportRepo;
     private final DailyReportCategoryRepository categoryRepo;
@@ -279,11 +289,6 @@ public class DailyRecalcService {
             categoryRepo.deleteAllByDailyReportId(report.getId());
         }
 
-        // Coefficient per final category, filled in by buildCategories. Only rows
-        // the scheme actually remapped appear here; everything else keeps using
-        // the category's own multiplier exactly as before.
-        Map<Long, BigDecimal> schemeCoefficientByCategory = new HashMap<>();
-
         // Resolved ONCE for the whole shift, from the shift's WORK DATE. Work done
         // on probation is credited at 100 % however it measured — and the work
         // date, not each log's own start, is what decides it, or a night shift
@@ -292,7 +297,7 @@ public class DailyRecalcService {
 
         List<DailyReportCategory> categories = buildCategories(
                 logs, report, nightRemap, weekendRemap, plSourceIds, plbCategory,
-                schemeContext, resolutionByLogId, schemeCoefficientByCategory, onProbation);
+                schemeContext, resolutionByLogId, onProbation);
 
         // Recorded so a 100 % shift can say WHY it is 100 %: an employee who
         // genuinely hit the norm exactly and one who was on probation are
@@ -311,8 +316,7 @@ public class DailyRecalcService {
 
         Integer previousBonusEligibleMinutes = report.getBonusEligibleMinutes();
         String reportSignatureBefore = reportContentSignature(report);
-        fillDailyTotals(report, categories, workShift, employee, workDate, verified,
-                schemeCoefficientByCategory);
+        fillDailyTotals(report, categories, workShift, employee, workDate, verified);
         reportRepo.saveAndFlush(report);
         categoryRepo.flush();
         boolean reportChanged = !reportSignatureBefore.equals(reportContentSignature(report));
@@ -518,6 +522,50 @@ public class DailyRecalcService {
     // Category building
     // -------------------------------------------------------------------------
 
+    /**
+     * One row of a daily report: a category AT ONE COEFFICIENT.
+     *
+     * <p>The coefficient is in the key because it is no longer a property of the
+     * category alone. A supervisor may type one over on a single operation, and
+     * four hours of category J can be two at 1.10 and two at 1.20 — two rows,
+     * each priced by its own number, rather than one row and a lie about which.
+     *
+     * <p>Scale is normalised so 1.1 and 1.10 are one key rather than two.
+     */
+    private record CategoryRowKey(Long categoryId, BigDecimal coefficient) {}
+
+    /** Rows group by value, not by how the value happens to be written. */
+    private static BigDecimal coefficientKey(BigDecimal coefficient) {
+        return (coefficient == null ? BigDecimal.ONE : coefficient)
+                .setScale(COEFFICIENT_SCALE, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * What this row is calculated at: what somebody TYPED on the operation, and
+     * otherwise what the scheme resolved for the row's category.
+     *
+     * <p>The typed value is read from the log rather than from its snapshot on
+     * purpose. The snapshot resolves the log's SOURCE category, while a row may
+     * have been remapped on the way here (night, weekend, scheme) — so the
+     * resolved base has to come from the row, and only the override from the log.
+     */
+    private BigDecimal rowCoefficient(WorkLog log,
+                                      WorkCategoryResolution rowResolution,
+                                      WorkCodeCategory finalCategory) {
+        if (log != null && log.getNormMultiplierManual() != null) {
+            return coefficientKey(log.getNormMultiplierManual());
+        }
+        return defaultCoefficient(rowResolution, finalCategory);
+    }
+
+    /** What the row would be calculated at if nobody had typed anything. */
+    private BigDecimal defaultCoefficient(WorkCategoryResolution rowResolution,
+                                          WorkCodeCategory finalCategory) {
+        return coefficientKey(rowResolution != null && rowResolution.coefficient() != null
+                ? rowResolution.coefficient()
+                : resolveMultiplierByCategory(finalCategory));
+    }
+
     private List<DailyReportCategory> buildCategories(List<WorkLog> logs,
                                                        DailyReport report,
                                                        Map<Long, WorkCodeCategory> nightRemap,
@@ -526,7 +574,6 @@ public class DailyRecalcService {
                                                        WorkCodeCategory plbCategory,
                                                        WorkCategoryResolutionService.ResolutionContext schemeContext,
                                                        Map<Long, WorkCategoryResolution> resolutionByLogId,
-                                                       Map<Long, BigDecimal> schemeCoefficientByCategory,
                                                        boolean onProbation) {
         List<WorkLog> filteredLogs = logs.stream()
                 .filter(wl -> wl.getWorkCode() != null)
@@ -561,26 +608,32 @@ public class DailyRecalcService {
         // behaviour. A fixed-coefficient employee collapses onto one category at
         // coefficient 1, whichever shift or trade they worked, and whether or
         // not a night mapping fired on the way.
-        Map<Long, WorkCodeCategory> finalCategoryById = new HashMap<>();
-        Map<Long, List<WorkLog>> byFinalCategory = new HashMap<>();
-        Map<Long, WorkCategoryResolution> rowResolutionByCategory = new HashMap<>();
+        // LinkedHashMap: the row order a shift produces must not depend on hash
+        // order, or two recalculations of the same day write the same rows in a
+        // different sequence and every signature comparison sees a change.
+        Map<CategoryRowKey, WorkCodeCategory> finalCategoryByRow = new LinkedHashMap<>();
+        Map<CategoryRowKey, BigDecimal> defaultByRow = new LinkedHashMap<>();
+        Map<CategoryRowKey, List<WorkLog>> byRow = new LinkedHashMap<>();
 
         for (WorkLog wl : otherLogs) {
             WorkCodeCategory mapped = resolveEffectiveCategory(wl.getWorkCode(), nightRemap, weekendRemap);
             WorkCategoryResolution rowResolution = schemeContext.resolveFor(mapped);
             WorkCodeCategory finalCategory = categoryOf(rowResolution, mapped);
 
-            finalCategoryById.put(finalCategory.getId(), finalCategory);
-            rowResolutionByCategory.putIfAbsent(finalCategory.getId(), rowResolution);
-            byFinalCategory.computeIfAbsent(finalCategory.getId(), id -> new ArrayList<>()).add(wl);
+            CategoryRowKey key = new CategoryRowKey(
+                    finalCategory.getId(),
+                    rowCoefficient(wl, rowResolution, finalCategory));
+
+            finalCategoryByRow.putIfAbsent(key, finalCategory);
+            defaultByRow.putIfAbsent(key, defaultCoefficient(rowResolution, finalCategory));
+            byRow.computeIfAbsent(key, k -> new ArrayList<>()).add(wl);
         }
 
-        for (Map.Entry<Long, List<WorkLog>> entry : byFinalCategory.entrySet()) {
-            WorkCodeCategory category = finalCategoryById.get(entry.getKey());
+        for (Map.Entry<CategoryRowKey, List<WorkLog>> entry : byRow.entrySet()) {
+            WorkCodeCategory category = finalCategoryByRow.get(entry.getKey());
             if (category != null) {
-                recordRowCoefficient(category, rowResolutionByCategory.get(entry.getKey()),
-                        schemeCoefficientByCategory);
-                result.add(buildCategoryEntry(entry.getValue(), category, report, onProbation));
+                result.add(buildCategoryEntry(entry.getValue(), category, report, onProbation,
+                        entry.getKey().coefficient(), defaultByRow.get(entry.getKey())));
             }
         }
 
@@ -591,28 +644,47 @@ public class DailyRecalcService {
             long plbMinutes = computeTripleOverlapMinutes(plLogs);
             int totalPlMinutes = plLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
 
-            Map<Long, List<WorkLog>> byPlSource = plLogs.stream()
-                    .collect(Collectors.groupingBy(wl -> wl.getWorkCode().getId()));
+            // Split by coefficient as well, for the same reason as above: a PL
+            // category with one operation overridden is two rows, and the PLB
+            // reduction is shared out over whatever rows result — the proportions
+            // still add to the whole however finely the minutes are divided.
+            Map<CategoryRowKey, List<WorkLog>> byPlSource = new LinkedHashMap<>();
+            Map<CategoryRowKey, WorkCodeCategory> plFinalByRow = new LinkedHashMap<>();
+            Map<CategoryRowKey, BigDecimal> plDefaultByRow = new LinkedHashMap<>();
 
-            for (Map.Entry<Long, List<WorkLog>> entry : byPlSource.entrySet()) {
+            for (WorkLog wl : plLogs) {
+                WorkCodeCategory plCategory = wl.getWorkCode();
+                WorkCategoryResolution plResolution = schemeContext.resolveFor(plCategory);
+                WorkCodeCategory plFinal = categoryOf(plResolution, plCategory);
+
+                CategoryRowKey key = new CategoryRowKey(
+                        plFinal.getId(), rowCoefficient(wl, plResolution, plFinal));
+
+                plFinalByRow.putIfAbsent(key, plFinal);
+                plDefaultByRow.putIfAbsent(key, defaultCoefficient(plResolution, plFinal));
+                byPlSource.computeIfAbsent(key, k -> new ArrayList<>()).add(wl);
+            }
+
+            for (Map.Entry<CategoryRowKey, List<WorkLog>> entry : byPlSource.entrySet()) {
                 List<WorkLog> catLogs = entry.getValue();
-                WorkCodeCategory plCategory = catLogs.getFirst().getWorkCode();
                 int catMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
                 // Distribute PLB reduction proportionally across PL source categories
                 long reduction = totalPlMinutes > 0 ? plbMinutes * catMinutes / totalPlMinutes : 0;
                 int plMinutes = (int) Math.max(0, catMinutes - reduction);
 
-                WorkCategoryResolution plResolution = schemeContext.resolveFor(plCategory);
-                WorkCodeCategory plFinal = categoryOf(plResolution, plCategory);
-                recordRowCoefficient(plFinal, plResolution, schemeCoefficientByCategory);
-                result.add(buildPlCategoryEntry(catLogs, plFinal, report, plMinutes, onProbation));
+                result.add(buildPlCategoryEntry(catLogs, plFinalByRow.get(entry.getKey()), report,
+                        plMinutes, onProbation, entry.getKey().coefficient(),
+                        plDefaultByRow.get(entry.getKey())));
             }
 
             if (plbMinutes > 0 && plbCategory != null) {
                 WorkCategoryResolution plbResolution = schemeContext.resolveFor(plbCategory);
                 WorkCodeCategory plbFinal = categoryOf(plbResolution, plbCategory);
-                recordRowCoefficient(plbFinal, plbResolution, schemeCoefficientByCategory);
-                result.add(buildPlbCategoryEntry(plbFinal, report, (int) plbMinutes));
+                // No log of its own: PLB is the overlap between logs, so there is
+                // nothing for anybody to have typed a coefficient on.
+                BigDecimal plbCoefficientValue = rowCoefficient(null, plbResolution, plbFinal);
+                result.add(buildPlbCategoryEntry(plbFinal, report, (int) plbMinutes,
+                        plbCoefficientValue, plbCoefficientValue));
             }
         }
 
@@ -639,17 +711,8 @@ public class DailyRecalcService {
      * back to the category's own multiplier and standard employees keep their
      * exact previous numbers.
      */
-    private void recordRowCoefficient(WorkCodeCategory finalCategory,
-                                      WorkCategoryResolution resolution,
-                                      Map<Long, BigDecimal> schemeCoefficientByCategory) {
-        if (resolution == null || resolution.coefficient() == null || !resolution.isCategoryRemapped()) {
-            return;
-        }
-        schemeCoefficientByCategory.put(finalCategory.getId(), resolution.coefficient());
-    }
-
     /**
-     * Fold rows that share a category into one.
+     * Fold rows that share a category AND a coefficient into one.
      *
      * <p>Minutes, quantities and weighted norm minutes add up. The performance
      * coefficients are re-derived as a minute-weighted average, which is what
@@ -657,13 +720,17 @@ public class DailyRecalcService {
      * weighted average into an unweighted one.
      */
     private List<DailyReportCategory> mergeByCategory(List<DailyReportCategory> rows) {
-        Map<Long, DailyReportCategory> byCategory = new LinkedHashMap<>();
+        Map<CategoryRowKey, DailyReportCategory> byCategory = new LinkedHashMap<>();
 
         for (DailyReportCategory row : rows) {
-            Long categoryId = row.getWorkCodeCategory().getId();
-            DailyReportCategory existing = byCategory.get(categoryId);
+            // Merging on the category alone would put two coefficients back into
+            // one row and lose the very distinction the row exists to carry — and
+            // the unique key would then reject the result anyway.
+            CategoryRowKey key = new CategoryRowKey(
+                    row.getWorkCodeCategory().getId(), coefficientKey(row.getNormMultiplier()));
+            DailyReportCategory existing = byCategory.get(key);
             if (existing == null) {
-                byCategory.put(categoryId, row);
+                byCategory.put(key, row);
                 continue;
             }
 
@@ -810,7 +877,9 @@ public class DailyRecalcService {
     }
 
     private DailyReportCategory buildCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category,
-                                                   DailyReport report, boolean onProbation) {
+                                                   DailyReport report, boolean onProbation,
+                                                   BigDecimal normMultiplier,
+                                                   BigDecimal normMultiplierDefault) {
         int totalMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
         int totalQuantity = catLogs.stream().mapToInt(wl -> safeInt(wl.getQuantity())).sum();
         int totalScrap = catLogs.stream().mapToInt(wl -> safeInt(wl.getScrap())).sum();
@@ -836,6 +905,8 @@ public class DailyRecalcService {
                 .totalQuantity(totalQuantity)
                 .totalScrap(totalScrap)
                 .totalWeightedNormMinutes(totalWeightedNormMinutes)
+                .normMultiplier(normMultiplier)
+                .normMultiplierDefault(normMultiplierDefault)
                 .performanceCoefficient(performanceCoefficient)
                 .approvedPerformanceCoefficient(approvedPerformanceCoefficient)
                 .sourceType(category.getType() != null ? category.getType() : "WORK")
@@ -844,7 +915,8 @@ public class DailyRecalcService {
 
     private DailyReportCategory buildPlCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category,
                                                       DailyReport report, int reducedMinutes,
-                                                     boolean onProbation) {
+                                                     boolean onProbation, BigDecimal normMultiplier,
+                                                     BigDecimal normMultiplierDefault) {
         int totalQuantity = catLogs.stream().mapToInt(wl -> safeInt(wl.getQuantity())).sum();
         int totalScrap = catLogs.stream().mapToInt(wl -> safeInt(wl.getScrap())).sum();
         int originalMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
@@ -870,13 +942,17 @@ public class DailyRecalcService {
                 .totalQuantity(totalQuantity)
                 .totalScrap(totalScrap)
                 .totalWeightedNormMinutes(totalWeightedNormMinutes)
+                .normMultiplier(normMultiplier)
+                .normMultiplierDefault(normMultiplierDefault)
                 .performanceCoefficient(performanceCoefficient)
                 .approvedPerformanceCoefficient(approvedPerformanceCoefficient)
                 .sourceType(category.getType() != null ? category.getType() : "WORK")
                 .build();
     }
 
-    private DailyReportCategory buildPlbCategoryEntry(WorkCodeCategory plbCategory, DailyReport report, int plbMinutes) {
+    private DailyReportCategory buildPlbCategoryEntry(WorkCodeCategory plbCategory, DailyReport report,
+                                                      int plbMinutes, BigDecimal normMultiplier,
+                                                      BigDecimal normMultiplierDefault) {
         // PLB: performance coefficient is 1.0, qty/scrap are 0
         BigDecimal coefficient = BigDecimal.ONE;
         BigDecimal totalWeightedNormMinutes = BigDecimal.valueOf(plbMinutes)
@@ -890,6 +966,8 @@ public class DailyRecalcService {
                 .totalQuantity(0)
                 .totalScrap(0)
                 .totalWeightedNormMinutes(totalWeightedNormMinutes)
+                .normMultiplier(normMultiplier)
+                .normMultiplierDefault(normMultiplierDefault)
                 .performanceCoefficient(coefficient)
                 .approvedPerformanceCoefficient(coefficient)
                 .sourceType(plbCategory.getType() != null ? plbCategory.getType() : "WORK")
@@ -960,8 +1038,7 @@ public class DailyRecalcService {
                                   WorkShift workShift,
                                   Employee employee,
                                   LocalDate workDate,
-                                  WorkIntervalCalculator.VerifiedTime verified,
-                                  Map<Long, BigDecimal> schemeCoefficientByCategory) {
+                                  WorkIntervalCalculator.VerifiedTime verified) {
         // Sum of the per-category minutes. This is NOT the shift duration — overlapping
         // wall-clock time appears in it once per category — but it remains the weighting
         // denominator for the performance coefficients, whose category weights must
@@ -1025,12 +1102,11 @@ public class DailyRecalcService {
         int bonusEligibleMinutes = 0;
         for (DailyReportCategory cat : categories) {
             if (isType(cat.getSourceType(), "WORK")) {
-                // The scheme's coefficient when it remapped this row, otherwise
-                // the category's own multiplier — byte-for-byte the previous
-                // behaviour for every employee the scheme does not touch.
-                BigDecimal multiplier = schemeCoefficientByCategory.getOrDefault(
-                        cat.getWorkCodeCategory().getId(),
-                        resolveMultiplierByCategory(cat.getWorkCodeCategory()));
+                // The row's own coefficient — the same number the payroll prices
+                // this row at. Read from the row rather than re-derived from the
+                // category, so a coefficient somebody typed moves the bonus with
+                // the pay instead of leaving the two disagreeing.
+                BigDecimal multiplier = coefficientKey(cat.getNormMultiplier());
                 bonusEligibleMinutes += BigDecimal.valueOf(safeInt(cat.getTotalMinutes()))
                         .multiply(multiplier)
                         .setScale(0, RoundingMode.HALF_UP)

@@ -43,5 +43,8 @@ public interface WorkLogDto {
 
     BigDecimal getNormMultiplierSnapshot();
 
+    /** Non-null only when somebody typed a coefficient over the resolved one. */
+    BigDecimal getNormMultiplierManual();
+
     Boolean getAllowsParallelWork();
 }

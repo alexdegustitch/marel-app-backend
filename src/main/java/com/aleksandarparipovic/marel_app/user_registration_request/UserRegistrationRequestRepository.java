@@ -34,14 +34,36 @@ public interface UserRegistrationRequestRepository
      * "pending" queue and the "show everything" history view; paginated because an
      * unbounded request list must never be returned.
      */
-    @Query("""
+    @Query(value = """
             select r
             from UserRegistrationRequest r
             join fetch r.user u
             join fetch u.role
             left join fetch r.reviewedBy
             where (:status is null or r.status = :status)
-            """)
+            """,
+            /*
+             * COUNTED SEPARATELY, ON PURPOSE.
+             *
+             * Spring derives a count query from the one above when none is given,
+             * and its derivation turns every `left join fetch` into an INNER join.
+             * The fetches here are all optional — an unclaimed request has no
+             * assignee, a free-standing one has no order line — so the derived
+             * count silently dropped exactly those rows. Worse than a wrong number:
+             * when the count comes back SMALLER than the page already holds,
+             * PageImpl decides the count cannot be right and reports
+             * `offset + rows on this page` instead. The total then equals the page
+             * size whatever the queue holds, "prikazi jos" never appears because
+             * `shown < total` is never true, and answering a request does not move
+             * the number.
+             *
+             * So: no fetches here, and only the joins the filters actually read.
+             */
+            countQuery = """
+                    select count(r)
+                    from UserRegistrationRequest r
+                    where (:status is null or r.status = :status)
+                    """)
     Page<UserRegistrationRequest> findPageByStatus(
             @Param("status") UserRegistrationRequestStatus status,
             Pageable pageable

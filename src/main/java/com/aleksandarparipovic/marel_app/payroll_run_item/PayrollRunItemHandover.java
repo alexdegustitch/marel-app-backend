@@ -49,11 +49,55 @@ public class PayrollRunItemHandover {
     public static final String EVENT_RETURNED = "RETURNED";
 
     /**
+     * The month was finished and frozen, and reopened.
+     *
+     * <p>They belong in the same chain as the handover, not in a log of their
+     * own: "what happened to this payroll" is one question, and locking is its
+     * last answer. The chain also stops making sense without them — it would
+     * end at "predato" on a month that has been paid.
+     */
+    public static final String EVENT_LOCKED = "LOCKED";
+    public static final String EVENT_UNLOCKED = "UNLOCKED";
+
+    /**
+     * A supervisor asking a finished month back, and what payroll answered.
+     *
+     * <p>In this chain rather than only on the request row, because the timeline
+     * beside the payroll is where somebody looks to find out why a month that
+     * was finished is open again.
+     */
+    public static final String EVENT_CHANGE_REQUESTED = "CHANGE_REQUESTED";
+    public static final String EVENT_CHANGE_ACCEPTED = "CHANGE_ACCEPTED";
+    public static final String EVENT_CHANGE_DECLINED = "CHANGE_DECLINED";
+
+
+    /**
      * The payroll came into being. Never stored — {@code getHandovers} derives it
      * from the item's own created_at, because creating a payroll is not a step
      * somebody took in the handover chain and the fact is already recorded.
      */
     public static final String EVENT_CREATED = "CREATED";
+
+    /**
+     * The steps a supervisor is shown.
+     *
+     * <p>They see their own workflow — the handover, and the requests they
+     * raised — and not what payroll does with the month afterwards. Freezing it
+     * and reopening it are payroll's own record; a supervisor reading "otključan
+     * / završen / otključan" is reading somebody else's working notes.
+     *
+     * <p>A WHITELIST rather than a list of what to hide: an event added later is
+     * then invisible until somebody decides it should be seen, which is the safe
+     * direction for a timeline about somebody's pay.
+     */
+    public static final java.util.Set<String> EVENTS_VISIBLE_TO_SUBMITTER = java.util.Set.of(
+            EVENT_CREATED,
+            EVENT_SUBMITTED,
+            EVENT_RETURNED,
+            EVENT_CHANGE_REQUESTED,
+            EVENT_CHANGE_ACCEPTED,
+            EVENT_CHANGE_DECLINED);
+
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

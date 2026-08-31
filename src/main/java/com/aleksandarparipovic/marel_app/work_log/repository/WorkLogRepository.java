@@ -61,6 +61,7 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         ewcc.category_no as effectiveWorkCodeCategoryNo,
         wl.is_active as isActive,
         wl.norm_multiplier_snapshot as normMultiplierSnapshot,
+        wl.norm_multiplier_manual as normMultiplierManual,
         wcc.allows_parallel_work as allowsParallelWork
     FROM work_logs wl
     LEFT JOIN operations o ON wl.operation_id = o.id
@@ -91,6 +92,7 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         ewcc.category_no as effectiveWorkCodeCategoryNo,
         wl.is_active as isActive,
         wl.norm_multiplier_snapshot as normMultiplierSnapshot,
+        wl.norm_multiplier_manual as normMultiplierManual,
         wcc.allows_parallel_work as allowsParallelWork
     FROM work_logs wl
     LEFT JOIN operations o ON wl.operation_id = o.id

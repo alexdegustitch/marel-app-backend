@@ -62,11 +62,28 @@ public final class RolePermissions {
                     AppPermission.OPERATION_MANAGE,
                     AppPermission.PRODUCTION_ORDER_VIEW,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_VIEW,
+                    /*
+                     * Sample orders follow the production order exactly: read
+                     * every one, alter none, and see who was told without being
+                     * able to change it. Granted separately rather than implied,
+                     * so that opening one kind of order to somebody never
+                     * silently opens the other.
+                     */
+                    AppPermission.SAMPLE_ORDER_VIEW,
+                    AppPermission.SAMPLE_ORDER_RECIPIENT_VIEW,
                     AppPermission.BONUS_RULE_MANAGE,
                     AppPermission.APP_SETTING_MANAGE,
                     AppPermission.WORK_CALENDAR_MANAGE,
                     AppPermission.MANUFACTURING_TIME_REQUEST_PROCESS,
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
+                    /*
+                     * The same two halves for the order-scope workflow: the
+                     * supervisor is the one who knows which operations a variant
+                     * really needs, so they ANSWER these requests and, by the same
+                     * rule as above, never raise one.
+                     */
+                    AppPermission.ORDER_SCOPE_REQUEST_PROCESS,
+                    AppPermission.ORDER_SCOPE_REQUEST_READ_ALL,
                     /*
                      * NOT MAILING_LIST_GLOBAL_MANAGE, and no longer
                      * PRODUCTION_ORDER_RECIPIENT_MANAGE.
@@ -81,10 +98,38 @@ public final class RolePermissions {
                      */
                     // Hands the month over and takes it back; never locks it.
                     AppPermission.PAYROLL_HANDOVER,
+                    /*
+                     * Gives the performance mark, and does NOT apply it. They
+                     * know what the month's work was worth; turning that opinion
+                     * into money is payroll's step, exactly as locking is.
+                     */
+                    AppPermission.PAYROLL_MARK_EDIT,
+                    /*
+                     * Asks for a handed-over month back, and no longer takes it.
+                     * PAYROLL_HANDOVER still lets them SUBMIT; returning a
+                     * submitted month is now payroll's answer to this request,
+                     * because payroll may already have worked on it.
+                     */
+                    AppPermission.PAYROLL_CHANGE_REQUEST_CREATE,
                     // Says which worker an account belongs to. They know the floor,
                     // so they are the ones who can answer it — and this grants that
                     // one field, not the editing of accounts.
-                    AppPermission.USER_EMPLOYEE_LINK),
+                    AppPermission.USER_EMPLOYEE_LINK,
+                    /*
+                     * Takes a whole shift back out of the month.
+                     *
+                     * <p>They are the ones who enter shifts and the ones who
+                     * notice a wrong one, so needing an administrator to undo
+                     * their own entry made the correction slower than the mistake.
+                     *
+                     * <p>Safe to grant because the month itself is the guard: a
+                     * payroll that has been handed over or locked refuses the
+                     * removal outright (WorkShiftService.refuseWhenMonthIsClosed),
+                     * so this reaches only months still in the supervisor's own
+                     * hands. And it removes rather than destroys — the work logs
+                     * stay recorded either way.
+                     */
+                    AppPermission.WORK_SHIFT_ARCHIVE),
 
             // Commercial staff drive production orders, the customers behind them
             // and who gets told about them. Nothing about the shop floor, beyond
@@ -96,6 +141,12 @@ public final class RolePermissions {
                     AppPermission.PRODUCTION_ORDER_MANAGE,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_VIEW,
                     AppPermission.PRODUCTION_ORDER_RECIPIENT_MANAGE,
+                    // Commercial staff write the sample orders too — samples are
+                    // agreed with a customer, which is their work end to end.
+                    AppPermission.SAMPLE_ORDER_VIEW,
+                    AppPermission.SAMPLE_ORDER_MANAGE,
+                    AppPermission.SAMPLE_ORDER_RECIPIENT_VIEW,
+                    AppPermission.SAMPLE_ORDER_RECIPIENT_MANAGE,
                     AppPermission.MANUFACTURING_TIME_REQUEST_CREATE,
                     /*
                      * They READ every manufacturing-time request, not only the ones
@@ -106,6 +157,15 @@ public final class RolePermissions {
                      * they do NOT hold — this widens what they see, not what they do.
                      */
                     AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL,
+                    /*
+                     * They raise the order-scope requests and read the whole
+                     * queue, exactly as with manufacturing times: commercial asks
+                     * what the order is made of, the floor answers, and both watch
+                     * the same list. Deciding is ORDER_SCOPE_REQUEST_PROCESS,
+                     * which they do NOT hold.
+                     */
+                    AppPermission.ORDER_SCOPE_REQUEST_CREATE,
+                    AppPermission.ORDER_SCOPE_REQUEST_READ_ALL,
                     // Same grant, same caveat as above: using and managing a global
                     // list are one permission here.
                     AppPermission.MAILING_LIST_GLOBAL_MANAGE),
@@ -118,7 +178,14 @@ public final class RolePermissions {
             "production_coordinator", EnumSet.of(
                     AppPermission.DASHBOARD_PRODUCTION_COORDINATOR_VIEW,
                     AppPermission.ANALYTICS_VIEW,
-                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE),
+                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE,
+                    /*
+                     * Granted alongside the manufacturing-time one so the two
+                     * request workflows are open to the same people. Reaching an
+                     * order to raise it from is still PRODUCTION_ORDER_VIEW, which
+                     * this role does not hold — this widens nothing on its own.
+                     */
+                    AppPermission.ORDER_SCOPE_REQUEST_CREATE),
 
             /*
              * accountant holds nothing yet.
@@ -131,7 +198,8 @@ public final class RolePermissions {
              * discovered as a missing key.
              */
             "accountant", EnumSet.of(
-                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE)
+                    AppPermission.MANUFACTURING_TIME_REQUEST_CREATE,
+                    AppPermission.ORDER_SCOPE_REQUEST_CREATE)
     );
 
     private RolePermissions() {

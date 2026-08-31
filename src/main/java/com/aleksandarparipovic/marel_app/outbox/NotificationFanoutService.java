@@ -13,6 +13,11 @@ import com.aleksandarparipovic.marel_app.production_order.repository.ProductionO
 import com.aleksandarparipovic.marel_app.production_order_email_thread.ProductionOrderEmailThreadService;
 import com.aleksandarparipovic.marel_app.production_order_recipient.ProductionOrderRecipient;
 import com.aleksandarparipovic.marel_app.production_order_recipient.ProductionOrderRecipientRepository;
+import com.aleksandarparipovic.marel_app.sample_order.SampleOrder;
+import com.aleksandarparipovic.marel_app.sample_order.repository.SampleOrderRepository;
+import com.aleksandarparipovic.marel_app.sample_order_email_thread.SampleOrderEmailThreadService;
+import com.aleksandarparipovic.marel_app.sample_order_recipient.SampleOrderRecipient;
+import com.aleksandarparipovic.marel_app.sample_order_recipient.SampleOrderRecipientRepository;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import com.aleksandarparipovic.marel_app.user_notification.UserNotification;
@@ -57,6 +62,9 @@ public class NotificationFanoutService {
     private final ProductionOrderRecipientRepository recipientRepository;
     private final ProductionOrderRepository productionOrderRepository;
     private final ProductionOrderEmailThreadService emailThreadService;
+    private final SampleOrderRecipientRepository sampleRecipientRepository;
+    private final SampleOrderRepository sampleOrderRepository;
+    private final SampleOrderEmailThreadService sampleEmailThreadService;
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final UserPreferencesService userPreferencesService;
@@ -72,6 +80,17 @@ public class NotificationFanoutService {
             OutboxEventType.PRODUCTION_ORDER_UPDATED,
             OutboxEventType.PRODUCTION_ORDER_COMPLETED,
             OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED);
+
+    /**
+     * The same, for a nalog za izradu uzoraka. A separate set rather than three
+     * more entries above, because the two are read by two different methods:
+     * which recipient table the addresses come from, and which thread the mail
+     * joins, is decided by exactly this distinction.
+     */
+    private static final Set<OutboxEventType> SAMPLE_ORDER_EMAIL_EVENT_TYPES = EnumSet.of(
+            OutboxEventType.SAMPLE_ORDER_CREATED,
+            OutboxEventType.SAMPLE_ORDER_UPDATED,
+            OutboxEventType.SAMPLE_ORDER_COMPLETED);
 
     /**
      * The two decisions about a person's own account. These MUST go by e-mail:
@@ -112,6 +131,10 @@ public class NotificationFanoutService {
 
         if (ORDER_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
             createOrderConversationDelivery(notificationEvent, event.getAggregateId());
+        }
+
+        if (SAMPLE_ORDER_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
+            createSampleOrderConversationDelivery(notificationEvent, event.getAggregateId());
         }
 
         if (ACCOUNT_DECISION_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
@@ -170,6 +193,18 @@ public class NotificationFanoutService {
             case MANUFACTURING_TIME_REQUEST_COMPLETED, MANUFACTURING_TIME_REQUEST_DECLINED ->
                     addUser(recipients, longOf(payload, "createdByUserId"));
 
+            // The order-scope workflow reaches the same people for the same
+            // reasons: whoever can answer it hears that it was raised, the new
+            // owner hears that it is theirs, and the requester hears the outcome.
+            case ORDER_SCOPE_REQUEST_CREATED ->
+                    recipients.addAll(usersWith(AppPermission.ORDER_SCOPE_REQUEST_PROCESS));
+
+            case ORDER_SCOPE_REQUEST_ASSIGNED ->
+                    addUser(recipients, longOf(payload, "assignedToUserId"));
+
+            case ORDER_SCOPE_REQUEST_COMPLETED, ORDER_SCOPE_REQUEST_DECLINED ->
+                    addUser(recipients, longOf(payload, "createdByUserId"));
+
             // Deliberately no in-app recipient: the mail is what opens the
             // conversation, and the only person present at creation is the
             // one who just did it.
@@ -180,6 +215,26 @@ public class NotificationFanoutService {
 
             case PRODUCTION_ORDER_DEADLINE_CHANGED ->
                     addUser(recipients, longOf(payload, "responsibleUserId"));
+
+            // Same reasoning as the production order above: nobody is told
+            // in-app that an order was created, because the only person present
+            // is the one who just created it. The mail is what opens the
+            // conversation.
+            case SAMPLE_ORDER_CREATED -> { }
+
+            case SAMPLE_ORDER_UPDATED, SAMPLE_ORDER_COMPLETED ->
+                    addUser(recipients, longOf(payload, "responsibleUserId"));
+
+            /*
+             * The payroll change request, on the same shape as the other two
+             * request workflows: whoever can answer it hears that it was raised,
+             * and whoever raised it hears the outcome.
+             */
+            case PAYROLL_CHANGE_REQUEST_CREATED ->
+                    recipients.addAll(usersWith(AppPermission.PAYROLL_CHANGE_REQUEST_PROCESS));
+
+            case PAYROLL_CHANGE_REQUEST_ACCEPTED, PAYROLL_CHANGE_REQUEST_DECLINED ->
+                    addUser(recipients, longOf(payload, "requestedByUserId"));
         }
 
         // Never notify a person who can no longer use the application.
@@ -308,6 +363,77 @@ public class NotificationFanoutService {
                 .build());
     }
 
+    /**
+     * ONE mail about this sample order, addressed to everybody at once.
+     *
+     * <p>The production-order method above with two things swapped: which
+     * snapshot the addresses come from, and which conversation the message
+     * joins. Every reason behind it is unchanged and is written out there — the
+     * snapshot rather than live mailing-list membership, one message rather than
+     * one per person, the actor in the To line rather than sent a private copy,
+     * and nothing queued at all when there is nobody to tell.
+     *
+     * <p>Kept as its own method rather than parameterised over the two: the only
+     * shared part is the address loop, and threading a pair of repositories and a
+     * thread service through a generic version would hide which table a given
+     * mail was actually built from.
+     */
+    private void createSampleOrderConversationDelivery(NotificationEvent event, Long sampleOrderId) {
+        // uq_notification_deliveries_group is the real guarantee; this only spares
+        // the thread a Message-ID that would be rolled back anyway.
+        if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmailsIsNotNull(
+                event.getId(), NotificationChannel.EMAIL)) {
+            return;
+        }
+
+        // LinkedHashSet: de-duplicated, but in snapshot order, so the To line
+        // reads the way the list was built rather than in hash order.
+        Set<String> addresses = new LinkedHashSet<>();
+
+        for (SampleOrderRecipient recipient :
+                sampleRecipientRepository.findActiveBySampleOrderId(sampleOrderId)) {
+
+            User user = recipient.getUser();
+            if (user != null && !userPreferencesService.emailNotificationsEnabled(user.getId())) {
+                continue;
+            }
+            addAddress(addresses, recipient.getRecipientEmail());
+        }
+
+        User actor = event.getActorUser();
+        if (actor != null && userPreferencesService.emailNotificationsEnabled(actor.getId())) {
+            addAddress(addresses, actor.getEmailAddress());
+        }
+
+        if (addresses.isEmpty()) {
+            // No snapshot yet, or everyone has e-mail switched off. Queueing a
+            // message with an empty To would fail at the relay on every retry —
+            // and, worse, would consume a Message-ID and leave the conversation
+            // pointing at a mail nobody received.
+            return;
+        }
+
+        SampleOrder order = sampleOrderRepository.findById(sampleOrderId).orElse(null);
+        if (order == null) {
+            return;
+        }
+
+        SampleOrderEmailThreadService.ThreadHeaders headers =
+                sampleEmailThreadService.nextMessage(order);
+
+        deliveryRepository.save(NotificationDelivery.builder()
+                .notificationEvent(event)
+                .channel(NotificationChannel.EMAIL)
+                // No single recipient user: this row is addressed to several
+                // people, some of whom may have no account at all.
+                .recipientEmails(String.join(",", addresses))
+                .messageId(headers.messageId())
+                .inReplyTo(headers.inReplyTo())
+                .referencesHeader(headers.references())
+                .threadSubject(headers.subject())
+                .build());
+    }
+
     /** Normalised the same way the recipient snapshot stores addresses. */
     private static void addAddress(Set<String> addresses, String email) {
         if (email != null && !email.isBlank()) {
@@ -405,10 +531,20 @@ public class NotificationFanoutService {
             case MANUFACTURING_TIME_REQUEST_ASSIGNED -> "Zahtev vam je dodeljen";
             case MANUFACTURING_TIME_REQUEST_COMPLETED -> "Zahtev je završen";
             case MANUFACTURING_TIME_REQUEST_DECLINED -> "Zahtev je odbijen";
+            case ORDER_SCOPE_REQUEST_CREATED -> "Novi zahtev za razradu naloga";
+            case ORDER_SCOPE_REQUEST_ASSIGNED -> "Zahtev za razradu vam je dodeljen";
+            case ORDER_SCOPE_REQUEST_COMPLETED -> "Razrada naloga je predata";
+            case ORDER_SCOPE_REQUEST_DECLINED -> "Zahtev za razradu je odbijen";
             case PRODUCTION_ORDER_CREATED -> "Otvoren nalog za proizvodnju";
             case PRODUCTION_ORDER_UPDATED -> "Izmenjen nalog za proizvodnju";
             case PRODUCTION_ORDER_COMPLETED -> "Nalog za proizvodnju je isporučen";
             case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Promenjen rok isporuke";
+            case SAMPLE_ORDER_CREATED -> "Otvoren nalog za izradu uzoraka";
+            case SAMPLE_ORDER_UPDATED -> "Izmenjen nalog za izradu uzoraka";
+            case SAMPLE_ORDER_COMPLETED -> "Nalog za izradu uzoraka je zatvoren";
+            case PAYROLL_CHANGE_REQUEST_CREATED -> "Zahtev za izmenu obračuna";
+            case PAYROLL_CHANGE_REQUEST_ACCEPTED -> "Obračun je vraćen na doradu";
+            case PAYROLL_CHANGE_REQUEST_DECLINED -> "Zahtev za izmenu je odbijen";
         };
     }
 
@@ -435,6 +571,19 @@ public class NotificationFanoutService {
                     + textOf(payload, "productName", "-") + " je završen.";
             case MANUFACTURING_TIME_REQUEST_DECLINED -> "Zahtev za proizvod "
                     + textOf(payload, "productName", "-") + " je odbijen.";
+            // The order is what identifies these, the way the product identifies
+            // the ones above. Whether the whole order or one line was asked about
+            // is left to the request itself: the message says what happened and
+            // where, never more than the recipient may already see.
+            case ORDER_SCOPE_REQUEST_CREATED -> "Nalog "
+                    + textOf(payload, "productionOrderCode", "-")
+                    + " čeka razradu operacija.";
+            case ORDER_SCOPE_REQUEST_ASSIGNED -> "Razrada naloga "
+                    + textOf(payload, "productionOrderCode", "-") + " je dodeljena vama.";
+            case ORDER_SCOPE_REQUEST_COMPLETED -> "Razrada naloga "
+                    + textOf(payload, "productionOrderCode", "-") + " je predata.";
+            case ORDER_SCOPE_REQUEST_DECLINED -> "Zahtev za razradu naloga "
+                    + textOf(payload, "productionOrderCode", "-") + " je odbijen.";
             // The first message of the conversation. It says what the order is,
             // because everything that follows arrives as a reply to it.
             case PRODUCTION_ORDER_CREATED -> "Otvoren je nalog "
@@ -452,6 +601,34 @@ public class NotificationFanoutService {
                     + textOf(payload, "orderCode", "-") + ": rok "
                     + joinOf(payload, "deadlinesBefore") + " promenjen na "
                     + joinOf(payload, "deadlinesAfter") + ".";
+            /*
+             * The sample order's three, worded the same way and saying "uzorke"
+             * where the production order says nothing: the two arrive in the same
+             * inbox, and the first line has to tell them apart.
+             */
+            case SAMPLE_ORDER_CREATED -> "Otvoren je nalog za izradu uzoraka "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-")
+                    + "). Sve izmene stižu kao odgovor na ovu poruku.";
+            case SAMPLE_ORDER_UPDATED -> "Nalog za uzorke "
+                    + textOf(payload, "orderCode", "-") + ": "
+                    + joinChanges(payload) + ".";
+            case SAMPLE_ORDER_COMPLETED -> "Nalog za uzorke "
+                    + textOf(payload, "orderCode", "-") + " je zatvoren.";
+            /*
+             * The employee and the month, and nothing about the amounts — this
+             * reaches whoever may ANSWER the request, and what they may see of
+             * the payroll itself is decided on the payroll screen, not here.
+             */
+            case PAYROLL_CHANGE_REQUEST_CREATED -> "Traži se izmena obračuna za "
+                    + textOf(payload, "employeeName", "-") + " ("
+                    + textOf(payload, "period", "-") + ").";
+            case PAYROLL_CHANGE_REQUEST_ACCEPTED -> "Obračun za "
+                    + textOf(payload, "employeeName", "-") + " ("
+                    + textOf(payload, "period", "-") + ") je vraćen na doradu.";
+            case PAYROLL_CHANGE_REQUEST_DECLINED -> "Zahtev za izmenu obračuna za "
+                    + textOf(payload, "employeeName", "-") + " ("
+                    + textOf(payload, "period", "-") + ") je odbijen.";
         };
     }
 }

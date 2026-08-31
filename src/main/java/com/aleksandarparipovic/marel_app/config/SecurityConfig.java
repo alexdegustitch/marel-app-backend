@@ -129,6 +129,26 @@ public class SecurityConfig {
                         .requestMatchers("/api/analytics/**").access(permission(AppPermission.ANALYTICS_VIEW))
 
                         /*
+                         * THE LOOKUP LIST OF WORK-CODE CATEGORIES, and only that.
+                         *
+                         * Listed BEFORE the work-record block below, which owns
+                         * everything else under this path. The operations
+                         * catalogue is open to the whole company — an operation's
+                         * category is one of its columns — so the screen that
+                         * lists operations has to be able to fill the category
+                         * filter. Without this line the filter answered 403 to
+                         * commercial staff on a page that is deliberately theirs
+                         * to read, which is the same mistake `search-all` was.
+                         *
+                         * Reading the LIST is not reading anybody's work. The
+                         * cards, the hours and the logs stay behind
+                         * WORK_RECORD_VIEW immediately below.
+                         */
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/work-code-categories/active-work-code-categories")
+                            .authenticated()
+
+                        /*
                          * THE WORK RECORDS — cards, months, shifts, hours, logs.
                          *
                          * `/api/me/**` is deliberately NOT in this list. A worker
@@ -141,6 +161,10 @@ public class SecurityConfig {
                                 "/api/daily-report-categories/**",
                                 "/api/monthly-reports/**",
                                 "/api/monthly-report-categories/**",
+                                // Scrap counted at month end, entered from the
+                                // monthly records screen — the same area, so the
+                                // same door.
+                                "/api/monthly-scraps/**",
                                 "/api/employee-records/**",
                                 "/api/work-logs/**",
                                 "/api/work-shifts/**",
@@ -168,7 +192,16 @@ public class SecurityConfig {
                                 "/api/payroll-run-item-updates/**",
                                 "/api/payroll-adjustments/**",
                                 "/api/payroll-adjustment-categories/**",
-                                "/api/payroll-maintenance/**")
+                                "/api/payroll-maintenance/**",
+                                /*
+                                 * The requests to reopen a payroll. PAYROLL_VIEW
+                                 * is the door — a request is about a month, and
+                                 * whoever cannot open the month has no business
+                                 * with requests about it. Raising and answering
+                                 * one keep their own method-level checks; both
+                                 * have to pass, so this can only narrow.
+                                 */
+                                "/api/payroll-change-requests/**")
                             .access(permission(AppPermission.PAYROLL_VIEW))
 
                         /*
@@ -248,6 +281,23 @@ public class SecurityConfig {
                             .access(permission(AppPermission.PRODUCTION_ORDER_VIEW))
                         .requestMatchers("/api/production-orders/**")
                             .access(permission(AppPermission.PRODUCTION_ORDER_MANAGE))
+
+                        /*
+                         * SAMPLE ORDERS — the same three rules, for the same
+                         * reasons, one line lower. The recipients sub-resource
+                         * first and left to its own @PreAuthorize; `search-all`
+                         * named explicitly because it is a READ done with POST
+                         * and would otherwise fall to the write rule and answer
+                         * 403 to the supervisor, who is exactly who the
+                         * VIEW/MANAGE split exists for.
+                         */
+                        .requestMatchers("/api/sample-orders/*/recipients/**").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/sample-orders/search-all")
+                            .access(permission(AppPermission.SAMPLE_ORDER_VIEW))
+                        .requestMatchers(HttpMethod.GET, "/api/sample-orders/**")
+                            .access(permission(AppPermission.SAMPLE_ORDER_VIEW))
+                        .requestMatchers("/api/sample-orders/**")
+                            .access(permission(AppPermission.SAMPLE_ORDER_MANAGE))
 
                         /*
                          * THE CATALOGUE — products, operations and the norms on

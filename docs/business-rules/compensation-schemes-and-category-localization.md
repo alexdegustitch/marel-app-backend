@@ -159,9 +159,13 @@ never change the result.
 
 Under the restricted scheme a shift's ordinary work, its `PL` work and the `PLB`
 portion can all resolve to `S`. `daily_report_categories` is UNIQUE on
-`(daily_report_id, work_code_category_id)`, so `DailyRecalcService` **merges**
-them into one row: minutes and quantities add up, and the performance
-coefficients are re-derived as a minute-weighted average.
+`(daily_report_id, work_code_category_id, norm_multiplier)`, so
+`DailyRecalcService` **merges** rows that share BOTH a category and a
+coefficient: minutes and quantities add up, and the performance coefficients are
+re-derived as a minute-weighted average.
+
+Rows at different coefficients do **not** merge — that is the point of the
+coefficient being in the key. See §5a.
 
 ---
 
@@ -180,8 +184,10 @@ calculation path.
 3. **Rule** — the in-force rule for (scheme, source category, work date). With no
    rule, `allow_unmapped_categories` decides.
 4. **Coefficient**, in precedence order:
-   1. the rule's `coefficient_override`, when present;
-   2. otherwise the existing normal logic (`work_code_categories.norm_multiplier`).
+   1. `work_logs.norm_multiplier_manual` — a coefficient a supervisor typed on
+      THIS operation, when present. See §5a;
+   2. the rule's `coefficient_override`, when present;
+   3. otherwise the existing normal logic (`work_code_categories.norm_multiplier`).
 
    Always `BigDecimal`, never binary floating point.
    `BigDecimal.valueOf(double)` goes through `Double.toString`, so `1.2` becomes
@@ -199,6 +205,66 @@ calculation path.
 This split is not new — it is what the system already did, and preserving it is
 what keeps standard payroll numerically identical. Under the restricted scheme
 both resolve to 1 anyway.
+
+---
+
+## 5a. A coefficient somebody typed
+
+A supervisor may type a coefficient over the resolved one on a single operation,
+in "Detalji operacije". It is stored on the work log as
+`norm_multiplier_manual`, with `_by` and `_at`; the three are NOT NULL together
+or NULL together.
+
+**It is not written into `norm_multiplier_snapshot`.** That field is derived —
+`WorkLogCompensationSnapshot.apply/matches` rewrite it whenever the resolution
+changes — so a hand-entered value stored there would be erased by the next
+recalculation. Kept apart, the resolved coefficient remains available as the
+DEFAULT the override is shown against, and the override survives.
+
+The **effective** coefficient is `manual ?? snapshot`, decided in exactly one
+place: `WorkLogCompensationSnapshot.coefficientOf`. Every consumer reads it from
+there, which is why verified minutes and PL/PLB weighting follow an override with
+no code of their own.
+
+Typing the resolved value is **not** an override: `WorkLogMapper` clears the
+column when the two match, so nothing claims to be changed when it is not, and
+typing the default back is how a supervisor undoes it.
+
+### One category, two coefficients
+
+A report row is one category **at one coefficient**. Four hours of `J` may be two
+at 1.10 and two at 1.20, and the two stay separate through
+`daily_report_categories` → `monthly_report_categories` →
+`payroll_run_item_categories`. Each row also carries `norm_multiplier_default`
+— what it would have been calculated at — which is what lets a screen say
+"1.20, izmenjeno, podrazumevano 1.10".
+
+Reading the coefficient off the row rather than off the category also means
+recalculating a closed month prices it the way it was recorded.
+
+### What an override moves
+
+| Moves with it | Why |
+|---|---|
+| `effective_minutes`, and therefore the amount | the row is priced at its own coefficient |
+| `bonus_eligible_minutes` | reads the row's coefficient, so pay and bonus cannot disagree |
+| verified minutes, PL/PLB weighting | the interval engine reads `coefficientOf` |
+
+Note that bonus-eligible minutes previously used the category's own multiplier
+whenever a scheme rule overrode the coefficient **without** remapping the
+category, and now use the row's. That case has no seeded data; the change makes
+the two agree.
+
+### On the payslip
+
+The payroll SCREEN shows every category-and-coefficient pair. The **PDF folds
+them back into one line per category**, at the category's own coefficient, so a
+worker is not asked to reconcile the same category printed twice. The hours on
+that line are `E / y` where `E` is the summed effective minutes and `y` the
+category's own coefficient — the amount is the rows' own and does not move. See
+`payslipCategories.ts`. Nothing about this ratio is stored: it is computed when
+the document is drawn, so it cannot go stale, cannot move quantities that are
+about efficiency, and cannot fail to be undone.
 
 ### Batching
 

@@ -504,6 +504,38 @@ A caller must be allowed to modify the production order itself
 (`PRODUCTION_ORDER_RECIPIENT_MANAGE`). **Manual recipient entry must not become a
 bypass around production-order authorization** — the same check guards both.
 
+### 5.4 Sample orders carry the same three rules, in their own tables
+
+Since V17 a *nalog za izradu uzoraka* has recipients of its own:
+`sample_order_mailing_lists`, `sample_order_recipients` and
+`sample_order_email_threads`, mirroring the three above column for column and
+constraint for constraint. Everything in §5.1, §6 and §7 applies to them
+unchanged, so the rules are not restated here — only the three differences:
+
+1. **Separate tables, not a shared one with two nullable foreign keys.** A
+   recipient belongs to exactly one kind of order. A shared table would need a
+   CHECK to say so plus every query to remember it, and the send path would have
+   to branch on the order's kind in the one place that must not be wrong.
+2. **The terminal state is `status = 'closed'`, not `DELIVERED`.** The lifecycle
+   is the same shape — one forward transition, after which the snapshot is
+   locked (no attach, no detach, no manual add, no removal) — but sample-order
+   status is a free-text column, so `SampleOrderStatus.isClosed` compares it
+   case-insensitively. Reading it strictly would leave a closed order editable.
+3. **Message-IDs are prefixed `so-`, not `po-`.** Order 7 exists in both tables;
+   a shared id scheme would file two unrelated conversations as one thread.
+
+Authorization is the matching pair: `SAMPLE_ORDER_RECIPIENT_VIEW` on the whole
+recipients controller, `SAMPLE_ORDER_RECIPIENT_MANAGE` on every method that
+changes who is told — including the mailing lists chosen while the order is being
+created, which `SampleOrderService` checks explicitly because that path does not
+go through the recipients controller.
+
+The e-mail events are `SAMPLE_ORDER_CREATED` / `_UPDATED` / `_COMPLETED`, with
+their own aggregate type `SAMPLE_ORDER`. Their own values rather than a reuse of
+the production-order ones: the two are different documents with different words
+in the mail, and a shared type would make "which order is this about" a question
+with two tables to look in.
+
 ---
 
 ## 6. Notifications

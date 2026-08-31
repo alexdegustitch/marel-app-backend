@@ -7,6 +7,21 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class PayrollRunItemPermissionsDto {
     private final boolean canEditAdjustments;
+
+    /**
+     * Whether THIS reader may change THIS payroll at all, right now.
+     *
+     * <p>The exact two guards {@code PayrollRunItemService.patch} applies, sent
+     * so the screen can stop offering controls the server is going to refuse: a
+     * LOCKED month is closed to everybody, and a submitted one is closed to the
+     * supervisor who submitted it — they said it was finished, payroll started
+     * from that, and the way back is a change request.
+     *
+     * <p>Deliberately NOT {@link #canEditAdjustments}, which is narrower (DRAFT
+     * only, for everybody) and answers a different question. Payroll may edit a
+     * submitted month; this is what says so.
+     */
+    private final boolean canEditItem;
     private final boolean canLock;
     private final boolean canApprove;
 
