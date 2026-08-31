@@ -7,7 +7,7 @@ import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceLogWriter;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
-import com.aleksandarparipovic.marel_app.absence_record.FullDayAbsenceSync;
+import com.aleksandarparipovic.marel_app.absence_record.ShiftAbsenceSync;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
@@ -71,7 +71,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     @Autowired private DailyReportRepository dailyReportRepository;
     @Autowired private WorkLogRepository workLogRepository;
     @Autowired private EntityManager entityManager;
-    @Autowired private FullDayAbsenceSync fullDayAbsenceSync;
+    @Autowired private ShiftAbsenceSync shiftAbsenceSync;
     @Autowired private AbsenceLogWriter absenceLogWriter;
 
     private Employee employee;
@@ -300,7 +300,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             absenceLogWriter.ensureUnpaidAbsenceLog(shift);
 
-            fullDayAbsenceSync.syncForShift(shift);
+            shiftAbsenceSync.syncForShift(shift);
 
             assertThat(absenceRepository.findActiveForShift(shift.getId()))
                     .singleElement()
@@ -316,7 +316,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         void doesNotCountTheDayTwice() {
             WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             absenceLogWriter.ensureUnpaidAbsenceLog(shift);
-            fullDayAbsenceSync.syncForShift(shift);
+            shiftAbsenceSync.syncForShift(shift);
 
             fixture.recalculate(shift);
 
@@ -330,12 +330,12 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         void removingTheLogWithdrawsTheAbsence() {
             WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             WorkLog noLog = absenceLogWriter.ensureUnpaidAbsenceLog(shift);
-            fullDayAbsenceSync.syncForShift(shift);
+            shiftAbsenceSync.syncForShift(shift);
             assertThat(absenceRepository.findActiveForShift(shift.getId())).hasSize(1);
 
             workLogRepository.delete(noLog);
             entityManager.flush();
-            fullDayAbsenceSync.syncForShift(shift);
+            shiftAbsenceSync.syncForShift(shift);
 
             assertThat(absenceRepository.findActiveForShift(shift.getId())).isEmpty();
         }
@@ -346,7 +346,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             fixture.workLog(shift, unpaidOperation(), unpaidAbsence, 360, 120, 0);
 
-            assertThatThrownBy(() -> fullDayAbsenceSync.syncForShift(shift))
+            assertThatThrownBy(() -> shiftAbsenceSync.syncForShift(shift))
                     .isInstanceOf(ConflictException.class)
                     .hasMessageContaining("celu smenu");
         }
@@ -358,7 +358,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             fixture.workLog(shift, workOperation, workCategory, 0, 240, 50);
             absenceLogWriter.ensureUnpaidAbsenceLog(shift);
 
-            assertThatThrownBy(() -> fullDayAbsenceSync.syncForShift(shift))
+            assertThatThrownBy(() -> shiftAbsenceSync.syncForShift(shift))
                     .isInstanceOf(ConflictException.class)
                     .hasMessageContaining("uz uneti rad");
         }
@@ -374,7 +374,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             workedShift(WEDNESDAY, 6, 960);
             WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             absenceLogWriter.ensureUnpaidAbsenceLog(thursday);
-            fullDayAbsenceSync.syncForShift(thursday);
+            shiftAbsenceSync.syncForShift(thursday);
 
             allocator.allocate(employee.getId(), MONTH);
 
@@ -388,7 +388,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             WorkShift wednesday = workedShift(WEDNESDAY, 6, 960);
             WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             absenceLogWriter.ensureUnpaidAbsenceLog(thursday);
-            fullDayAbsenceSync.syncForShift(thursday);
+            shiftAbsenceSync.syncForShift(thursday);
             allocator.allocate(employee.getId(), MONTH);
 
             changeWorkTo(wednesday, FULL_SHIFT);
@@ -399,7 +399,82 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         }
     }
 
+    @Nested
+    @DisplayName("work recorded over an absence")
+    class WorkOverAnAbsence {
+
+        @Test
+        @DisplayName("withdraws it — entering work there is a correction, not a conflict")
+        void withdrawsTheAbsence() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            partialAbsence(shift, 360, 120);          // away 12:00–14:00
+            assertThat(absenceRepository.findActiveForShift(shift.getId())).hasSize(1);
+
+            fixture.workLog(shift, workOperation, workCategory, 360, 120, 40);
+            shiftAbsenceSync.syncForShift(shift);
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId())).isEmpty();
+        }
+
+        @Test
+        @DisplayName("takes its compensations with it, so no overtime day still claims to have paid for it")
+        void takesTheCompensationsWithIt() {
+            workedShift(WEDNESDAY, 6, 600);           // 120 in the bank
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            AbsenceRecord absence = partialAbsence(shift, 360, 120);
+
+            allocator.allocate(employee.getId(), MONTH);
+            assertThat(compensationRepository.findForAbsences(List.of(absence.getId()))).isNotEmpty();
+
+            fixture.workLog(shift, workOperation, workCategory, 360, 120, 40);
+            shiftAbsenceSync.syncForShift(shift);
+
+            assertThat(compensationRepository.findForAbsences(List.of(absence.getId()))).isEmpty();
+        }
+
+        @Test
+        @DisplayName("leaves an absence alone when the work does not reach it")
+        void leavesUntouchedAbsencesAlone() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            partialAbsence(shift, 360, 120);          // away 12:00–14:00
+
+            fixture.workLog(shift, workOperation, workCategory, 0, 240, 80);  // worked 06:00–10:00
+            shiftAbsenceSync.syncForShift(shift);
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId())).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("a NO log is not work, and never withdraws the absence it mirrors")
+        void theNoLogDoesNotWithdrawItsOwnAbsence() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+
+            shiftAbsenceSync.syncForShift(shift);
+            shiftAbsenceSync.syncForShift(shift);      // idempotent: still there
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId())).hasSize(1);
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /** Away for part of the shift, as the absence dialog records it. */
+    private AbsenceRecord partialAbsence(WorkShift shift, int minutesIn, int minutes) {
+        return absenceRepository.saveAndFlush(AbsenceRecord.builder()
+                .employee(employee)
+                .workShift(shift)
+                .workCodeCategory(unpaidAbsence)
+                .startAt(shift.getStartAt().plusMinutes(minutesIn))
+                .endAt(shift.getStartAt().plusMinutes(minutesIn + minutes))
+                .absenceMinutes(minutes)
+                .normMultiplierSnapshot(BigDecimal.ZERO)
+                .paidMinutes(0)
+                .compensatedMinutes(0)
+                .isActive(true)
+                .build());
+    }
+
 
     /** The seeded operation NO logs hang from; work_logs.operation_id is NOT NULL. */
     private Operation unpaidOperation() {

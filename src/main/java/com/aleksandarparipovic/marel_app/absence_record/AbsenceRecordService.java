@@ -251,6 +251,13 @@ public class AbsenceRecordService {
         refuseWhenMonthIsClosed(shift);
 
         absenceLogWriter.removeAll(absence);
+
+        // The compensations go too. The foreign key cascades on DELETE and this
+        // is an archive, so without this they survive — each still claiming that
+        // some overtime day paid for an absence nobody is claiming any more, and
+        // the allocation only ever rewrites rows of absences it can still see.
+        compensationRepository.deleteForAbsences(List.of(absence.getId()));
+
         absence.setIsActive(false);
         absence.setOutcome(null);
         absence.setCompensatedMinutes(0);

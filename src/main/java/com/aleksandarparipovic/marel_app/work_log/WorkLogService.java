@@ -1,6 +1,6 @@
 package com.aleksandarparipovic.marel_app.work_log;
 
-import com.aleksandarparipovic.marel_app.absence_record.FullDayAbsenceSync;
+import com.aleksandarparipovic.marel_app.absence_record.ShiftAbsenceSync;
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
 import com.aleksandarparipovic.marel_app.report_worker.DailyRecalcRequestedEvent;
 import com.aleksandarparipovic.marel_app.work_log.dto.CreateUpdateWorkLogsRequest;
@@ -39,7 +39,7 @@ public class WorkLogService {
     private final WorkShiftService workShiftService;
     private final WorkShiftRepository workShiftRepository;
     private final WorkCategoryResolutionService resolutionService;
-    private final FullDayAbsenceSync fullDayAbsenceSync;
+    private final ShiftAbsenceSync shiftAbsenceSync;
 
     public List<WorkLogDto> fetchAllActiveLogsForShift(Long shiftId) {
         return repository.getAllActiveLogsForShift(shiftId);
@@ -130,7 +130,7 @@ public class WorkLogService {
                  * conflicts rather than corrections, and the message says where
                  * such an absence goes instead.
                  */
-                fullDayAbsenceSync.syncForShift(shift);
+                shiftAbsenceSync.syncForShift(shift);
 
                 workShiftService.recalculateShiftBoundaries(shift);
                 recalcQueueService.enqueueDailyJob(shift, "WORK_LOG_MUTATION");

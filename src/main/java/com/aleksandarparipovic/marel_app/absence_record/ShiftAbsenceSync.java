@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.absence_record;
 
+import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationRepository;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
@@ -16,7 +17,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Keeps a full day off saying the same thing in both places it is written.
+ * Reconciles a shift's absences with what its work logs now say.
  *
  * <p>A whole shift nobody came in is entered as a NO work log, because that is
  * where a supervisor already is when they find out. But the log is only how it is
@@ -35,9 +36,10 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class FullDayAbsenceSync {
+public class ShiftAbsenceSync {
 
     private final AbsenceRecordRepository absenceRepository;
+    private final AbsenceCompensationRepository compensationRepository;
     private final WorkLogRepository workLogRepository;
     private final AbsenceLogWriter absenceLogWriter;
     private final CurrentUserService currentUserService;
@@ -48,6 +50,8 @@ public class FullDayAbsenceSync {
      */
     public void syncForShift(WorkShift shift) {
         List<WorkLog> logs = workLogRepository.findActiveLogsWithRefsForShift(shift.getId());
+
+        withdrawAbsencesCoveredByWork(shift, logs);
 
         List<WorkLog> unpaidLogs = logs.stream()
                 .filter(wl -> wl.getWorkCode() != null
@@ -78,6 +82,69 @@ public class FullDayAbsenceSync {
         requireNothingElseOnTheShift(logs);
 
         mirrorIntoAbsenceRecord(shift, unpaid);
+        withdrawAbsencesSubsumedByTheWholeDay(shift);
+    }
+
+    /**
+     * Work recorded over an absence withdraws it.
+     *
+     * <p>Entering work where somebody was marked away is a CORRECTION — "he did
+     * come in after all" — not a conflict to refuse. The two cannot both stand:
+     * the shift would claim the same minutes as worked and as absent, and the
+     * overtime measure reads covered minutes, so it would count them twice over.
+     *
+     * <p>The absence goes whole, even when the work covers only part of it.
+     * Trimming it to what is left would be the application deciding where the
+     * remaining absence now begins, which is exactly the thing only the person
+     * entering it knows.
+     *
+     * <p>NO and ND logs are not "work" here. They ARE absences, drawn on the
+     * shift, and the one they mirror is the row this must never take away.
+     */
+    private void withdrawAbsencesCoveredByWork(WorkShift shift, List<WorkLog> logs) {
+        List<WorkLog> workLogs = logs.stream()
+                .filter(wl -> wl.getWorkCode() == null
+                        || !AbsenceCategoryCodes.isAbsenceLog(wl.getWorkCode().getCategoryNo()))
+                .toList();
+        if (workLogs.isEmpty()) {
+            return;
+        }
+
+        for (AbsenceRecord absence : absenceRepository.findActiveForShift(shift.getId())) {
+            boolean coveredByWork = workLogs.stream()
+                    .anyMatch(wl -> overlaps(absence.getStartAt(), absence.getEndAt(),
+                            wl.getStartAt(), wl.getEndAt()));
+            if (coveredByWork) {
+                withdraw(absence, "work was recorded over it");
+            }
+        }
+    }
+
+    /**
+     * A whole day off supersedes anything recorded for part of it.
+     *
+     * <p>The full-shift absence the NO log mirrors already covers those minutes,
+     * and leaving the shorter one beside it would count them twice.
+     */
+    private void withdrawAbsencesSubsumedByTheWholeDay(WorkShift shift) {
+        Optional<AbsenceRecord> wholeDay = mirroredAbsence(shift);
+        if (wholeDay.isEmpty()) {
+            return;
+        }
+        Long keep = wholeDay.get().getId();
+        for (AbsenceRecord absence : absenceRepository.findActiveForShift(shift.getId())) {
+            if (!absence.getId().equals(keep)) {
+                withdraw(absence, "the whole shift is now a full day off");
+            }
+        }
+    }
+
+    private static boolean overlaps(OffsetDateTime aStart, OffsetDateTime aEnd,
+                                    OffsetDateTime bStart, OffsetDateTime bEnd) {
+        if (aStart == null || aEnd == null || bStart == null || bEnd == null) {
+            return false;
+        }
+        return aStart.isBefore(bEnd) && bStart.isBefore(aEnd);
     }
 
     // ── Guards ───────────────────────────────────────────────────────────────
@@ -147,14 +214,31 @@ public class FullDayAbsenceSync {
      * somebody entered, and that week's weekend bonus may have been decided by it.
      */
     private void withdrawMirroredAbsence(WorkShift shift) {
-        mirroredAbsence(shift).ifPresent(absence -> {
-            absence.setIsActive(false);
-            absence.setOutcome(null);
-            absence.setCompensatedMinutes(0);
-            absenceRepository.save(absence);
-            log.info("Full-day absence {} withdrawn with its NO log on shift {}",
-                    absence.getId(), shift.getId());
-        });
+        mirroredAbsence(shift).ifPresent(absence -> withdraw(absence, "its NO log was removed"));
+    }
+
+    /**
+     * Takes an absence out of the reckoning, and its compensations with it.
+     *
+     * <p><b>The compensations are the part that is easy to forget.</b> The
+     * foreign key cascades on DELETE, and this is an ARCHIVE — so without this
+     * the rows survive, each one still claiming that some overtime day paid for
+     * an absence nobody is claiming any more. The allocation only ever rewrites
+     * the rows of absences it can still see, so nothing would clear them later.
+     *
+     * <p>Archived rather than deleted, as every withdrawal here is: it is what
+     * somebody entered, and that week's weekend bonus may have been decided by
+     * it. The audit trigger on absence_records keeps the trail either way.
+     */
+    private void withdraw(AbsenceRecord absence, String reason) {
+        compensationRepository.deleteForAbsences(List.of(absence.getId()));
+
+        absence.setIsActive(false);
+        absence.setOutcome(null);
+        absence.setCompensatedMinutes(0);
+        absenceRepository.save(absence);
+        log.info("Absence {} on shift {} withdrawn: {}",
+                absence.getId(), absence.getWorkShift().getId(), reason);
     }
 
     /**
