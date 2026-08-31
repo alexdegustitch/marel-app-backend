@@ -1,14 +1,17 @@
 package com.aleksandarparipovic.marel_app.absence_record;
 
+import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCategoryDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCreateRequest;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceRecordDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeBankDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.SuggestedAbsenceDto;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -29,11 +32,17 @@ public class AbsenceRecordController {
         return ResponseEntity.ok(service.suggestionsForShift(workShiftId));
     }
 
-    @GetMapping("/overtime-bank")
-    public ResponseEntity<OvertimeBankDto> bank(@RequestParam Long employeeId,
-                                                @RequestParam int year,
-                                                @RequestParam int month) {
-        return ResponseEntity.ok(service.bankFor(employeeId, year, month));
+    /** What kinds of absence may be chosen on that date. Never includes ND. */
+    @GetMapping("/categories")
+    public ResponseEntity<List<AbsenceCategoryDto>> categories(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate workDate) {
+        return ResponseEntity.ok(service.selectableCategories(workDate));
+    }
+
+    /** The bank of the month this shift falls in. Employee and month come from it. */
+    @GetMapping("/shift/{workShiftId}/overtime-bank")
+    public ResponseEntity<OvertimeBankDto> bankForShift(@PathVariable Long workShiftId) {
+        return ResponseEntity.ok(service.bankForShift(workShiftId));
     }
 
     @PostMapping

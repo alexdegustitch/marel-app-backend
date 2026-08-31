@@ -49,6 +49,10 @@ public final class AbsenceDtos {
     public record SuggestedAbsenceDto(OffsetDateTime startAt, OffsetDateTime endAt, int minutes) {
     }
 
+    /** An absence somebody may choose. ND is never among them. */
+    public record AbsenceCategoryDto(Long id, String categoryNo, String categoryName, boolean paid) {
+    }
+
     public record OvertimeDayDto(LocalDate workDate, int overtimeMinutes, int spentMinutes) {
     }
 

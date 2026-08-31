@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.absence_record;
 
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationRepository;
+import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCategoryDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCreateRequest;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceRecordDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.CompensationSourceDto;
@@ -120,6 +121,41 @@ public class AbsenceRecordService {
                 // A stray minute between two logs is rounding, not an absence.
                 .filter(s -> s.minutes() > 0)
                 .toList();
+    }
+
+    /**
+     * The absences somebody may choose, as of a date.
+     *
+     * <p>Not the work-log dropdown: that one offers what can be WORKED, and an
+     * absence is the opposite. ND is excluded here for the same reason it is
+     * excluded there — it follows from the overtime bank covering a whole shift
+     * and is never something anybody picks.
+     */
+    @Transactional(readOnly = true)
+    public List<AbsenceCategoryDto> selectableCategories(LocalDate workDate) {
+        return categoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc().stream()
+                .filter(c -> TYPE_ABSENCE.equalsIgnoreCase(c.getType()))
+                .filter(c -> !AbsenceCategoryCodes.NON_WORKING_DAY.equals(c.getCategoryNo()))
+                .filter(c -> (c.getValidFrom() == null || !c.getValidFrom().isAfter(workDate))
+                        && (c.getValidUntil() == null || !c.getValidUntil().isBefore(workDate)))
+                .map(c -> new AbsenceCategoryDto(c.getId(), c.getCategoryNo(), c.getCategoryName(),
+                        Boolean.TRUE.equals(c.getIsPaid())))
+                .toList();
+    }
+
+    /**
+     * The bank of the month this shift falls in, for the employee who worked it.
+     *
+     * <p>Addressed by SHIFT rather than by employee-and-month because that is
+     * what the caller has: the absence dialog opens from a shift card, and
+     * deriving the other two here saves widening the shift DTO with an
+     * employee id the card never otherwise needs.
+     */
+    @Transactional(readOnly = true)
+    public OvertimeBankDto bankForShift(Long workShiftId) {
+        WorkShift shift = requireShift(workShiftId);
+        LocalDate date = shift.getWorkDate();
+        return bankFor(shift.getEmployee().getId(), date.getYear(), date.getMonthValue());
     }
 
     @Transactional(readOnly = true)
