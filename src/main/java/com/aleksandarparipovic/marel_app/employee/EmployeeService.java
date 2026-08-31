@@ -29,6 +29,7 @@ import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.employee_compensation_scheme_history.CompensationSchemeInitializer;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueCodes;
 import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueService;
+import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecordService;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
@@ -77,6 +78,7 @@ public class EmployeeService {
     private final com.aleksandarparipovic.marel_app.recalc_queue.AffectedMonthsRecalculator employeeRowRecalculator;
     private final com.aleksandarparipovic.marel_app.employee_work_category.EmployeeWorkCategoryService employeeWorkCategoryService;
     private final EmployeeRowEnricher employeeRowEnricher;
+    private final EmployeeRecordService employeeRecordService;
 
 
     public EmployeeBasicInfoDto getEmployeeById(Long employeeId){
@@ -178,6 +180,29 @@ public class EmployeeService {
             openDepartmentHeadPeriod(employee, department,
                     request.getCompensationSchemeId(), request.getDepartmentHead());
         }
+
+        /*
+         * THE KARTON FOR THE MONTH THEY STARTED.
+         *
+         * Until now a new employee had none until somebody pressed "Kreiraj
+         * kartone" for that month or recorded their first shift — so between
+         * being entered and being worked they were missing from the month they
+         * belong to.
+         *
+         * The month is EMPLOYMENT START, not today: an employee entered in
+         * advance or backdated belongs to the month they began, and that is the
+         * month every other record of theirs is filed under.
+         *
+         * Through getOrCreateMonthlyRecord, which does NOT publish
+         * PayrollMonthInitEvent — deliberately, unlike the bulk creation.
+         * Adding one person to the register must not initialise a whole month's
+         * payroll as a side effect; that stays something somebody decides.
+         *
+         * Idempotent: the method reads before it writes, and
+         * uq_employee_records_employee_start_date is behind it either way.
+         */
+        employeeRecordService.getOrCreateMonthlyRecord(
+                employee.getId(), employee.getEmploymentStartDate());
 
         return employeeRowEnricher.enrich(repository.findEmployeeWithBonusById(employee.getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Employee projection not found"));
@@ -447,6 +472,16 @@ public class EmployeeService {
         Employee employee = repository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
 
+        /*
+         * Read BEFORE anything is written: what matters is the TRANSITION, and
+         * once setActive has run there is nothing left to compare against.
+         *
+         * This is the only live path that can turn `active` back on — the PUT
+         * form (EmployeeEditRequest) carries no such field, and archive() only
+         * ever turns it off.
+         */
+        boolean wasInactive = !employee.isActive();
+
         // Assigned once, at creation. It is the identifier the shifts, records and
         // payroll of this employee are filed under, and the screens print it as
         // the thing you look somebody up by — so it is not a field that gets
@@ -540,7 +575,32 @@ public class EmployeeService {
 
         recordHourlyRate(id, req.getHourlyRate(), req.getHourlyRateEffectiveFrom());
 
+        openKartonOnReturnToWork(employee, wasInactive);
+
         return employeeRowEnricher.enrich(repository.findEmployeeWithBonusById(id))
                 .orElseThrow(() -> new EntityNotFoundException("Employee not found: " + id));
+    }
+
+    /**
+     * A karton for THIS month when somebody is put back on the payroll.
+     *
+     * <p>Beside the one opened at creation, and for a different month on purpose:
+     * a returning employee starts working NOW, not on the date they were first
+     * hired, and it is this month they have to appear in. Employment start is the
+     * right answer only the first time.
+     *
+     * <p>Only on the TRANSITION. Every save of the employee screen sends the whole
+     * form, so an already-active employee is "set active" on each one — reacting
+     * to the value rather than to the change would reopen a karton in whatever
+     * month somebody last corrected a phone number.
+     *
+     * <p>No {@code PayrollMonthInitEvent}, for the same reason as at creation:
+     * one person moving does not start a whole month's payroll.
+     */
+    private void openKartonOnReturnToWork(Employee employee, boolean wasInactive) {
+        if (!wasInactive || !employee.isActive()) {
+            return;
+        }
+        employeeRecordService.getOrCreateMonthlyRecord(employee.getId(), LocalDate.now());
     }
 }

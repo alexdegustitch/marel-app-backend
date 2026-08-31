@@ -77,6 +77,19 @@ public interface EmployeeRepository
     """)
     Page<EmployeeWithBonusView> findEmployeesWithCurrentBonus(Pageable pageable);
 
+    /**
+     * One employee, by id, for the three methods that RETURN what they just wrote.
+     *
+     * <p><b>No {@code archivedAt is null} here, unlike the listing above, and that
+     * is the point.</b> {@code trg_02_employees_archived_at} stamps
+     * {@code archived_at} the moment {@code is_active} goes false, so with that
+     * filter the deactivating PATCH saved correctly and then answered 404 through
+     * this very query — the change was made and the caller was told it was not.
+     *
+     * <p>Nothing is widened by dropping it: every caller is a write that has
+     * already happened, addressing an employee by an id it was just given. Hiding
+     * an archived employee is a LISTING rule, and the listing keeps it.
+     */
     @Query("""
     select
       e.id as employeeId,
@@ -117,8 +130,7 @@ public interface EmployeeRepository
     left join csp.compensationScheme cs
 
     left join e.defaultWorkCategory wcc
-    where e.archivedAt is null
-      and e.id = :id
+    where e.id = :id
     """)
     Optional<EmployeeWithBonusView> findEmployeeWithBonusById(@Param("id") Long id);
 
