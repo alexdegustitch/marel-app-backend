@@ -3,7 +3,6 @@ package com.aleksandarparipovic.marel_app.report_worker;
 import com.aleksandarparipovic.marel_app.analytics.AnalyticsFactSyncService;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
-import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
@@ -1136,9 +1135,10 @@ public class DailyRecalcService {
          * log can carry an absence: work_logs.operation_id is NOT NULL and an
          * absence is not an operation on a product.
          *
-         * An absence whose outcome is ND is skipped. Its minutes are the ND log's
-         * minutes, and counting both would report a full shift of absence twice on
-         * a day that had one.
+         * A neradni dan counts here too, and ONLY here. The ND log is dropped
+         * before the categories are built, so it produces no category row to be
+         * counted twice against — the absence record it was written for is the
+         * one place those minutes survive.
          */
         AbsenceTotals absences = absenceTotals(workShift.getId());
         report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes + absences.paidMinutes());
@@ -1227,11 +1227,6 @@ public class DailyRecalcService {
 
         for (AbsenceRecord absence : absenceRecordRepository.findActiveForShift(workShiftId)) {
             compensated += safeInt(absence.getCompensatedMinutes());
-
-            if (absence.getOutcome() == AbsenceOutcome.ND) {
-                // The ND log already spans this shift; see the note in fillDailyTotals.
-                continue;
-            }
 
             int minutes = safeInt(absence.getAbsenceMinutes());
             // is_paid is the category's own answer: GO, PLO and SO are paid

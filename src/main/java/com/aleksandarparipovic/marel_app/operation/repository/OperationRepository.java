@@ -57,7 +57,7 @@ where o.id = :id
     @Query("""
             select o from Operation o
             where o.workCodeCategory.categoryNo = :categoryNo
-              and o.isActive = true
+              and o.active = true
               and o.archivedAt is null
             order by o.id asc
             """)
