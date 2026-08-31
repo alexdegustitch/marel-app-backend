@@ -26,8 +26,12 @@ import java.util.Map;
  *       FIFO, so the record reads "two hours from the 12th, one from the 10th"
  *       rather than naming whichever day happened to be loaded first.</li>
  *   <li><b>ND needs the WHOLE shift.</b> An absence becomes a neradni dan only
- *       when it covers its entire shift AND the bank covered all of it. Anything
- *       less stays NO, however much of it was compensated.</li>
+ *       when it covers its entire shift AND the bank could pay for all of it.</li>
+ *   <li><b>A full day is all or nothing.</b> If the bank cannot cover a whole
+ *       shift, it spends NOTHING on it: six hours thrown at an eight-hour
+ *       no-show would buy no ND, change no pay and no bonus, and would leave
+ *       nothing for a later day that could have been bought. Partial absences
+ *       are not like this — they take whatever is there.</li>
  *   <li><b>One month, no carry-over.</b> The caller passes one month's overtime
  *       and one month's absences; nothing here reaches past either end.</li>
  * </ol>
@@ -35,6 +39,11 @@ import java.util.Map;
  * <p>A partly covered absence keeps {@link AbsenceOutcome#NO} and still spoils
  * that week's weekend bonus. Compensation never makes absent time PAID — it buys
  * the day's standing, not its wage.
+ *
+ * <p>Because the whole month is planned again from scratch every time, a day
+ * refused today is bought the moment the bank grows: a supervisor who adds two
+ * hours to an earlier shift turns a six-hour bank into eight, and the no-show
+ * that stayed NO becomes ND without anybody revisiting it.
  */
 public final class AbsenceAllocationPlanner {
 
@@ -106,6 +115,22 @@ public final class AbsenceAllocationPlanner {
                 continue;
             }
 
+            // Covering the whole shift is what makes a day a NON-working day. A
+            // shift of ten hours therefore costs ten, not eight: the day is only
+            // one the employee was never expected to work if none of it is left
+            // standing as absence.
+            boolean coversWholeShift = absence.shiftMinutes() > 0
+                    && absence.absenceMinutes() >= absence.shiftMinutes();
+
+            if (coversWholeShift && totalRemaining(remaining) < absence.absenceMinutes()) {
+                // All or nothing. Part of a no-show buys no ND, moves no pay and
+                // no bonus — it would only empty the bank for a day that could
+                // have used it whole.
+                verdicts.put(absence.absenceRecordId(),
+                        new AbsenceVerdict(absence.absenceRecordId(), AbsenceOutcome.NO, 0));
+                continue;
+            }
+
             int outstanding = absence.absenceMinutes();
             for (int i = 0; i < bank.size() && outstanding > 0; i++) {
                 if (remaining[i] <= 0) {
@@ -119,12 +144,6 @@ public final class AbsenceAllocationPlanner {
 
             int compensated = absence.absenceMinutes() - outstanding;
 
-            // Covering the whole shift is what makes a day a NON-working day. A
-            // shift of ten hours therefore costs ten, not eight: the day is only
-            // one the employee was never expected to work if none of it is left
-            // standing as absence.
-            boolean coversWholeShift = absence.shiftMinutes() > 0
-                    && absence.absenceMinutes() >= absence.shiftMinutes();
             AbsenceOutcome outcome = (coversWholeShift && outstanding == 0)
                     ? AbsenceOutcome.ND
                     : AbsenceOutcome.NO;
@@ -137,5 +156,13 @@ public final class AbsenceAllocationPlanner {
         // and the insertion order here is the chronological order the caller
         // reads the verdicts back in.
         return new Plan(List.copyOf(grants), Collections.unmodifiableMap(verdicts));
+    }
+
+    private static int totalRemaining(int[] remaining) {
+        int total = 0;
+        for (int minutes : remaining) {
+            total += minutes;
+        }
+        return total;
     }
 }

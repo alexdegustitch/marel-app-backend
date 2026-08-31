@@ -2,6 +2,10 @@ package com.aleksandarparipovic.marel_app.report_worker;
 
 import com.aleksandarparipovic.marel_app.analytics.AnalyticsFactSyncService;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
 import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategory;
@@ -12,6 +16,7 @@ import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecordService;
 import com.aleksandarparipovic.marel_app.employee.ProbationPolicy;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.notification.ReportNotificationService;
+import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecordService;
 import com.aleksandarparipovic.marel_app.recalc_queue.DailyRecalcQueue;
 import com.aleksandarparipovic.marel_app.recalc_queue.DailyRecalcQueueRepository;
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
@@ -101,6 +106,8 @@ public class DailyRecalcService {
     private final ApplicationEventPublisher eventPublisher;
     private final WorkLogPerformanceCalculator performanceCalculator;
     private final AnalyticsFactSyncService analyticsFactSyncService;
+    private final OvertimeRecordService overtimeRecordService;
+    private final AbsenceRecordRepository absenceRecordRepository;
     private final WorkIntervalCalculator intervalCalculator;
     private final ShiftIntervalResolver intervalResolver;
     private final WorkCategoryResolutionService resolutionService;
@@ -121,7 +128,29 @@ public class DailyRecalcService {
         LocalDate workDate = snapshot.getWorkDate();
 
         // Heavy reads are executed before the write transaction to reduce lock hold time.
-        List<WorkLog> logs = workLogRepo.findActiveLogsWithRefsForShift(workShiftId);
+        /*
+         * THE ND LOG IS NOT WORK, AND IS NOT MEASURED AS ANY.
+         *
+         * A neradni dan is written as a work log so it shows on the shift beside
+         * everything else. Fed into the aggregation, though, it would be counted
+         * as time present with a coefficient of zero — and since the monthly
+         * efficiency is totalWeightedNormMinutes / totalShiftMinutes, one excused
+         * day would drag a whole month's efficiency down. (On probation it is
+         * worse and the other way: the probation rule credits every row at 100 %,
+         * so an ND day would INFLATE the month instead.)
+         *
+         * Removed here, once, rather than guarded at each of the four places that
+         * would otherwise have to remember: the interval engine, the category
+         * rows, the two coefficient denominators, and the analytics facts.
+         *
+         * The minutes are not lost. They reach total_absence_unpaid_minutes
+         * through the absence record the ND was written for, which carries the
+         * same span — see fillDailyTotals.
+         */
+        List<WorkLog> logs = workLogRepo.findActiveLogsWithRefsForShift(workShiftId).stream()
+                .filter(wl -> wl.getWorkCode() == null
+                        || !AbsenceCategoryCodes.NON_WORKING_DAY.equals(wl.getWorkCode().getCategoryNo()))
+                .toList();
 
         Boolean processed = transactionTemplate.execute(status -> processJobWritePhase(
                 jobId,
@@ -326,6 +355,20 @@ public class DailyRecalcService {
         // inherits the existing recalc-queue retry semantics for free.
         analyticsFactSyncService.upsertFactsForShift(workShift, logs);
 
+        /*
+         * THE DAY'S OVERTIME, once the report it is measured from exists.
+         *
+         * Measured over the whole DAY rather than this shift: eight hours in the
+         * first shift and eight in the third is eight hours of overtime, and
+         * neither shift on its own says so. Which is also why it is recomputed
+         * here on every shift of the day — each one changes the day's total.
+         *
+         * A change is what the month's allocation waits for. A day whose overtime
+         * did NOT move must not enqueue anything, or the monthly job and this one
+         * would keep handing work back to each other.
+         */
+        boolean overtimeChanged = overtimeRecordService.refreshForDay(employee, workDate);
+
         boolean wasEligible = previousBonusEligibleMinutes != null
                 && previousBonusEligibleMinutes >= WEEKEND_BONUS_MIN_MINUTES;
         boolean isEligible = report.getBonusEligibleMinutes() >= WEEKEND_BONUS_MIN_MINUTES;
@@ -355,8 +398,9 @@ public class DailyRecalcService {
         // Direct user edits always notify so the frontend spinner clears even on a no-op edit.
         String reason = locked.getReason();
         boolean directEdit = "WORK_LOG_MUTATION".equals(reason) || "WORK_SHIFT_UPDATE".equals(reason);
-        if (directEdit || reportChanged) {
-            recalcQueueService.enqueueMonthlyJob(employee, workDate.getYear(), workDate.getMonthValue(), "DAILY_RECALC");
+        if (directEdit || reportChanged || overtimeChanged) {
+            recalcQueueService.enqueueMonthlyJob(employee, workDate.getYear(), workDate.getMonthValue(),
+                    overtimeChanged ? "OVERTIME_CHANGED" : "DAILY_RECALC");
             eventPublisher.publishEvent(new DailyRecalcRequestedEvent(DailyRecalcRequestedEvent.Type.MONTHLY));
             notificationService.sendDailyReportUpdate(employee.getId(), workDate, workShift.getId());
         }
@@ -1083,11 +1127,23 @@ public class DailyRecalcService {
         report.setWorkShift(workShift);
         report.setTotalShiftMinutes(totalShiftMinutes);
         report.setTotalWorkMinutes(totalWorkMinutes);
-        report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes);
-        report.setTotalAbsenceUnpaidMinutes(totalAbsenceUnpaidMinutes);
         report.setTotalSickLeavePaidMinutes(totalSickLeavePaidMinutes);
         report.setTotalSickLeaveUnpaidMinutes(totalSickLeaveUnpaidMinutes);
-        report.setTotalCompensatedMinutes(0); // TO-DO
+        /*
+         * ABSENCE COMES FROM absence_records, WHICH IS THE ONLY PLACE IT LIVES.
+         *
+         * The category sums above stay for the shape they always had, but no work
+         * log can carry an absence: work_logs.operation_id is NOT NULL and an
+         * absence is not an operation on a product.
+         *
+         * An absence whose outcome is ND is skipped. Its minutes are the ND log's
+         * minutes, and counting both would report a full shift of absence twice on
+         * a day that had one.
+         */
+        AbsenceTotals absences = absenceTotals(workShift.getId());
+        report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes + absences.paidMinutes());
+        report.setTotalAbsenceUnpaidMinutes(totalAbsenceUnpaidMinutes + absences.unpaidMinutes());
+        report.setTotalCompensatedMinutes(absences.compensatedMinutes());
         int approvedMinutes = totalWeightedNormMinutes.setScale(0, RoundingMode.HALF_UP).intValue();
         report.setTotalApprovedMinutes(approvedMinutes);
 
@@ -1158,6 +1214,36 @@ public class DailyRecalcService {
             return BigDecimal.ONE;
         }
         return BigDecimal.valueOf(category.getNormMultiplier());
+    }
+
+    /** What the shift's own absence records add to the day. */
+    private record AbsenceTotals(int paidMinutes, int unpaidMinutes, int compensatedMinutes) {
+    }
+
+    private AbsenceTotals absenceTotals(Long workShiftId) {
+        int paid = 0;
+        int unpaid = 0;
+        int compensated = 0;
+
+        for (AbsenceRecord absence : absenceRecordRepository.findActiveForShift(workShiftId)) {
+            compensated += safeInt(absence.getCompensatedMinutes());
+
+            if (absence.getOutcome() == AbsenceOutcome.ND) {
+                // The ND log already spans this shift; see the note in fillDailyTotals.
+                continue;
+            }
+
+            int minutes = safeInt(absence.getAbsenceMinutes());
+            // is_paid is the category's own answer: GO, PLO and SO are paid
+            // absences, NO is not. Being COMPENSATED never makes an absence paid —
+            // the overtime bank buys the day's standing, not its wage.
+            if (Boolean.TRUE.equals(absence.getWorkCodeCategory().getIsPaid())) {
+                paid += minutes;
+            } else {
+                unpaid += minutes;
+            }
+        }
+        return new AbsenceTotals(paid, unpaid, compensated);
     }
 
     private boolean isType(String value, String expected) {

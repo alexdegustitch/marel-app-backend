@@ -43,6 +43,26 @@ where o.id = :id
 
     List<Operation> findByProductIdAndArchivedAtIsNull(Long productId);
 
+    /**
+     * The live operations carrying a given work code category, by CODE.
+     *
+     * <p>Used to find the one operation that exists so a neradni dan has
+     * something to hang a work log from — {@code work_logs.operation_id} is NOT
+     * NULL, and ND is not work anybody performed on a product.
+     *
+     * <p>Returns a list rather than an Optional on purpose: nothing in the
+     * database enforces that there is exactly one, so the caller checks and says
+     * so plainly instead of silently taking whichever row came back first.
+     */
+    @Query("""
+            select o from Operation o
+            where o.workCodeCategory.categoryNo = :categoryNo
+              and o.isActive = true
+              and o.archivedAt is null
+            order by o.id asc
+            """)
+    List<Operation> findActiveByWorkCodeCategoryNo(@Param("categoryNo") String categoryNo);
+
     @Query("""
     SELECT o
     FROM Operation o

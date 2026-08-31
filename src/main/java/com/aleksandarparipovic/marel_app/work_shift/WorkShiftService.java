@@ -684,12 +684,18 @@ public class WorkShiftService {
         log.info("Empty work shift {} deleted by user {}", id, currentUserService.getCurrentUserId());
     }
 
-    /** Work logs, absences and compensations — the three that block a delete. */
+    /**
+     * Work logs and absences — what blocks a delete.
+     *
+     * <p>Compensations are no longer counted, and no longer could be: since V25
+     * they hang off the OVERTIME DAY that paid for them rather than off a shift.
+     * Nothing is lost by dropping them, because a compensation only ever exists
+     * for an absence, and the absence on this shift is already counted here.
+     */
     private long countChildren(Long shiftId) {
         Number count = (Number) entityManager.createNativeQuery("""
                 SELECT (SELECT count(*) FROM work_logs WHERE work_shift_id = :id)
                      + (SELECT count(*) FROM absence_records WHERE work_shift_id = :id)
-                     + (SELECT count(*) FROM absence_compensations WHERE work_shift_id = :id)
                 """)
                 .setParameter("id", shiftId)
                 .getSingleResult();

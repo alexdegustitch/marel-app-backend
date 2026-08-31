@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.report_worker;
 
+import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationAllocator;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
@@ -26,6 +27,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.LinkedHashMap;
@@ -48,6 +50,7 @@ public class MonthlyRecalcService {
     private final MeterRegistry meterRegistry;
     private final EmployeeRecordService employeeRecordService;
     private final TransactionTemplate transactionTemplate;
+    private final AbsenceCompensationAllocator absenceCompensationAllocator;
 
     public void processJob(Long jobId) {
         long startedAt = System.nanoTime();
@@ -65,6 +68,26 @@ public class MonthlyRecalcService {
 
         LocalDate start = LocalDate.of(year, month, 1);
         LocalDate end = start.withDayOfMonth(start.lengthOfMonth());
+
+        /*
+         * WHICH OVERTIME PAID FOR WHICH ABSENCE, decided before the month is added up.
+         *
+         * The whole month is planned again from the current bank and the current
+         * absences, so a day refused earlier is bought the moment the bank grows —
+         * a supervisor adding two hours to an earlier shift turns a six-hour bank
+         * into eight, and the no-show that stayed NO becomes ND here.
+         *
+         * A day whose outcome moved has an ND log written or removed, and the
+         * allocator requeues that day. This pass then aggregates daily reports
+         * that are about to be rebuilt, and the requeued day brings the month back
+         * to be summed again — the same eventual-consistency the weekend-bonus
+         * recheck already relies on. When nothing moved, nothing is requeued.
+         *
+         * Its own transaction, outside the write phase below, so a configuration
+         * error (no ND operation) fails this job through the queue's retry and
+         * last_error path rather than half-writing a monthly report.
+         */
+        absenceCompensationAllocator.allocate(employeeId, YearMonth.of(year, month));
 
         // Heavy reads stay outside the short write transaction.
         List<DailyReport> dailyReports = dailyReportRepo.findByEmployee_IdAndWorkDateBetween(employeeId, start, end);

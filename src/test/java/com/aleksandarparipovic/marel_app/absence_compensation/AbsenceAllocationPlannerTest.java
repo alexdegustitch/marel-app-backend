@@ -115,12 +115,35 @@ class AbsenceAllocationPlannerTest {
                     List.of(overtime(3L, 3, 480)),
                     List.of(fullDay(1L, 10, 600)));
             assertThat(short_.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.NO);
-            assertThat(short_.verdicts().get(1L).compensatedMinutes()).isEqualTo(480);
 
             Plan enough = AbsenceAllocationPlanner.plan(
                     List.of(overtime(3L, 3, 600)),
                     List.of(fullDay(1L, 10, 600)));
             assertThat(enough.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.ND);
+        }
+
+        @Test
+        @DisplayName("a full day the bank cannot cover whole is left alone entirely")
+        void aFullDayIsAllOrNothing() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(3L, 3, 360)),
+                    List.of(fullDay(1L, 10, 480)));
+
+            assertThat(plan.grants()).isEmpty();
+            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.NO);
+            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isZero();
+        }
+
+        @Test
+        @DisplayName("and the hours it did not take are still there for a day that can use them")
+        void andTheBankSurvivesForALaterDay() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(3L, 3, 360)),
+                    List.of(fullDay(1L, 10, 480), fullDay(2L, 20, 360)));
+
+            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.NO);
+            assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isEqualTo(360);
         }
     }
 
@@ -142,7 +165,26 @@ class AbsenceAllocationPlannerTest {
 
             assertThat(plan.verdicts().get(1L).compensatedMinutes()).isEqualTo(120);
             assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.NO);
-            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isEqualTo(360);
+            // Nothing at all, not the 360 that were left: a full day is all or nothing.
+            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isZero();
+        }
+
+        /**
+         * The supervisor adds two hours to an earlier shift. Nothing about the
+         * absences changed, but the bank now covers the whole day, and the day
+         * that stayed NO becomes ND on the next pass.
+         */
+        @Test
+        @DisplayName("overtime added later turns a refused day into a neradni dan")
+        void aBiggerBankBuysTheDayAfterAll() {
+            List<AbsenceInput> sameAbsences = List.of(partial(1L, 5, 120), fullDay(2L, 20, 480));
+
+            Plan before = AbsenceAllocationPlanner.plan(List.of(overtime(10L, 10, 480)), sameAbsences);
+            assertThat(before.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.NO);
+
+            Plan after = AbsenceAllocationPlanner.plan(List.of(overtime(10L, 10, 600)), sameAbsences);
+            assertThat(after.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(after.verdicts().get(2L).compensatedMinutes()).isEqualTo(480);
         }
 
         @Test

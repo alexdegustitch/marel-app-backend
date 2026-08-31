@@ -143,6 +143,19 @@ public interface DailyReportRepository extends JpaRepository<DailyReport, Long>,
             @Param("endDate") LocalDate endDate
     );
 
+    /**
+     * How many days this week the employee did NOT put in enough work to keep the
+     * weekend bonus — where a day with no report at all counts as one of them.
+     *
+     * <p><b>A neradni dan does not count.</b> ND means the day was bought with
+     * overtime the employee had already worked, so they were not expected in: an
+     * excused day cannot spoil the week. NO is the opposite and still does, which
+     * is the whole difference between the two.
+     *
+     * <p>Matched on the absence rather than on the ND work log, because the
+     * outcome is the decision and the log is only how it is shown. An absence
+     * withdrawn or re-decided moves this answer with it.
+     */
     @Query(value = """
         WITH required_days AS (
             SELECT generate_series(
@@ -155,6 +168,16 @@ public interface DailyReportRepository extends JpaRepository<DailyReport, Long>,
         FROM required_days rd
         LEFT JOIN daily_reports dr ON dr.employee_id = :employeeId AND dr.work_date = rd.work_date
         WHERE COALESCE(dr.bonus_eligible_minutes, 0) < :minBonusMinutes
+          AND NOT EXISTS (
+              SELECT 1
+              FROM absence_records ar
+              JOIN work_shifts ws ON ws.id = ar.work_shift_id
+              WHERE ar.employee_id = :employeeId
+                AND ws.work_date = rd.work_date
+                AND ar.outcome = 'ND'
+                AND ar.is_active = true
+                AND ar.archived_at IS NULL
+          )
         """, nativeQuery = true)
     Integer countPreviousDaysWithInsufficientBonusMinutes(
             @Param("employeeId") Long employeeId,

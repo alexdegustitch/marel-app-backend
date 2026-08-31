@@ -33,7 +33,10 @@ public interface AbsenceCompensationRepository extends JpaRepository<AbsenceComp
      * not a thing that happened, and soft-deleting would leave one dead row per
      * absence per recalculation behind.
      */
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    // flushAutomatically so pending writes land before the delete; NOT
+    // clearAutomatically — the caller is still holding the AbsenceRecord entities
+    // it is about to write verdicts onto, and clearing would detach them mid-flight.
+    @Modifying(flushAutomatically = true)
     @Query("delete from AbsenceCompensation c where c.absenceRecord.id in :absenceRecordIds")
     void deleteForAbsences(@Param("absenceRecordIds") Collection<Long> absenceRecordIds);
 }
