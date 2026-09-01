@@ -3016,13 +3016,52 @@ public class PayrollRunItemService {
                         c -> safe(c.getTotalMinutes()),
                         (a, b) -> a));
 
+        /*
+         * A ROW THAT EXISTS BUT DISAGREES IS ALSO STALE.
+         *
+         * This used to answer only "is a row MISSING", and that left a hole the
+         * shop floor fell into. A payroll run creates a row for every category in
+         * the scheme up front, so the row is already there at zero; and when the
+         * monthly report gains minutes without its own columns changing, its
+         * version does not move either. Nothing was missing, nothing was flagged,
+         * nothing looked stale — and the payslip went on showing 0h for a
+         * category the month had 180 minutes of.
+         *
+         * That is exactly what happened to absences: total_absence_unpaid_minutes
+         * had the same value before and after they became category rows, so the
+         * report row was byte-identical and only monthly_report_categories moved.
+         *
+         * Summed per category on both sides, deliberately. The copy below keys on
+         * (category, coefficient) and the two sides may split the same category
+         * differently; comparing sums cannot miss a real difference, and the worst
+         * an imprecise match costs is one recalculation that writes the same
+         * numbers back.
+         */
+        java.util.Map<Long, Integer> itemMinutesByCategory = payrollRunItemCategoryRepository
+                .findByPayrollRunItemIdWithWorkCodeCategory(item.getId()).stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        c -> c.getWorkCodeCategory().getId(),
+                        java.util.stream.Collectors.summingInt(c -> safe(c.getTotalMinutes()))));
+        java.util.Map<Long, Integer> monthlyMinutesByCategory = monthlyReportCategoryRepository
+                .findByMonthlyReportIdWithCategory(mr.getId()).stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        c -> c.getWorkCodeCategory().getId(),
+                        java.util.stream.Collectors.summingInt(c -> safe(c.getTotalMinutes()))));
+
+        boolean disagrees = monthlyMinutesByCategory.entrySet().stream()
+                .anyMatch(e -> !e.getValue().equals(itemMinutesByCategory.get(e.getKey())));
+
         java.util.Set<Long> wanted = new java.util.HashSet<>(monthlyMinutes.keySet());
         if (scope != null) {
             wanted.addAll(scope.allowedWorkCategoryIds());
         }
         wanted.removeAll(existing);
         if (wanted.isEmpty()) {
-            return false;
+            if (disagrees) {
+                log.info("PayrollRunItem {}: category minutes disagree with the monthly report — recalculating",
+                        item.getId());
+            }
+            return disagrees;
         }
 
         List<com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory> categories =
@@ -3038,8 +3077,8 @@ public class PayrollRunItemService {
 
         log.info("PayrollRunItem {}: added {} missing category row(s){}",
                 item.getId(), categories.size(),
-                addedWithActivity ? " — recalculating, one of them has activity" : "");
-        return addedWithActivity;
+                addedWithActivity || disagrees ? " — recalculating" : "");
+        return addedWithActivity || disagrees;
     }
 
     /** Every applied, unarchived correction for this item, as one signed number. */

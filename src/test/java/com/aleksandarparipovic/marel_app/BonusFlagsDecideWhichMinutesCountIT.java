@@ -5,6 +5,11 @@ import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReport;
 import com.aleksandarparipovic.marel_app.monthly_report.MonthlyReportRepository;
+import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCategory;
+import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCategoryRepository;
+import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
+import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemService;
+import com.aleksandarparipovic.marel_app.payroll_run_item_category.PayrollRunItemCategoryRepository;
 import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
 import com.aleksandarparipovic.marel_app.report_worker.MonthlyRecalcService;
@@ -46,6 +51,8 @@ class BonusFlagsDecideWhichMinutesCountIT extends AbstractIntegrationTest {
     private static final YearMonth MONTH = YearMonth.of(2026, 8);
     private static final LocalDate WORK_DATE = LocalDate.of(2026, 8, 19);
     private static final int FULL_SHIFT = 480;
+    /** Distinct from anything the fixture writes, so the copy is unmistakable. */
+    private static final int MOVED_MINUTES = 173;
 
     @Autowired private PayrollScenarioFixture fixture;
     @Autowired private DailyReportRepository dailyReportRepository;
@@ -54,8 +61,12 @@ class BonusFlagsDecideWhichMinutesCountIT extends AbstractIntegrationTest {
     @Autowired private RecalcQueueService recalcQueueService;
     @Autowired private MonthlyRecalcService monthlyRecalcService;
     @Autowired private EntityManager entityManager;
+    @Autowired private MonthlyReportCategoryRepository monthlyReportCategoryRepository;
+    @Autowired private PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
+    @Autowired private PayrollRunItemService payrollRunItemService;
 
     private Employee employee;
+    private PayrollRunItem payrollItem;
     private WorkCodeCategory workCategory;
     private Operation workOperation;
 
@@ -63,8 +74,15 @@ class BonusFlagsDecideWhichMinutesCountIT extends AbstractIntegrationTest {
     void setUp() {
         PayrollScenarioFixture.Scenario scenario = fixture.scenario().period(MONTH).build();
         employee = scenario.employee();
+        payrollItem = scenario.item();
         workCategory = scenario.workCategory();
         workOperation = fixture.operation(workCategory, 10);
+    }
+
+    private MonthlyReport monthlyReportOf() {
+        return monthlyReportRepository
+                .findByEmployeeIdAndEmployeeRecordStartDate(employee.getId(), MONTH.atDay(1))
+                .orElseThrow();
     }
 
     private WorkShift workedShift() {
@@ -90,6 +108,61 @@ class BonusFlagsDecideWhichMinutesCountIT extends AbstractIntegrationTest {
                 .findByEmployeeIdAndEmployeeRecordStartDate(employee.getId(), MONTH.atDay(1))
                 .orElseThrow();
         return report.getMonthlyBonusEligibleMinutes();
+    }
+
+    /**
+     * The hole the shop floor fell into: a payroll run creates a row for every
+     * category in the scheme up front, so nothing is ever MISSING; and a monthly
+     * report can gain minutes without its own columns changing, so its version
+     * does not move either. Absences did exactly that — the report row was
+     * byte-identical before and after they became categories — and the payslip
+     * went on showing 0h against a month that had 180 minutes.
+     */
+    @Test
+    @DisplayName("a payroll row that disagrees with the month is stale, even with nothing missing and no flag")
+    void aDisagreeingRowIsStale() {
+        Long itemId = payrollItem.getId();
+
+        // Read it once, so it is up to date the way a payroll somebody has
+        // already opened is: based_on_version stamped, no flag, and a row for
+        // this category sitting at zero.
+        payrollRunItemService.getForPayrollAccess(itemId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(payrollRunItemCategoryRepository
+                .findByPayrollRunItemIdWithWorkCodeCategory(itemId))
+                .filteredOn(c -> c.getWorkCodeCategory().getId().equals(workCategory.getId()))
+                .as("the run creates a row per scheme category up front — that is the premise")
+                .isNotEmpty();
+
+        // The month's minutes for that category change. Nothing else does: not the
+        // report's own columns, and so not its version either — which is the
+        // whole point, because the version is what staleness was decided on.
+        MonthlyReport report = monthlyReportOf();
+        Integer versionBefore = report.getVersion();
+
+        MonthlyReportCategory monthlyCategory = monthlyReportCategoryRepository
+                .findByMonthlyReportIdWithCategory(report.getId()).stream()
+                .filter(c -> c.getWorkCodeCategory().getId().equals(workCategory.getId()))
+                .findFirst().orElseThrow();
+        monthlyCategory.setTotalMinutes(MOVED_MINUTES);
+        monthlyReportCategoryRepository.saveAndFlush(monthlyCategory);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(monthlyReportOf().getVersion())
+                .as("the report row itself did not move, which is why nothing looked stale")
+                .isEqualTo(versionBefore);
+
+        payrollRunItemService.getForPayrollAccess(itemId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(payrollRunItemCategoryRepository
+                .findByPayrollRunItemIdWithWorkCodeCategory(itemId))
+                .filteredOn(c -> c.getWorkCodeCategory().getId().equals(workCategory.getId()))
+                .anySatisfy(c -> assertThat(c.getTotalMinutes()).isEqualTo(MOVED_MINUTES));
     }
 
     @Test
