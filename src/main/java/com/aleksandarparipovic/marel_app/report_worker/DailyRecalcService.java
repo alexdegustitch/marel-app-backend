@@ -328,9 +328,24 @@ public class DailyRecalcService {
         // starting on the last day of probation would be split across the boundary.
         boolean onProbation = probationPolicy.isOnProbation(employeeId, workDate);
 
-        List<DailyReportCategory> categories = buildCategories(
+        List<DailyReportCategory> categories = new ArrayList<>(buildCategories(
                 logs, report, nightRemap, weekendRemap, plSourceIds, plbCategory,
-                schemeContext, resolutionByLogId, onProbation);
+                schemeContext, resolutionByLogId, onProbation));
+
+        /*
+         * THE ABSENCE IS A CATEGORY ROW TOO, or the payroll has nothing to show.
+         *
+         * daily_report_categories → monthly_report_categories →
+         * payroll_run_item_categories is the whole path a category takes to a
+         * payslip. Absences are not work logs, so nothing put them on it, and two
+         * hours missed showed up as a smaller total with no line saying why.
+         * They are built here instead, straight from the absence records.
+         *
+         * They carry no coefficient and no quantity: an absence is time, not
+         * output. fillDailyTotals keeps them out of the efficiency denominator
+         * for the same reason — see absenceMinutesOf.
+         */
+        categories.addAll(buildAbsenceCategories(workShift.getId(), report));
 
         // Recorded so a 100 % shift can say WHY it is 100 %: an employee who
         // genuinely hit the norm exactly and one who was on probation are
@@ -1092,7 +1107,14 @@ public class DailyRecalcService {
         // denominator for the performance coefficients, whose category weights must
         // still add up to 1. Changing that denominator would silently move payroll
         // figures, which is out of scope here.
-        int categoryMinutesTotal = categories.stream().mapToInt(c -> safeInt(c.getTotalMinutes())).sum();
+        // WORKED minutes only. An absence row is time nobody worked, with a
+        // coefficient of zero — left in the denominator it would drag the day's
+        // efficiency down in proportion to how long somebody was away, which
+        // measures their absence rather than their work.
+        int categoryMinutesTotal = categories.stream()
+                .filter(c -> !isAbsenceRow(c))
+                .mapToInt(c -> safeInt(c.getTotalMinutes()))
+                .sum();
 
         // The authoritative shift duration: the global union of the shift's intervals.
         int totalShiftMinutes = (int) verified.coveredMinutes();
@@ -1134,21 +1156,14 @@ public class DailyRecalcService {
         report.setTotalSickLeavePaidMinutes(totalSickLeavePaidMinutes);
         report.setTotalSickLeaveUnpaidMinutes(totalSickLeaveUnpaidMinutes);
         /*
-         * ABSENCE COMES FROM absence_records, WHICH IS THE ONLY PLACE IT LIVES.
-         *
-         * The category sums above stay for the shape they always had, but no work
-         * log can carry an absence: work_logs.operation_id is NOT NULL and an
-         * absence is not an operation on a product.
-         *
-         * A neradni dan counts here too, and ONLY here. The ND log is dropped
-         * before the categories are built, so it produces no category row to be
-         * counted twice against — the absence record it was written for is the
-         * one place those minutes survive.
+         * The sums above already hold the absence: buildAbsenceCategories put a
+         * row on the report for it, of the category's own type, so the ordinary
+         * ABSENCE and SICK_LEAVE arms pick it up exactly as they would any other.
+         * Only the compensation has no category to live on.
          */
-        AbsenceTotals absences = absenceTotals(workShift.getId());
-        report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes + absences.paidMinutes());
-        report.setTotalAbsenceUnpaidMinutes(totalAbsenceUnpaidMinutes + absences.unpaidMinutes());
-        report.setTotalCompensatedMinutes(absences.compensatedMinutes());
+        report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes);
+        report.setTotalAbsenceUnpaidMinutes(totalAbsenceUnpaidMinutes);
+        report.setTotalCompensatedMinutes(compensatedMinutesOf(workShift.getId()));
         int approvedMinutes = totalWeightedNormMinutes.setScale(0, RoundingMode.HALF_UP).intValue();
         report.setTotalApprovedMinutes(approvedMinutes);
 
@@ -1204,6 +1219,9 @@ public class DailyRecalcService {
         }
         BigDecimal total = BigDecimal.ZERO;
         for (DailyReportCategory category : categories) {
+            if (isAbsenceRow(category)) {
+                continue;
+            }
             BigDecimal coefficient = approved
                     ? defaultDecimal(category.getApprovedPerformanceCoefficient())
                     : defaultDecimal(category.getPerformanceCoefficient());
@@ -1221,29 +1239,75 @@ public class DailyRecalcService {
         return BigDecimal.valueOf(category.getNormMultiplier());
     }
 
-    /** What the shift's own absence records add to the day. */
-    private record AbsenceTotals(int paidMinutes, int unpaidMinutes, int compensatedMinutes) {
+    /**
+     * One category row per KIND of absence on the shift.
+     *
+     * <p>Built from the absence records rather than from logs, because no work
+     * log can carry an absence — {@code work_logs.operation_id} is NOT NULL and
+     * an absence is not an operation on a product. Without these rows the path
+     * to a payslip has no absence on it at all: two hours missed showed up as a
+     * smaller total with no line saying why.
+     *
+     * <p>Grouped by category, so several stretches away on one day read as one
+     * line of NO rather than three. No quantity, no scrap, no weighted minutes
+     * and no coefficient: an absence is time, not output.
+     */
+    private List<DailyReportCategory> buildAbsenceCategories(Long workShiftId, DailyReport report) {
+        Map<Long, List<AbsenceRecord>> byCategory = absenceRecordRepository.findActiveForShift(workShiftId)
+                .stream()
+                .collect(Collectors.groupingBy(a -> a.getWorkCodeCategory().getId(),
+                        LinkedHashMap::new, Collectors.toList()));
+
+        List<DailyReportCategory> rows = new ArrayList<>();
+        for (List<AbsenceRecord> group : byCategory.values()) {
+            WorkCodeCategory category = group.get(0).getWorkCodeCategory();
+            int minutes = group.stream().mapToInt(a -> safeInt(a.getAbsenceMinutes())).sum();
+            int paid = group.stream().mapToInt(a -> safeInt(a.getPaidMinutes())).sum();
+
+            rows.add(DailyReportCategory.builder()
+                    .dailyReport(report)
+                    .workCodeCategory(category)
+                    .totalMinutes(minutes)
+                    // What the absence is PAID for, which for NO is nothing.
+                    // Being compensated by the bank never changes this: the
+                    // overtime buys the day's standing, not its wage.
+                    .totalPaidMinutes(paid)
+                    .totalQuantity(0)
+                    .totalScrap(0)
+                    .totalWeightedNormMinutes(BigDecimal.ZERO)
+                    .normMultiplier(group.get(0).getNormMultiplierSnapshot())
+                    .normMultiplierDefault(resolveMultiplierByCategory(category))
+                    .performanceCoefficient(BigDecimal.ZERO)
+                    .approvedPerformanceCoefficient(BigDecimal.ZERO)
+                    .sourceType(category.getType() != null ? category.getType() : "ABSENCE")
+                    .build());
+        }
+        return rows;
     }
 
-    private AbsenceTotals absenceTotals(Long workShiftId) {
-        int paid = 0;
-        int unpaid = 0;
-        int compensated = 0;
+    /**
+     * TRUE for a row that stands for time nobody worked.
+     *
+     * <p>Kept out of both efficiency denominators. Left in, the day's rate would
+     * fall in proportion to how long somebody was away — which measures their
+     * absence rather than their work, and is not what a performance figure is.
+     */
+    private boolean isAbsenceRow(DailyReportCategory category) {
+        return isType(category.getSourceType(), "ABSENCE")
+                || isType(category.getSourceType(), "SICK_LEAVE");
+    }
 
-        for (AbsenceRecord absence : absenceRecordRepository.findActiveForShift(workShiftId)) {
-            compensated += safeInt(absence.getCompensatedMinutes());
-
-            int minutes = safeInt(absence.getAbsenceMinutes());
-            // is_paid is the category's own answer: GO, PLO and SO are paid
-            // absences, NO is not. Being COMPENSATED never makes an absence paid —
-            // the overtime bank buys the day's standing, not its wage.
-            if (Boolean.TRUE.equals(absence.getWorkCodeCategory().getIsPaid())) {
-                paid += minutes;
-            } else {
-                unpaid += minutes;
-            }
-        }
-        return new AbsenceTotals(paid, unpaid, compensated);
+    /**
+     * How much of the day's absence the overtime bank reached.
+     *
+     * <p>The one thing no category row can say: it is a property of the absence
+     * record, written by the allocation, and two absences of the same category
+     * may be covered differently.
+     */
+    private int compensatedMinutesOf(Long workShiftId) {
+        return absenceRecordRepository.findActiveForShift(workShiftId).stream()
+                .mapToInt(a -> safeInt(a.getCompensatedMinutes()))
+                .sum();
     }
 
     private boolean isType(String value, String expected) {

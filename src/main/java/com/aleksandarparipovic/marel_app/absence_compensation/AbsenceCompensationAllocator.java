@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceLogWriter;
+import com.aleksandarparipovic.marel_app.absence_record.AbsencePayrollNotice;
 import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecord;
 import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecordRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
@@ -59,6 +60,7 @@ public class AbsenceCompensationAllocator {
     private final WorkShiftRepository workShiftRepository;
     private final RecalcQueueService recalcQueueService;
     private final AbsenceLogWriter absenceLogWriter;
+    private final AbsencePayrollNotice payrollNotice;
 
     /**
      * @return the shifts whose NO/ND outcome actually moved. Empty means the
@@ -254,6 +256,10 @@ public class AbsenceCompensationAllocator {
             }
             recalcQueueService.enqueueDailyJob(weekendShift, "WEEKLY_BONUS_RECHECK");
         }
+
+        // NO became ND or the other way round: the day is now priced as a
+        // different category, so the payslip built from it is out of date.
+        payrollNotice.monthNeedsRepricing(employeeId, changed.get(0).getWorkShift().getWorkDate());
 
         log.info("Allocation changed {} absence outcome(s) for employee {}",
                 changed.size(), employeeId);

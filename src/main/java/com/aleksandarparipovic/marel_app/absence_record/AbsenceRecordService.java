@@ -63,6 +63,7 @@ public class AbsenceRecordService {
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final RecalcQueueService recalcQueueService;
     private final AbsenceLogWriter absenceLogWriter;
+    private final AbsencePayrollNotice payrollNotice;
     private final WorkIntervalCalculator intervalCalculator;
     private final CurrentUserService currentUserService;
 
@@ -265,6 +266,7 @@ public class AbsenceRecordService {
         // The day is rebuilt, which moves the absence totals; that in turn
         // enqueues the month, and the month is where the bank is allocated.
         recalcQueueService.enqueueDailyJob(shift, "ABSENCE_RECORDED");
+        payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), shift.getWorkDate());
         log.info("Absence {} recorded on shift {} ({} min)", absence.getId(), shift.getId(), minutes);
 
         return toDto(absence, List.of());
@@ -302,6 +304,7 @@ public class AbsenceRecordService {
         repository.save(absence);
 
         recalcQueueService.enqueueDailyJob(shift, "ABSENCE_WITHDRAWN");
+        payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), shift.getWorkDate());
         log.info("Absence {} withdrawn from shift {}", id, shift.getId());
     }
 

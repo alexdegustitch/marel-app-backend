@@ -42,6 +42,7 @@ public class ShiftAbsenceSync {
     private final AbsenceCompensationRepository compensationRepository;
     private final WorkLogRepository workLogRepository;
     private final AbsenceLogWriter absenceLogWriter;
+    private final AbsencePayrollNotice payrollNotice;
     private final CurrentUserService currentUserService;
 
     /**
@@ -206,6 +207,7 @@ public class ShiftAbsenceSync {
                 .createdBy(currentUserService.getCurrentUserId())
                 .isActive(true)
                 .build());
+        payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), shift.getWorkDate());
         log.info("Full-day absence mirrored from NO log {} on shift {}", unpaid.getId(), shift.getId());
     }
 
@@ -237,6 +239,8 @@ public class ShiftAbsenceSync {
         absence.setOutcome(null);
         absence.setCompensatedMinutes(0);
         absenceRepository.save(absence);
+        payrollNotice.monthNeedsRepricing(
+                absence.getWorkShift().getEmployee().getId(), absence.getWorkShift().getWorkDate());
         log.info("Absence {} on shift {} withdrawn: {}",
                 absence.getId(), absence.getWorkShift().getId(), reason);
     }

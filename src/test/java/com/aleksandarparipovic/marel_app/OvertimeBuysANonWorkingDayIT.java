@@ -11,6 +11,10 @@ import com.aleksandarparipovic.marel_app.absence_record.ShiftAbsenceSync;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReportRepository;
+import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategory;
+import com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategoryRepository;
+import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItem;
+import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
@@ -73,8 +77,11 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     @Autowired private EntityManager entityManager;
     @Autowired private ShiftAbsenceSync shiftAbsenceSync;
     @Autowired private AbsenceLogWriter absenceLogWriter;
+    @Autowired private DailyReportCategoryRepository categoryRowRepository;
+    @Autowired private PayrollRunItemRepository payrollRunItemRepository;
 
     private Employee employee;
+    private PayrollRunItem payrollItem;
     private WorkCodeCategory workCategory;
     private WorkCodeCategory unpaidAbsence;
     private Operation workOperation;
@@ -83,6 +90,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     void setUp() {
         PayrollScenarioFixture.Scenario scenario = fixture.scenario().period(MONTH).build();
         employee = scenario.employee();
+        payrollItem = scenario.item();
         workCategory = scenario.workCategory();
         workOperation = fixture.operation(workCategory, 10);
 
@@ -396,6 +404,103 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
 
             assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.NON_WORKING_DAY)).isEmpty();
             assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.UNPAID_ABSENCE)).isPresent();
+        }
+    }
+
+    @Nested
+    @DisplayName("what the payroll is told")
+    class WhatThePayrollIsTold {
+
+        /**
+         * The reason absences have to become category rows at all:
+         * daily_report_categories -> monthly_report_categories ->
+         * payroll_run_item_categories is the only path a category takes to a
+         * payslip. Without a row, two hours missed showed up as a smaller total
+         * with no line saying why.
+         */
+        @Test
+        @DisplayName("two hours missed become a NO line on the day, not just a smaller total")
+        void anAbsenceBecomesACategoryRow() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            fixture.workLog(shift, workOperation, workCategory, 0, 360, 100);
+            partialAbsence(shift, 360, 120);
+
+            fixture.recalculate(shift);
+
+            DailyReport report = dailyReportRepository.findByWorkShiftId(shift.getId()).orElseThrow();
+            assertThat(categoryRowRepository.findAllByDailyReportIds(List.of(report.getId())))
+                    .filteredOn(c -> AbsenceCategoryCodes.UNPAID_ABSENCE
+                            .equals(c.getWorkCodeCategory().getCategoryNo()))
+                    .singleElement()
+                    .satisfies(row -> {
+                        assertThat(row.getTotalMinutes()).isEqualTo(120);
+                        // Unpaid is unpaid; being covered by the bank never
+                        // changes that.
+                        assertThat(row.getTotalPaidMinutes()).isZero();
+                        assertThat(row.getSourceType()).isEqualTo("ABSENCE");
+                    });
+        }
+
+        /**
+         * The row must not be measured as work. Left in the denominator, the
+         * day's rate would fall in proportion to how long somebody was away —
+         * which measures their absence rather than their work.
+         */
+        @Test
+        @DisplayName("and recording it does not move the day's efficiency")
+        void anAbsenceDoesNotDragTheRate() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            fixture.workLog(shift, workOperation, workCategory, 0, 360, 100);
+            fixture.recalculate(shift);
+
+            DailyReport before = dailyReportRepository.findByWorkShiftId(shift.getId()).orElseThrow();
+            BigDecimal rateBefore = before.getApprovedPerformanceRate();
+            assertThat(rateBefore).isNotNull().isNotEqualTo(BigDecimal.ZERO);
+
+            partialAbsence(shift, 360, 120);
+            entityManager.flush();
+            entityManager.clear();
+            fixture.recalculate(shift);
+
+            DailyReport after = dailyReportRepository.findByWorkShiftId(shift.getId()).orElseThrow();
+            assertThat(after.getApprovedPerformanceRate()).isEqualByComparingTo(rateBefore);
+            assertThat(after.getTotalAbsenceUnpaidMinutes()).isEqualTo(120);
+        }
+
+        @Test
+        @DisplayName("recording an absence flags the payroll to reprice itself")
+        void recordingAnAbsenceFlagsThePayroll() {
+            assertThat(payrollItem.getNeedsRecalculation()).isFalse();
+
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+            shiftAbsenceSync.syncForShift(shift);
+
+            // A bulk UPDATE does not reach the instance already in the session.
+            entityManager.flush();
+            entityManager.clear();
+            assertThat(payrollRunItemRepository.findById(payrollItem.getId()).orElseThrow()
+                    .getNeedsRecalculation()).isTrue();
+        }
+
+        @Test
+        @DisplayName("and so does withdrawing one")
+        void withdrawingFlagsItToo() {
+            WorkShift shift = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            WorkLog noLog = absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+            shiftAbsenceSync.syncForShift(shift);
+            payrollRunItemRepository.findById(payrollItem.getId())
+                    .ifPresent(i -> i.setNeedsRecalculation(false));
+            entityManager.flush();
+
+            workLogRepository.delete(noLog);
+            entityManager.flush();
+            shiftAbsenceSync.syncForShift(shift);
+
+            entityManager.flush();
+            entityManager.clear();
+            assertThat(payrollRunItemRepository.findById(payrollItem.getId()).orElseThrow()
+                    .getNeedsRecalculation()).isTrue();
         }
     }
 
