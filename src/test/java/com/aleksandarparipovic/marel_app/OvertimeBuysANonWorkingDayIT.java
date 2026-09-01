@@ -247,8 +247,10 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         DailyReport report = dailyReportRepository.findByWorkShiftId(thursday.getId()).orElseThrow();
         assertThat(report.getTotalShiftMinutes()).isZero();
         assertThat(report.getTotalWorkMinutes()).isZero();
-        // The minutes are not lost: they are absence, through the record itself.
-        assertThat(report.getTotalAbsenceUnpaidMinutes()).isEqualTo(FULL_SHIFT);
+        // And nothing is owed either: the bank bought the whole day back, so
+        // there is no uncovered absence left for the payroll to charge. The
+        // hours are not lost — they were paid on the day they were worked.
+        assertThat(report.getTotalAbsenceUnpaidMinutes()).isZero();
         assertThat(report.getTotalCompensatedMinutes()).isEqualTo(FULL_SHIFT);
     }
 
@@ -439,6 +441,55 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
                         assertThat(row.getTotalPaidMinutes()).isZero();
                         assertThat(row.getSourceType()).isEqualTo("ABSENCE");
                     });
+        }
+
+        /**
+         * Three hours missed with two bought back is one hour of NO. The other
+         * two were already worked, and paid for on the day they were worked;
+         * charging them again here would take the same hours off twice.
+         */
+        @Test
+        @DisplayName("only the part the bank did not cover reaches the line")
+        void onlyTheUncoveredPartIsPriced() {
+            workedShift(WEDNESDAY, 6, 600);                  // 120 in the bank
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            fixture.workLog(thursday, workOperation, workCategory, 0, 300, 80);
+            partialAbsence(thursday, 300, 180);              // away 3h
+
+            allocator.allocate(employee.getId(), MONTH);
+            entityManager.flush();
+            entityManager.clear();
+            fixture.recalculate(thursday);
+
+            DailyReport report = dailyReportRepository.findByWorkShiftId(thursday.getId()).orElseThrow();
+            assertThat(categoryRowRepository.findAllByDailyReportIds(List.of(report.getId())))
+                    .filteredOn(c -> AbsenceCategoryCodes.UNPAID_ABSENCE
+                            .equals(c.getWorkCodeCategory().getCategoryNo()))
+                    .singleElement()
+                    .satisfies(row -> assertThat(row.getTotalMinutes()).isEqualTo(60));
+        }
+
+        /**
+         * A neradni dan was bought back whole, so there is nothing left of it for
+         * the payroll to charge. No row at all, rather than a row of zero.
+         */
+        @Test
+        @DisplayName("a fully covered day leaves no line behind")
+        void aFullyCoveredDayHasNoLine() {
+            workedShift(WEDNESDAY, 6, 960);                  // 480 in the bank
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absence(thursday);
+
+            allocator.allocate(employee.getId(), MONTH);
+            entityManager.flush();
+            entityManager.clear();
+            fixture.recalculate(thursday);
+
+            DailyReport report = dailyReportRepository.findByWorkShiftId(thursday.getId()).orElseThrow();
+            assertThat(categoryRowRepository.findAllByDailyReportIds(List.of(report.getId())))
+                    .filteredOn(c -> AbsenceCategoryCodes.UNPAID_ABSENCE
+                            .equals(c.getWorkCodeCategory().getCategoryNo()))
+                    .isEmpty();
         }
 
         /**

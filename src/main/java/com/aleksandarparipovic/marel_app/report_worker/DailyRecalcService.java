@@ -1251,6 +1251,16 @@ public class DailyRecalcService {
      * <p>Grouped by category, so several stretches away on one day read as one
      * line of NO rather than three. No quantity, no scrap, no weighted minutes
      * and no coefficient: an absence is time, not output.
+     *
+     * <p><b>Only the UNCOVERED part is priced.</b> Three hours missed with two
+     * bought back by the overtime bank is one hour of NO, because the other two
+     * were already worked — paid for once, on the day they were worked. Putting
+     * the whole three on the line would charge the employee for time they had
+     * already made up.
+     *
+     * <p>A fully covered absence therefore has no row at all. That is what a
+     * neradni dan IS: the day was bought back, and there is nothing left of it
+     * for the payroll to say.
      */
     private List<DailyReportCategory> buildAbsenceCategories(Long workShiftId, DailyReport report) {
         Map<Long, List<AbsenceRecord>> byCategory = absenceRecordRepository.findActiveForShift(workShiftId)
@@ -1261,7 +1271,14 @@ public class DailyRecalcService {
         List<DailyReportCategory> rows = new ArrayList<>();
         for (List<AbsenceRecord> group : byCategory.values()) {
             WorkCodeCategory category = group.get(0).getWorkCodeCategory();
-            int minutes = group.stream().mapToInt(a -> safeInt(a.getAbsenceMinutes())).sum();
+            int minutes = group.stream()
+                    .mapToInt(a -> Math.max(0,
+                            safeInt(a.getAbsenceMinutes()) - safeInt(a.getCompensatedMinutes())))
+                    .sum();
+            if (minutes == 0) {
+                // Covered whole. Nothing is owed and nothing is shown.
+                continue;
+            }
             int paid = group.stream().mapToInt(a -> safeInt(a.getPaidMinutes())).sum();
 
             rows.add(DailyReportCategory.builder()
