@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceC
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCreateRequest;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceRecordDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.CompensationSourceDto;
+import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.MonthlyAbsencesDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeBankDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeDayDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.SuggestedAbsenceDto;
@@ -67,9 +68,29 @@ public class AbsenceRecordService {
 
     // ── Reading ──────────────────────────────────────────────────────────────
 
+    /**
+     * A whole month of one employee's absences, with the bank beside them.
+     *
+     * <p>The karton's own view. Reading it per shift answers "what happened on
+     * this day"; reading it here answers the question somebody actually opens the
+     * karton with — how much was missed this month, which of it the overtime
+     * covered, and what is left in the bank to cover the next one.
+     */
+    @Transactional(readOnly = true)
+    public MonthlyAbsencesDto forMonth(Long employeeId, int year, int month) {
+        YearMonth period = YearMonth.of(year, month);
+        List<AbsenceRecord> absences = repository.findActiveForEmployeeBetween(
+                employeeId, period.atDay(1), period.atEndOfMonth());
+        return new MonthlyAbsencesDto(withCompensations(absences), bankFor(employeeId, year, month));
+    }
+
     @Transactional(readOnly = true)
     public List<AbsenceRecordDto> forShift(Long workShiftId) {
-        List<AbsenceRecord> absences = repository.findActiveForShift(workShiftId);
+        return withCompensations(repository.findActiveForShift(workShiftId));
+    }
+
+    /** Each absence with the overtime days that paid for it, oldest first. */
+    private List<AbsenceRecordDto> withCompensations(List<AbsenceRecord> absences) {
         if (absences.isEmpty()) {
             return List.of();
         }
@@ -224,6 +245,23 @@ public class AbsenceRecordService {
                 .isActive(true)
                 .build());
 
+        /*
+         * A WHOLE SHIFT RECORDED HERE IS DRAWN LIKE ONE RECORDED IN THE WORK FORM.
+         *
+         * Both doors lead to the same state: the absence record that decides the
+         * overtime bank and the weekend bonus, and the single NO log that shows
+         * the day on the karton. Writing only the record would leave the shift
+         * looking empty — indistinguishable from one nobody has filled in yet —
+         * and which door somebody happened to use is not a thing the karton
+         * should be able to tell.
+         *
+         * Only for a FULL shift. Part of one is a gap: it leaves the rest of the
+         * day standing, and a log across the whole shift would contradict it.
+         */
+        if (coversWholeShift(shift, start, end)) {
+            absenceLogWriter.ensureUnpaidAbsenceLog(shift);
+        }
+
         // The day is rebuilt, which moves the absence totals; that in turn
         // enqueues the month, and the month is where the bank is allocated.
         recalcQueueService.enqueueDailyJob(shift, "ABSENCE_RECORDED");
@@ -296,6 +334,12 @@ public class AbsenceRecordService {
                     "Ovde se unosi samo neplaćeno odsustvo (NO). Kategorija \""
                             + category.getCategoryNo() + "\" se ne unosi na ovom ekranu.");
         }
+    }
+
+    private static boolean coversWholeShift(WorkShift shift, OffsetDateTime start, OffsetDateTime end) {
+        return shift.getStartAt() != null && shift.getEndAt() != null
+                && !start.isAfter(shift.getStartAt())
+                && !end.isBefore(shift.getEndAt());
     }
 
     private void validateWithinShift(WorkShift shift, OffsetDateTime start, OffsetDateTime end) {
@@ -403,6 +447,7 @@ public class AbsenceRecordService {
         return new AbsenceRecordDto(
                 absence.getId(),
                 absence.getWorkShift().getId(),
+                absence.getWorkShift().getWorkDate(),
                 category.getId(),
                 category.getCategoryNo(),
                 category.getCategoryName(),

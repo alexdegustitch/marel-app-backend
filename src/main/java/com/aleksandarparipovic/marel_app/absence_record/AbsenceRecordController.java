@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.absence_record;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCategoryDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCreateRequest;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceRecordDto;
+import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.MonthlyAbsencesDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeBankDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.SuggestedAbsenceDto;
 import jakarta.validation.Valid;
@@ -24,6 +25,14 @@ public class AbsenceRecordController {
     @GetMapping("/shift/{workShiftId}")
     public ResponseEntity<List<AbsenceRecordDto>> forShift(@PathVariable Long workShiftId) {
         return ResponseEntity.ok(service.forShift(workShiftId));
+    }
+
+    /** The karton's view: a month of absences with the bank that decided them. */
+    @GetMapping("/employee/{employeeId}")
+    public ResponseEntity<MonthlyAbsencesDto> forMonth(@PathVariable Long employeeId,
+                                                       @RequestParam int year,
+                                                       @RequestParam int month) {
+        return ResponseEntity.ok(service.forMonth(employeeId, year, month));
     }
 
     /** The stretches of the shift nothing is recorded for — offered, not applied. */

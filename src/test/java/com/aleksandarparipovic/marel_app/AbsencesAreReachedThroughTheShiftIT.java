@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app;
 
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceLogWriter;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
@@ -57,6 +58,7 @@ class AbsencesAreReachedThroughTheShiftIT extends AbstractIntegrationTest {
     @Autowired private PayrollScenarioFixture fixture;
     @Autowired private WorkCodeCategoryRepository categoryRepository;
     @Autowired private AbsenceRecordRepository absenceRepository;
+    @Autowired private AbsenceLogWriter absenceLogWriter;
 
     private MockMvc mvc;
     private WorkShift shift;
@@ -174,6 +176,72 @@ class AbsencesAreReachedThroughTheShiftIT extends AbstractIntegrationTest {
         mvc.perform(post("/api/absences").contentType(MediaType.APPLICATION_JSON)
                         .content(body(paidLeave.getId(), 360, 480)))
                 .andExpect(status().isConflict());
+    }
+
+    /**
+     * Both doors lead to the same state. A whole day recorded here draws itself
+     * on the karton exactly as one entered in the work form does — otherwise the
+     * shift would look empty, indistinguishable from one nobody has filled in.
+     */
+    @Test
+    @WithMockUser(roles = "supervisor")
+    @DisplayName("a whole shift recorded here also draws the NO log the work form would have")
+    void aWholeDayWritesItsLogToo() throws Exception {
+        mvc.perform(post("/api/absences").contentType(MediaType.APPLICATION_JSON)
+                        .content(body(unpaidCategoryId(), 0, FULL_SHIFT)))
+                .andExpect(status().isOk());
+
+        assertThat(absenceLogWriter.findLog(shift, AbsenceCategoryCodes.UNPAID_ABSENCE)).isPresent();
+    }
+
+    @Test
+    @WithMockUser(roles = "supervisor")
+    @DisplayName("but part of one draws nothing — the rest of the day is still standing")
+    void aGapDrawsNoLog() throws Exception {
+        mvc.perform(post("/api/absences").contentType(MediaType.APPLICATION_JSON)
+                        .content(body(unpaidCategoryId(), 360, FULL_SHIFT)))
+                .andExpect(status().isOk());
+
+        assertThat(absenceLogWriter.findLog(shift, AbsenceCategoryCodes.UNPAID_ABSENCE)).isEmpty();
+    }
+
+    @Test
+    @WithMockUser(roles = "supervisor")
+    @DisplayName("and withdrawing the whole day takes its log back out")
+    void withdrawingAWholeDayRemovesTheLog() throws Exception {
+        mvc.perform(post("/api/absences").contentType(MediaType.APPLICATION_JSON)
+                .content(body(unpaidCategoryId(), 0, FULL_SHIFT))).andExpect(status().isOk());
+        Long id = absenceRepository.findActiveForShift(shift.getId()).get(0).getId();
+
+        mvc.perform(delete("/api/absences/" + id)).andExpect(status().isNoContent());
+
+        assertThat(absenceLogWriter.findLog(shift, AbsenceCategoryCodes.UNPAID_ABSENCE)).isEmpty();
+    }
+
+    // ── The month ────────────────────────────────────────────────────────────
+
+    @Test
+    @WithMockUser(roles = "supervisor")
+    @DisplayName("the karton's own view returns the month's absences beside the bank")
+    void theMonthIsReadable() throws Exception {
+        mvc.perform(post("/api/absences").contentType(MediaType.APPLICATION_JSON)
+                .content(body(unpaidCategoryId(), 360, 480))).andExpect(status().isOk());
+
+        mvc.perform(get("/api/absences/employee/" + shift.getEmployee().getId())
+                        .param("year", "2026").param("month", "8"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.absences.length()").value(1))
+                .andExpect(jsonPath("$.absences[0].workDate").value(WORK_DATE.toString()))
+                .andExpect(jsonPath("$.bank.remainingMinutes").value(0));
+    }
+
+    @Test
+    @WithMockUser(roles = "commercial")
+    @DisplayName("and it sits behind the same door as everything else here")
+    void theMonthIsBehindTheSameDoor() throws Exception {
+        mvc.perform(get("/api/absences/employee/" + shift.getEmployee().getId())
+                        .param("year", "2026").param("month", "8"))
+                .andExpect(status().isForbidden());
     }
 
     // ── Withdrawing one ──────────────────────────────────────────────────────

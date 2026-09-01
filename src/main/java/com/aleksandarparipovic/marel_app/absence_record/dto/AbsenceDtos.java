@@ -27,6 +27,8 @@ public final class AbsenceDtos {
     public record AbsenceRecordDto(
             Long id,
             Long workShiftId,
+            /** The shift's date. The per-shift screen knows it; a monthly list cannot. */
+            LocalDate workDate,
             Long workCodeCategoryId,
             String categoryNo,
             String categoryName,
@@ -54,6 +56,15 @@ public final class AbsenceDtos {
     }
 
     public record OvertimeDayDto(LocalDate workDate, int overtimeMinutes, int spentMinutes) {
+    }
+
+    /**
+     * A month of absences with the bank that decided them.
+     *
+     * <p>The two together on purpose: an absence's NO or ND only makes sense
+     * beside the hours that were or were not there to cover it.
+     */
+    public record MonthlyAbsencesDto(List<AbsenceRecordDto> absences, OvertimeBankDto bank) {
     }
 
     /** One month's bank: what was earned, what it bought, what is left. */
