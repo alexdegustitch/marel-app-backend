@@ -147,14 +147,15 @@ public interface DailyReportRepository extends JpaRepository<DailyReport, Long>,
      * How many days this week the employee did NOT put in enough work to keep the
      * weekend bonus — where a day with no report at all counts as one of them.
      *
-     * <p><b>A neradni dan does not count.</b> ND means the day was bought with
-     * overtime the employee had already worked, so they were not expected in: an
-     * excused day cannot spoil the week. NO is the opposite and still does, which
-     * is the whole difference between the two.
+     * <p><b>A neradni dan counts as one of them.</b> ND changes what the day is
+     * PAID as, not whether the employee was there: the weekend bonus is earned by
+     * turning up every day of the week, and a day bought back with earlier
+     * overtime is still a day nobody turned up. NO and ND are alike here and
+     * differ only in the payroll.
      *
-     * <p>Matched on the absence rather than on the ND work log, because the
-     * outcome is the decision and the log is only how it is shown. An absence
-     * withdrawn or re-decided moves this answer with it.
+     * <p>Nothing about absence appears in this query, and deliberately. A day
+     * with no work in it has no bonus-eligible minutes, so it already falls short
+     * — whatever the reason, and without this query having to know the reasons.
      */
     @Query(value = """
         WITH required_days AS (
@@ -168,16 +169,6 @@ public interface DailyReportRepository extends JpaRepository<DailyReport, Long>,
         FROM required_days rd
         LEFT JOIN daily_reports dr ON dr.employee_id = :employeeId AND dr.work_date = rd.work_date
         WHERE COALESCE(dr.bonus_eligible_minutes, 0) < :minBonusMinutes
-          AND NOT EXISTS (
-              SELECT 1
-              FROM absence_records ar
-              JOIN work_shifts ws ON ws.id = ar.work_shift_id
-              WHERE ar.employee_id = :employeeId
-                AND ws.work_date = rd.work_date
-                AND ar.outcome = 'ND'
-                AND ar.is_active = true
-                AND ar.archived_at IS NULL
-          )
         """, nativeQuery = true)
     Integer countPreviousDaysWithInsufficientBonusMinutes(
             @Param("employeeId") Long employeeId,

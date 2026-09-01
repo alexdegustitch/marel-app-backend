@@ -123,27 +123,31 @@ class AbsenceAllocationPlannerTest {
         }
 
         @Test
-        @DisplayName("a full day the bank cannot cover whole is left alone entirely")
-        void aFullDayIsAllOrNothing() {
+        @DisplayName("a full day the bank cannot cover whole still takes what there is")
+        void aShortBankIsStillSpent() {
             Plan plan = AbsenceAllocationPlanner.plan(
                     List.of(overtime(3L, 3, 360)),
                     List.of(fullDay(1L, 10, 480)));
 
-            assertThat(plan.grants()).isEmpty();
+            // Six hours against an eight-hour no-show buys no ND, and is spent
+            // anyway: the order absences happened decides, not what the hours
+            // could have bought later.
             assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.NO);
-            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isZero();
+            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isEqualTo(360);
         }
 
         @Test
-        @DisplayName("and the hours it did not take are still there for a day that can use them")
-        void andTheBankSurvivesForALaterDay() {
+        @DisplayName("and nothing is held back for a later day that could have used it whole")
+        void nothingIsHeldBack() {
             Plan plan = AbsenceAllocationPlanner.plan(
                     List.of(overtime(3L, 3, 360)),
                     List.of(fullDay(1L, 10, 480), fullDay(2L, 20, 360)));
 
-            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.NO);
-            assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.ND);
-            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isEqualTo(360);
+            // The 20th could have been a neradni dan on its own. The 10th came
+            // first and spent the bank, so it is not.
+            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isEqualTo(360);
+            assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.NO);
+            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isZero();
         }
     }
 
@@ -165,8 +169,8 @@ class AbsenceAllocationPlannerTest {
 
             assertThat(plan.verdicts().get(1L).compensatedMinutes()).isEqualTo(120);
             assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.NO);
-            // Nothing at all, not the 360 that were left: a full day is all or nothing.
-            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isZero();
+            // The 360 that were left go to it anyway — they just do not buy an ND.
+            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isEqualTo(360);
         }
 
         /**

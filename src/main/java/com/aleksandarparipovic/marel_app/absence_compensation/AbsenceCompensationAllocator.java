@@ -17,7 +17,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -57,7 +56,6 @@ public class AbsenceCompensationAllocator {
     private final AbsenceRecordRepository absenceRepository;
     private final AbsenceCompensationRepository compensationRepository;
     private final PayrollRunItemRepository payrollRunItemRepository;
-    private final WorkShiftRepository workShiftRepository;
     private final RecalcQueueService recalcQueueService;
     private final AbsenceLogWriter absenceLogWriter;
     private final AbsencePayrollNotice payrollNotice;
@@ -221,40 +219,29 @@ public class AbsenceCompensationAllocator {
     }
 
     /**
-     * Rebuilds the days that changed, and rechecks the weekend bonus of the weeks
-     * they fall in.
+     * Rebuilds the days whose answer changed.
      *
-     * <p>The weekend recheck cannot be left to {@code DailyRecalcService}. That
-     * one fires when a day crosses the 180-minute bonus threshold, and an ND day
-     * crosses nothing: it has no work in it, so its bonus-eligible minutes are
-     * zero both before and after. What changed is whether the day is EXCUSED, and
-     * only this class knows that happened.
+     * <p>Only the day itself. The NO row on it appears, disappears or changes
+     * size — that is what the daily recalculation has to redo — and nothing
+     * beyond that day moves.
+     *
+     * <p><b>No weekend recheck.</b> ND changes what a day is PAID as, not
+     * whether anybody turned up: a day bought back with earlier overtime still
+     * has no work in it, so its bonus-eligible minutes are zero either way and
+     * the week's answer cannot have moved. Enqueuing the weekend here would be
+     * work with no effect, under a comment claiming otherwise.
      *
      * <p>No cycle: the daily job recomputes the day's report and its overtime,
-     * and the overtime measure subtracts ND minutes, so the bank comes out
+     * and the overtime measure drops absence logs, so the bank comes out
      * unchanged and no month is enqueued back.
      */
     private List<Long> requeue(Long employeeId, List<AbsenceRecord> changed) {
         Set<Long> shiftIds = new LinkedHashSet<>();
-        Set<LocalDate> weekendDays = new LinkedHashSet<>();
 
         for (AbsenceRecord absence : changed) {
             WorkShift shift = absence.getWorkShift();
             shiftIds.add(shift.getId());
             recalcQueueService.enqueueDailyJob(shift, "ND_OUTCOME_CHANGED");
-
-            LocalDate date = shift.getWorkDate();
-            weekendDays.add(date.with(DayOfWeek.SATURDAY));
-            weekendDays.add(date.with(DayOfWeek.SUNDAY));
-        }
-
-        for (WorkShift weekendShift : workShiftRepository
-                .findByEmployee_IdAndWorkDateInAndArchivedAtIsNull(
-                        employeeId, List.copyOf(weekendDays))) {
-            if (shiftIds.contains(weekendShift.getId())) {
-                continue;
-            }
-            recalcQueueService.enqueueDailyJob(weekendShift, "WEEKLY_BONUS_RECHECK");
         }
 
         // NO became ND or the other way round: the day is now priced as a

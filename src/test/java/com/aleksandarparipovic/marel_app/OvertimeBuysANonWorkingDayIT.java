@@ -151,7 +151,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     // ── NO or ND ─────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("a full day off the bank cannot cover whole stays NO, and takes nothing")
+    @DisplayName("a full day off the bank cannot cover whole stays NO, and spends the bank anyway")
     void anUncoverableDayStaysUnpaidAbsence() {
         workedShift(WEDNESDAY, 6, 600);              // 120 in the bank
         AbsenceRecord absence = fullDayAbsence(THURSDAY);
@@ -160,10 +160,14 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
 
         AbsenceRecord after = reload(absence);
         assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.NO);
-        assertThat(after.getCompensatedMinutes()).isZero();
         assertThat(after.getNdWorkLog()).isNull();
-        // All or nothing: the 120 minutes are still there for a day that can use them.
-        assertThat(compensationRepository.findForAbsences(List.of(absence.getId()))).isEmpty();
+
+        // Two hours against a full shift buy no neradni dan, and are spent all
+        // the same: the order absences happened decides where the bank goes, not
+        // what the hours could have bought later. Only 360 of the 480 are left
+        // uncovered, and only those reach the payroll.
+        assertThat(after.getCompensatedMinutes()).isEqualTo(120);
+        assertThat(compensationRepository.findForAbsences(List.of(absence.getId()))).hasSize(1);
     }
 
     @Test
@@ -272,9 +276,16 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
 
     // ── The weekend bonus ────────────────────────────────────────────────────
 
+    /**
+     * ND changes what a day is PAID as, not whether anybody turned up. The
+     * weekend bonus is earned by being there every day of the week, and a day
+     * bought back with earlier overtime is still a day nobody was there — so it
+     * spoils the week exactly as an unpaid absence does. The two differ in the
+     * payroll and nowhere else.
+     */
     @Test
-    @DisplayName("an ND day does not count as a day that spoils the weekend bonus; NO does")
-    void ndIsExcusedFromTheWeeklyCheck() {
+    @DisplayName("an ND day spoils the weekend bonus just as NO does — being bought back is not being there")
+    void ndStillSpoilsTheWeek() {
         LocalDate monday = LocalDate.of(2026, 8, 17);
         LocalDate saturday = LocalDate.of(2026, 8, 22);
 
@@ -295,7 +306,10 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         allocator.allocate(employee.getId(), MONTH);
         assertThat(reload(absence).getOutcome()).isEqualTo(AbsenceOutcome.ND);
 
-        assertThat(missingDaysBefore(monday, saturday)).isZero();
+        // Still one. The day became a neradni dan and the week is still spoiled:
+        // no work happened on Thursday, so it has no bonus-eligible minutes, and
+        // the query never has to ask WHY a day fell short.
+        assertThat(missingDaysBefore(monday, saturday)).isEqualTo(1);
     }
 
     // ── The NO log and the absence record it mirrors ─────────────────────────

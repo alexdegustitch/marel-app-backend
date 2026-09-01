@@ -27,11 +27,11 @@ import java.util.Map;
  *       rather than naming whichever day happened to be loaded first.</li>
  *   <li><b>ND needs the WHOLE shift.</b> An absence becomes a neradni dan only
  *       when it covers its entire shift AND the bank could pay for all of it.</li>
- *   <li><b>A full day is all or nothing.</b> If the bank cannot cover a whole
- *       shift, it spends NOTHING on it: six hours thrown at an eight-hour
- *       no-show would buy no ND, change no pay and no bonus, and would leave
- *       nothing for a later day that could have been bought. Partial absences
- *       are not like this — they take whatever is there.</li>
+ *   <li><b>Nothing is held back for a better day.</b> Every absence takes what
+ *       the bank has when its turn comes, whether or not that buys anything.
+ *       Six hours against an eight-hour no-show buys no ND and still spends the
+ *       six — the order absences happened decides, not what the hours could
+ *       have bought later.</li>
  *   <li><b>One month, no carry-over.</b> The caller passes one month's overtime
  *       and one month's absences; nothing here reaches past either end.</li>
  * </ol>
@@ -41,9 +41,9 @@ import java.util.Map;
  * the day's standing, not its wage.
  *
  * <p>Because the whole month is planned again from scratch every time, a day
- * refused today is bought the moment the bank grows: a supervisor who adds two
- * hours to an earlier shift turns a six-hour bank into eight, and the no-show
- * that stayed NO becomes ND without anybody revisiting it.
+ * that fell short today is bought the moment the bank grows: a supervisor who
+ * adds two hours to an earlier shift turns a six-hour bank into eight, and the
+ * no-show that stayed NO becomes ND without anybody revisiting it.
  */
 public final class AbsenceAllocationPlanner {
 
@@ -122,15 +122,6 @@ public final class AbsenceAllocationPlanner {
             boolean coversWholeShift = absence.shiftMinutes() > 0
                     && absence.absenceMinutes() >= absence.shiftMinutes();
 
-            if (coversWholeShift && totalRemaining(remaining) < absence.absenceMinutes()) {
-                // All or nothing. Part of a no-show buys no ND, moves no pay and
-                // no bonus — it would only empty the bank for a day that could
-                // have used it whole.
-                verdicts.put(absence.absenceRecordId(),
-                        new AbsenceVerdict(absence.absenceRecordId(), AbsenceOutcome.NO, 0));
-                continue;
-            }
-
             int outstanding = absence.absenceMinutes();
             for (int i = 0; i < bank.size() && outstanding > 0; i++) {
                 if (remaining[i] <= 0) {
@@ -158,11 +149,4 @@ public final class AbsenceAllocationPlanner {
         return new Plan(List.copyOf(grants), Collections.unmodifiableMap(verdicts));
     }
 
-    private static int totalRemaining(int[] remaining) {
-        int total = 0;
-        for (int minutes : remaining) {
-            total += minutes;
-        }
-        return total;
-    }
 }
