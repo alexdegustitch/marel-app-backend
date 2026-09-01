@@ -274,15 +274,27 @@ public class AbsenceRecordService {
                 .orElseThrow(() -> new EntityNotFoundException("Smena ne postoji: " + workShiftId));
     }
 
+    /**
+     * NO, and nothing else.
+     *
+     * <p>Checked here and not only narrowed in the dropdown, for the reason the
+     * category resolver already gives about ND: the dropdown is a convenience and
+     * this is the rule. Nothing stops a client posting a category id it never saw
+     * offered, and a paid absence recorded through this screen would take part in
+     * neither the overtime bank nor the weekend bonus while looking as though it
+     * did.
+     */
     private void requireAbsenceCategory(WorkCodeCategory category) {
-        if (!TYPE_ABSENCE.equalsIgnoreCase(category.getType())) {
-            throw new ConflictException(
-                    "Kategorija \"" + category.getCategoryNo() + "\" nije odsustvo.");
-        }
         if (AbsenceCategoryCodes.NON_WORKING_DAY.equals(category.getCategoryNo())) {
             throw new ConflictException(
                     "Neradni dan (ND) se ne unosi ručno. Upisuje se sam kada"
                             + " prekovremeni rad pokrije celu smenu.");
+        }
+        if (!TYPE_ABSENCE.equalsIgnoreCase(category.getType())
+                || !AbsenceCategoryCodes.UNPAID_ABSENCE.equals(category.getCategoryNo())) {
+            throw new ConflictException(
+                    "Ovde se unosi samo neplaćeno odsustvo (NO). Kategorija \""
+                            + category.getCategoryNo() + "\" se ne unosi na ovom ekranu.");
         }
     }
 
