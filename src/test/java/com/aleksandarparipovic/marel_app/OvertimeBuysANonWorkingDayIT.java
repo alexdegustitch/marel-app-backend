@@ -36,6 +36,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
@@ -310,6 +311,34 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         // no work happened on Thursday, so it has no bonus-eligible minutes, and
         // the query never has to ask WHY a day fell short.
         assertThat(missingDaysBefore(monday, saturday)).isEqualTo(1);
+    }
+
+    /**
+     * August 2026 opens on a Saturday, which is the case this is about: the week
+     * it belongs to starts on 27 July. Asked across that boundary, the bonus for
+     * one month's weekend would be decided by another month's attendance.
+     */
+    @Test
+    @DisplayName("a Saturday on the 1st has nothing before it in the month, and earns the bonus by default")
+    void theFirstOfTheMonthOnASaturdayHasAnEmptyWindow() {
+        LocalDate saturdayFirst = LocalDate.of(2026, 8, 1);
+        assertThat(saturdayFirst.getDayOfWeek()).isEqualTo(DayOfWeek.SATURDAY);
+
+        // Nothing worked in the last week of July, which under the old window
+        // would have been five days short and cost the bonus.
+        assertThat(missingDaysBefore(saturdayFirst.withDayOfMonth(1), saturdayFirst)).isZero();
+    }
+
+    @Test
+    @DisplayName("and where the 1st is a working day, only the days inside the month are asked about")
+    void theWindowStartsAtTheFirstOfTheMonth() {
+        LocalDate saturday = LocalDate.of(2026, 8, 1);
+        LocalDate sunday = LocalDate.of(2026, 8, 2);
+
+        // Saturday the 1st worked past the threshold; Sunday's window is that day
+        // alone, and July is not in it.
+        workedShift(saturday, 6, FULL_SHIFT);
+        assertThat(missingDaysBefore(sunday.withDayOfMonth(1), sunday)).isZero();
     }
 
     // ── The NO log and the absence record it mirrors ─────────────────────────

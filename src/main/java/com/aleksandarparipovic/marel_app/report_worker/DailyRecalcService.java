@@ -533,10 +533,26 @@ public class DailyRecalcService {
         return !shiftStart.isBefore(thirdShift.get().getStartTime());
     }
 
+    /**
+     * Whether the weekend remap applies, from the days that came before it.
+     *
+     * <p><b>The window stops at the first of the month.</b> A week straddles the
+     * month boundary and the bonus does not: asking about days in the previous
+     * month would judge one month's weekend by another month's attendance.
+     *
+     * <p>Saturday the 1st therefore has an EMPTY window and earns the bonus by
+     * default — there is nothing before it to have missed. Where the 1st is a
+     * Friday and the 2nd a Saturday, only that Friday is asked about. (August
+     * 2026 opens on a Saturday, so this is not a corner case waiting to happen.)
+     */
     private boolean isWeekendBonusEligible(LocalDate workDate, Long employeeId) {
         DayOfWeek day = workDate.getDayOfWeek();
         if (day != DayOfWeek.SATURDAY && day != DayOfWeek.SUNDAY) return false;
+        LocalDate monthStart = workDate.withDayOfMonth(1);
         LocalDate weekStart = workDate.with(DayOfWeek.MONDAY);
+        if (weekStart.isBefore(monthStart)) {
+            weekStart = monthStart;
+        }
         int missing = Optional.ofNullable(
                 reportRepo.countPreviousDaysWithInsufficientBonusMinutes(employeeId, weekStart, workDate, WEEKEND_BONUS_MIN_MINUTES)
         ).orElse(0);
