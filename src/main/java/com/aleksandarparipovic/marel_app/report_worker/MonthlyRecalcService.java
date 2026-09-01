@@ -289,6 +289,24 @@ public class MonthlyRecalcService {
         int totalSickLeavePaidMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalSickLeavePaidMinutes())).sum();
         int totalSickLeaveUnpaidMinutes = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalSickLeaveUnpaidMinutes())).sum();
         int totalSickLeaveMinutes = totalSickLeavePaidMinutes + totalSickLeaveUnpaidMinutes;
+        /*
+         * THE MONTH'S OWN BONUS MEASURE, from the categories rather than from the
+         * work total.
+         *
+         * Raw minutes, not weighted: the monthly bonus asks how many hours
+         * somebody put in, which is what total_work_minutes answered before this.
+         * The weekend bonus weights its minutes by the coefficient because it
+         * asks a different question of a single day.
+         *
+         * The manual corrections are NOT added here. They belong to the payroll
+         * item, not to the report, and MonthlyBonusCalculator adds them where it
+         * can see both.
+         */
+        int monthlyBonusEligibleMinutes = monthlyCategories.stream()
+                .filter(mc -> Boolean.TRUE.equals(mc.getWorkCodeCategory().getAffectsMonthlyBonus()))
+                .mapToInt(mc -> safeInt(mc.getTotalMinutes()))
+                .sum();
+
         int totalQuantity = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalQuantity())).sum();
         int totalScrap = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalScrap())).sum();
         int mealAllowanceNum = dailyReports.stream().mapToInt(dr -> safeInt(dr.getMealsCount())).sum();
@@ -312,6 +330,7 @@ public class MonthlyRecalcService {
 
         report.setTotalShiftMinutes(totalShiftMinutes);
         report.setTotalWorkMinutes(totalWorkMinutes);
+        report.setMonthlyBonusEligibleMinutes(monthlyBonusEligibleMinutes);
         report.setTotalAbsencePaidMinutes(totalAbsencePaidMinutes);
         report.setTotalAbsenceUnpaidMinutes(totalAbsenceUnpaidMinutes);
         report.setTotalAbsenceMinutes(totalAbsenceMinutes);

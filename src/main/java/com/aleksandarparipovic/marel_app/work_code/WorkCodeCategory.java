@@ -55,6 +55,29 @@ public class WorkCodeCategory {
     @Column(name = "affects_meal_allowance", nullable = false)
     private Boolean affectsMealAllowance = false;
 
+    /**
+     * Do these minutes count towards the 180 a day the weekend bonus needs.
+     *
+     * <p>Separate from {@link #affectsMonthlyBonus} because the two bonuses ask
+     * different questions of different numbers: the weekend one asks whether
+     * EVERY day of the week reached its minutes, the monthly one how many hours
+     * the month came to. A category can reasonably count for one and not the
+     * other, and until now neither could be said — both were decided in Java by
+     * {@code type = 'WORK'}.
+     *
+     * <p>Neither is {@code affects_bonus}, which is a third thing again and dead:
+     * not mapped here, never read, and not even the source of the snapshot that
+     * shares its name on payroll rows — that one is derived from the type.
+     */
+    @Column(name = "affects_weekend_bonus", nullable = false)
+    @Builder.Default
+    private Boolean affectsWeekendBonus = true;
+
+    /** Do these minutes count towards the hours the monthly bonus is measured on. */
+    @Column(name = "affects_monthly_bonus", nullable = false)
+    @Builder.Default
+    private Boolean affectsMonthlyBonus = true;
+
     @Column(name = "display_order")
     private Integer displayOrder = 0;
 

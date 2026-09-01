@@ -1175,9 +1175,13 @@ public class DailyRecalcService {
         report.setTotalPlMinutes((int) verified.plMinutes());
         report.setTotalPlbMinutes((int) verified.plbMinutes());
 
+        // WHICH MINUTES COUNT IS THE CATEGORY'S ANSWER, not this method's.
+        // It was type = 'WORK' here, which meant the rule could only be changed
+        // by changing code. affects_weekend_bonus was backfilled from exactly
+        // that condition, so nothing moved when it took over.
         int bonusEligibleMinutes = 0;
         for (DailyReportCategory cat : categories) {
-            if (isType(cat.getSourceType(), "WORK")) {
+            if (Boolean.TRUE.equals(cat.getWorkCodeCategory().getAffectsWeekendBonus())) {
                 // The row's own coefficient — the same number the payroll prices
                 // this row at. Read from the row rather than re-derived from the
                 // category, so a coefficient somebody typed moves the bonus with

@@ -362,6 +362,11 @@ public class PayrollScenarioFixture {
                     .endDate(end)
                     .totalShiftMinutes(workMinutes)
                     .totalWorkMinutes(workMinutes)
+                    // What fillMonthlyTotals would have summed from the
+                    // categories. A scenario writes the report directly, so
+                    // without this the monthly bonus measures zero hours and
+                    // every bonus assertion collapses to 0.00.
+                    .monthlyBonusEligibleMinutes(workMinutes)
                     .totalAbsencePaidMinutes(0)
                     .totalAbsenceUnpaidMinutes(0)
                     .totalAbsenceMinutes(0)

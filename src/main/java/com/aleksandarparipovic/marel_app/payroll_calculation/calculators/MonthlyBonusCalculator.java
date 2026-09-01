@@ -50,6 +50,10 @@ public class MonthlyBonusCalculator implements PayrollComponentCalculator {
     private final BonusMinHoursRuleRepository minHoursRuleRepository;
     private final BonusEligibilityRuleRepository eligibilityRuleRepository;
 
+    private static int safe(Integer value) {
+        return value == null ? 0 : value;
+    }
+
     /** The employee's own bonus-category amount, granted whole or not at all. */
     public static final String INPUT_BASE_BONUS = "baseBonus";
     /** The hours tier from bonus_eligibility_rules — what the payslip calls the correction. */
@@ -66,26 +70,33 @@ public class MonthlyBonusCalculator implements PayrollComponentCalculator {
             return ComponentResult.zero("NO_EMPLOYEE");
         }
 
-        // "How many hours did they work" — PAYABLE minutes: the worked minutes plus
-        // whatever was corrected by hand. Not shift duration and not paid absence.
-        //
-        // It used to read total_work_minutes, which ignored the corrections. An
-        // administrator who added a forgotten shift saw the hours go up on screen
-        // and the bonus stay where it was, because the threshold was still being
-        // measured against the uncorrected figure. Whether somebody earned the
-        // bonus has to be decided on the hours they are actually paid for.
-        //
-        // PayrollRunItemService sets total_payroll_minutes before it reaches this
-        // calculator, so the value here is the one this recalculation produced.
-        int payableMinutes = ctx.item().getTotalPayrollMinutes() != null
-                ? ctx.item().getTotalPayrollMinutes()
-                : (ctx.item().getTotalWorkMinutes() != null ? ctx.item().getTotalWorkMinutes() : 0);
-        BigDecimal hoursWorked = BigDecimal.valueOf(payableMinutes)
+        /*
+         * "How many hours did they work" — the minutes of categories that COUNT
+         * for this bonus, plus whatever was corrected by hand.
+         *
+         * WHICH CATEGORIES COUNT is now the category's own answer
+         * (affects_monthly_bonus), summed onto the month by MonthlyRecalcService.
+         * It used to be total_payroll_minutes, which is total_work_minutes plus
+         * corrections — so the rule was "everything of type WORK", decided in
+         * Java and unchangeable without a release. The flag was backfilled from
+         * exactly that condition, so no month's answer moved when it took over.
+         *
+         * THE CORRECTIONS STILL COUNT, and that is not incidental. Reading the
+         * measured hours alone was the earlier bug: an administrator who added a
+         * forgotten shift saw the hours go up on screen and the bonus stay where
+         * it was. Whether somebody earned the bonus has to be decided on the
+         * hours they are actually paid for, and a correction is one of them.
+         * PayrollRunItemService sets manual_adjusted_minutes before this runs.
+         */
+        int bonusMinutes = safe(ctx.monthlyReport() == null
+                        ? null : ctx.monthlyReport().getMonthlyBonusEligibleMinutes())
+                + safe(ctx.item().getManualAdjustedMinutes());
+        BigDecimal hoursWorked = BigDecimal.valueOf(bonusMinutes)
                 .divide(MINUTES_PER_HOUR, 4, RoundingMode.HALF_UP);
 
         Map<String, Object> inputs = new LinkedHashMap<>();
         inputs.put("hoursWorked", hoursWorked);
-        inputs.put("hoursSource", "total_payroll_minutes");
+        inputs.put("hoursSource", "monthly_bonus_eligible_minutes + manual_adjusted_minutes");
         inputs.put("period", ctx.periodStart().toString());
 
         BigDecimal base = baseBonus(ctx, hoursWorked, inputs);

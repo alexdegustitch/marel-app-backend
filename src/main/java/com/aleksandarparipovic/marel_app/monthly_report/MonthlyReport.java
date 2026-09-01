@@ -43,6 +43,17 @@ public class MonthlyReport {
     @Column(name = "total_work_minutes", nullable = false)
     private Integer totalWorkMinutes;
 
+    /**
+     * Minutes of categories carrying {@code affects_monthly_bonus}.
+     *
+     * <p>What the monthly bonus is measured on, before the manual corrections the
+     * calculator adds on top. Stored rather than derived so recalculating a
+     * closed month reproduces the figure it was decided on.
+     */
+    @Column(name = "monthly_bonus_eligible_minutes", nullable = false)
+    @Builder.Default
+    private Integer monthlyBonusEligibleMinutes = 0;
+
     @Column(name = "total_absence_paid_minutes", nullable = false)
     private Integer totalAbsencePaidMinutes;
 

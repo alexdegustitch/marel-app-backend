@@ -1878,10 +1878,14 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // screen and the bonus did not.
         assertThat(item.getTotalPayrollMinutes()).isEqualTo(10_560 + 480);
         assertThat(bonusBase(item)).isEqualByComparingTo("5000.00");
+        // The provenance moved with the measure. Since the categories decide what
+        // counts (affects_monthly_bonus), the hours are the month's bonus-eligible
+        // minutes PLUS the corrections — and the correction is still in there,
+        // which is what the 480 above proves.
         assertThat(adjustmentRepository
                 .findByItemIdAndCategoryCode(item.getId(), "MONTHLY_BONUS")
                 .orElseThrow().getCalculationInputs())
-                .containsEntry("hoursSource", "total_payroll_minutes");
+                .containsEntry("hoursSource", "monthly_bonus_eligible_minutes + manual_adjusted_minutes");
     }
 
     @Test
