@@ -190,10 +190,29 @@ public class AbsenceCompensationAllocator {
             }
 
             AbsenceOutcome before = absence.getOutcome();
+            int compensatedBefore = absence.getCompensatedMinutes() == null
+                    ? 0 : absence.getCompensatedMinutes();
+
             absence.setOutcome(verdict.outcome());
             absence.setCompensatedMinutes(verdict.compensatedMinutes());
 
+            /*
+             * THE COVERED MINUTES MOVE THE DAY TOO, not only the outcome.
+             *
+             * Only the payroll charges the UNCOVERED part of an absence, so its
+             * category row is absence_minutes minus compensated_minutes. Two
+             * hours becoming covered shrinks that row by two hours — and while
+             * this only requeued when NO became ND or back, a partial absence
+             * that can never be either had its coverage change with nothing
+             * rebuilt. The payslip went on charging hours the bank had paid for.
+             */
+            boolean coverageMoved = compensatedBefore != verdict.compensatedMinutes();
+            if (before == verdict.outcome() && !coverageMoved) {
+                continue;
+            }
             if (before == verdict.outcome()) {
+                // Coverage alone: no log to swap, but the day must be rebuilt.
+                changed.add(absence);
                 continue;
             }
 
