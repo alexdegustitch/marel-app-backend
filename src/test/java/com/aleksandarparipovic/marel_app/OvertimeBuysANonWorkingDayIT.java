@@ -483,6 +483,19 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
                         // changes that.
                         assertThat(row.getTotalPaidMinutes()).isZero();
                         assertThat(row.getSourceType()).isEqualTo("ABSENCE");
+
+                        // THE PAYSLIP SHOWS THESE HOURS AND CHARGES NOTHING FOR
+                        // THEM, and it takes both of these to do it. The hours
+                        // come from weighted_norm_minutes, so zero there made the
+                        // payslip say the absence never happened; the money comes
+                        // from weighted × coefficient, and NO carries a
+                        // coefficient of nothing, so two hours show as two hours
+                        // and cost nothing. There is no is_paid check in the
+                        // amount — the coefficient is the whole of what keeps it
+                        // at zero.
+                        assertThat(row.getTotalWeightedNormMinutes())
+                                .isEqualByComparingTo(BigDecimal.valueOf(120));
+                        assertThat(row.getNormMultiplier()).isEqualByComparingTo(BigDecimal.ZERO);
                     });
         }
 

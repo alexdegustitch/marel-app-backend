@@ -1157,7 +1157,12 @@ public class DailyRecalcService {
 
         int totalQuantity = categories.stream().mapToInt(c -> safeInt(c.getTotalQuantity())).sum();
         int totalScrap = categories.stream().mapToInt(c -> safeInt(c.getTotalScrap())).sum();
+        // WORKED rows only. An absence row carries its minutes here so the payslip
+        // can show them, and they are not norm minutes anybody earned: counted,
+        // they would raise the day's approved minutes and its efficiency for time
+        // nobody was there.
         BigDecimal totalWeightedNormMinutes = categories.stream()
+                .filter(c -> !isAbsenceRow(c))
                 .map(DailyReportCategory::getTotalWeightedNormMinutes)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
@@ -1311,7 +1316,25 @@ public class DailyRecalcService {
                     .totalPaidMinutes(paid)
                     .totalQuantity(0)
                     .totalScrap(0)
-                    .totalWeightedNormMinutes(BigDecimal.ZERO)
+                    /*
+                     * THE MINUTES THEMSELVES, not zero.
+                     *
+                     * The payroll shows a category's hours from
+                     * weighted_norm_minutes — "Sati u normi" on the payslip — and
+                     * prices them as weighted × the category's coefficient. NO
+                     * carries a coefficient of 0, so three hours of absence show
+                     * as three hours and are paid nothing, which is exactly what
+                     * an unpaid absence is.
+                     *
+                     * Zero here was my mistake: it read as "an absence has no
+                     * norm", which is true, and made the payslip say the absence
+                     * did not happen, which is not.
+                     *
+                     * The performance figures are kept clear of it separately —
+                     * see the two sums in fillDailyTotals and fillMonthlyTotals.
+                     * Without those it would inflate efficiency instead.
+                     */
+                    .totalWeightedNormMinutes(BigDecimal.valueOf(minutes))
                     .normMultiplier(group.get(0).getNormMultiplierSnapshot())
                     .normMultiplierDefault(resolveMultiplierByCategory(category))
                     .performanceCoefficient(BigDecimal.ZERO)

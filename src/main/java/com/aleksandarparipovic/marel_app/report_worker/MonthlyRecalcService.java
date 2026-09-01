@@ -277,6 +277,12 @@ public class MonthlyRecalcService {
         }).toList();
     }
 
+    /** A row standing for time nobody worked; see the two sums that skip it. */
+    private static boolean isAbsenceCategory(MonthlyReportCategory category) {
+        String type = category.getSourceType();
+        return "ABSENCE".equalsIgnoreCase(type) || "SICK_LEAVE".equalsIgnoreCase(type);
+    }
+
     private void fillMonthlyTotals(MonthlyReport report,
                                    List<DailyReport> dailyReports,
                                    List<MonthlyReportCategory> monthlyCategories,
@@ -311,7 +317,13 @@ public class MonthlyRecalcService {
         int totalScrap = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalScrap())).sum();
         int mealAllowanceNum = dailyReports.stream().mapToInt(dr -> safeInt(dr.getMealsCount())).sum();
 
+        // WORKED rows only, for the reason fillDailyTotals gives: an absence row
+        // carries its minutes so the payslip can show them, and performance is
+        // measured over work. performanceCoefficient below divides this by
+        // total_shift_minutes, which never contained the absence — counting it in
+        // the numerator alone would push a month above 100 % for being away.
         BigDecimal totalWeightedNormMinutes = monthlyCategories.stream()
+                .filter(mc -> !isAbsenceCategory(mc))
                 .map(MonthlyReportCategory::getTotalWeightedNormMinutes)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(4, RoundingMode.HALF_UP);
@@ -320,6 +332,7 @@ public class MonthlyRecalcService {
         // today. Recalculating a closed month must reproduce it, and a row whose
         // coefficient somebody typed has no other place to read it from.
         BigDecimal totalApprovedMinutes = monthlyCategories.stream()
+                .filter(mc -> !isAbsenceCategory(mc))
                 .map(mc -> mc.getTotalWeightedNormMinutes().multiply(coefficientKey(mc.getNormMultiplier())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(4, RoundingMode.HALF_UP);
