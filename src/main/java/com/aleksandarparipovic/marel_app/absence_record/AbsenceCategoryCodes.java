@@ -15,11 +15,18 @@ public final class AbsenceCategoryCodes {
     public static final String UNPAID_ABSENCE = "NO";
 
     /**
-     * Neradni dan — written by the application, never chosen by a person.
+     * Neradni dan — a day nobody was expected in.
      *
-     * <p>{@code WorkLogService} refuses a log a person tries to give this
-     * category: the only rows that carry it are the ones the allocation writes
-     * across a fully covered shift.
+     * <p>Reached two ways. The allocation writes it across a shift the overtime
+     * bank has covered; a person also writes it directly, on a shift they are
+     * marking as a non-working day. {@code ShiftAbsenceSync} tells the two apart
+     * by whether the bank could have paid for the whole shift, and a DECLARED one
+     * — the bank could not — carries this category on its absence record too, so
+     * the allocation leaves it alone and its minutes are reported under ND rather
+     * than under NO.
+     *
+     * <p>It is still refused in the absence dialog: a neradni dan is a whole day,
+     * and that dialog exists to record part of one.
      */
     public static final String NON_WORKING_DAY = "ND";
 

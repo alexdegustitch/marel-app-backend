@@ -6,14 +6,12 @@ import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceC
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceRecordDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.CompensationSourceDto;
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationAllocator;
+import com.aleksandarparipovic.marel_app.absence_compensation.OvertimeBankService;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.MonthlyAbsencesDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeBankDto;
-import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeDayDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.SuggestedAbsenceDto;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
-import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecord;
-import com.aleksandarparipovic.marel_app.overtime_record.OvertimeRecordRepository;
 import com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository;
 import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
@@ -57,7 +55,7 @@ public class AbsenceRecordService {
 
     private final AbsenceRecordRepository repository;
     private final AbsenceCompensationRepository compensationRepository;
-    private final OvertimeRecordRepository overtimeRepository;
+    private final OvertimeBankService overtimeBankService;
     private final WorkShiftRepository workShiftRepository;
     private final WorkLogRepository workLogRepository;
     private final WorkCodeCategoryRepository categoryRepository;
@@ -188,29 +186,17 @@ public class AbsenceRecordService {
         return bankFor(shift.getEmployee().getId(), date.getYear(), date.getMonthValue());
     }
 
+    /**
+     * The month's bank, from {@link OvertimeBankService}.
+     *
+     * <p>Kept as a method here because this is the screen's door to it, but the
+     * sums live in one place: {@code ShiftAbsenceSync} asks the same question
+     * when it decides whether a neradni dan is one the bank can buy, and the two
+     * answers must not be able to differ.
+     */
     @Transactional(readOnly = true)
     public OvertimeBankDto bankFor(Long employeeId, int year, int month) {
-        YearMonth period = YearMonth.of(year, month);
-        List<OvertimeRecord> days = overtimeRepository
-                .findForEmployeeBetween(employeeId, period.atDay(1), period.atEndOfMonth());
-
-        Map<Long, Integer> spentByDay = compensationRepository
-                .findForAbsences(repository
-                        .findActiveForEmployeeBetween(employeeId, period.atDay(1), period.atEndOfMonth())
-                        .stream().map(AbsenceRecord::getId).toList())
-                .stream()
-                .collect(Collectors.groupingBy(
-                        c -> c.getOvertimeRecord().getId(),
-                        Collectors.summingInt(c -> c.getCompensatedMinutes())));
-
-        List<OvertimeDayDto> dayDtos = days.stream()
-                .map(o -> new OvertimeDayDto(o.getWorkDate(), o.getOvertimeMinutes(),
-                        spentByDay.getOrDefault(o.getId(), 0)))
-                .toList();
-
-        int earned = dayDtos.stream().mapToInt(OvertimeDayDto::overtimeMinutes).sum();
-        int spent = dayDtos.stream().mapToInt(OvertimeDayDto::spentMinutes).sum();
-        return new OvertimeBankDto(earned, spent, earned - spent, dayDtos);
+        return overtimeBankService.bankFor(employeeId, year, month);
     }
 
     // ── Writing ──────────────────────────────────────────────────────────────

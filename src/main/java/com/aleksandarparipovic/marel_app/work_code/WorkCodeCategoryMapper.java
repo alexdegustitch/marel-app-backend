@@ -35,7 +35,8 @@ public class WorkCodeCategoryMapper {
                 category.getDisplayOrder(),
                 category.getBaseCategory(),
                 category.getBaseOperation(),
-                category.getAllowsParallelWork()
+                category.getAllowsParallelWork(),
+                category.getType()
         );
     }
 }

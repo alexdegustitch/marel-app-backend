@@ -655,6 +655,20 @@ public class WorkShiftService {
         // Rebuilt from its own logs, rather than restored from anything: the
         // report is derived data and the logs are still there.
         recalcQueueService.enqueueDailyJob(shift, "WORK_SHIFT_RESTORE");
+
+        /*
+         * AND THE MONTH, because the absences on it are visible again.
+         *
+         * Archiving hid them from the allocation and freed whatever overtime had
+         * bought them; restoring has to offer them back. The daily job alone
+         * would not do it — it requeues the month only when the day's OVERTIME
+         * moved, and a restored day off has no work on it to move any.
+         */
+        if (shift.getEmployee() != null && shift.getWorkDate() != null) {
+            recalcQueueService.enqueueMonthlyJob(shift.getEmployee(),
+                    shift.getWorkDate().getYear(), shift.getWorkDate().getMonthValue(),
+                    "WORK_SHIFT_RESTORE");
+        }
         log.info("Work shift {} restored by user {}", id, currentUserService.getCurrentUserId());
     }
 

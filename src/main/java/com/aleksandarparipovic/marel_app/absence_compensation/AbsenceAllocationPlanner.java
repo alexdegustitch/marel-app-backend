@@ -32,6 +32,13 @@ import java.util.Map;
  *       rather than naming whichever day happened to be loaded first.</li>
  *   <li><b>ND needs the WHOLE shift.</b> An absence becomes a neradni dan only
  *       when it covers its entire shift AND the bank could pay for all of it.</li>
+ *   <li><b>A DECLARED neradni dan is not bought at all.</b> A day entered AS a
+ *       neradni dan while the bank could not have covered it carries the ND
+ *       category rather than NO, and arrives here as non-compensable. It is a
+ *       day nobody was expected in, not an absence to be made up: it stays ND,
+ *       spends nothing, and leaves the bank for the days that do need it. See
+ *       {@code ShiftAbsenceSync}, which decides which of the two a person's ND
+ *       entry is — once, when it is entered.</li>
  *   <li><b>Nothing is held back for a better day.</b> Every absence takes what
  *       the bank has when its turn comes, whether or not that buys anything.
  *       Six hours against an eight-hour no-show buys no ND and still spends the
@@ -133,10 +140,23 @@ public final class AbsenceAllocationPlanner {
 
         for (AbsenceInput absence : ordered) {
             if (!absence.compensable()) {
-                // A paid absence is not a thing the bank can buy back. It gets no
-                // outcome at all rather than NO, so that "NO" keeps meaning the one
-                // thing it means: unpaid, uncovered, and spoiling the weekend bonus.
-                verdicts.put(absence.absenceRecordId(), new AbsenceVerdict(absence.absenceRecordId(), null, 0));
+                /*
+                 * TWO KINDS OF ABSENCE REACH HERE, and they part on one flag.
+                 *
+                 * A DECLARED neradni dan — requested, and carrying the ND
+                 * category itself — is a day that was never a working day. There
+                 * is nothing for the bank to buy: it keeps ND whatever the bank
+                 * holds, spends none of it, and its minutes stay on the day under
+                 * ND rather than under NO. That is the point of declaring one,
+                 * and it is why the bank is left for the days that do need it.
+                 *
+                 * A PAID absence — GO, PLO, SO — gets no outcome at all rather
+                 * than NO, so that "NO" keeps meaning the one thing it means:
+                 * unpaid, uncovered, and spoiling the weekend bonus.
+                 */
+                AbsenceOutcome outcome = absence.requestedNd() ? AbsenceOutcome.ND : null;
+                verdicts.put(absence.absenceRecordId(),
+                        new AbsenceVerdict(absence.absenceRecordId(), outcome, 0));
                 continue;
             }
 

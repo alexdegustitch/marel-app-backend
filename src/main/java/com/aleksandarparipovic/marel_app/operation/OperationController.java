@@ -40,6 +40,19 @@ public class OperationController {
         return ResponseEntity.ok(operationService.getAllOperationsForProductDto(id, date));
     }
 
+    /**
+     * The operations a full-day absence is drawn with, by category CODE.
+     *
+     * <p>Declared before {@code /{id}} so the literal path is not read as an id.
+     * Spring prefers the exact match either way; the order says so to the reader.
+     */
+    @GetMapping("/by-category")
+    public ResponseEntity<List<AbsenceOperationDto>> getOperationsByCategoryNo(
+            @RequestParam String categoryNo
+    ){
+        return ResponseEntity.ok(operationService.getActiveOperationsByCategoryNo(categoryNo));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<OperationWithProductNameDto> getOperation(@PathVariable Long id){
         OperationWithProductNameDto operation= operationService.getOperation(id);

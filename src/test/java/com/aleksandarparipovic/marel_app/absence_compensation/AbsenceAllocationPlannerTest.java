@@ -230,6 +230,41 @@ class AbsenceAllocationPlannerTest {
             // The bank was never touched by it, so the later day is still bought.
             assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.ND);
         }
+
+        /**
+         * A neradni dan somebody DECLARED — entered as ND on a day the bank could
+         * not have covered. It carries the ND category, so it arrives here
+         * non-compensable, and it is not an absence waiting to be made up: it is
+         * a day nobody was expected in.
+         */
+        private static AbsenceInput declaredNonWorkingDay(long id, int day, int shiftMinutes) {
+            return new AbsenceInput(id, aug(day), shiftMinutes, shiftMinutes, false, true);
+        }
+
+        @Test
+        @DisplayName("a declared neradni dan keeps ND and leaves the bank for the days that need it")
+        void aDeclaredNonWorkingDayIsNotBought() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(10L, 10, 180)),
+                    List.of(declaredNonWorkingDay(1L, 5, 480), partial(2L, 20, 180)));
+
+            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isZero();
+            // Not one minute of the three hours went to it, so the 20th still has them.
+            assertThat(plan.grants()).containsExactly(new Grant(2L, 10L, 180));
+        }
+
+        @Test
+        @DisplayName("and keeps ND even where the bank could have paid — it was never an absence to make up")
+        void aDeclaredNonWorkingDayIsNotBoughtEvenWithAFullBank() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(10L, 10, 960)),
+                    List.of(declaredNonWorkingDay(1L, 5, 480)));
+
+            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isZero();
+            assertThat(plan.grants()).isEmpty();
+        }
     }
 
     @Nested

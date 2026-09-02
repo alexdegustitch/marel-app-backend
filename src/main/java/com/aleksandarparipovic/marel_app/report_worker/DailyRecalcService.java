@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.report_worker;
 import com.aleksandarparipovic.marel_app.analytics.AnalyticsFactSyncService;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceCategoryCodes;
+import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecordRepository;
 import com.aleksandarparipovic.marel_app.daily_report.DailyReport;
@@ -1283,25 +1284,29 @@ public class DailyRecalcService {
      * the whole three on the line would charge the employee for time they had
      * already made up.
      *
-     * <p>A fully covered absence therefore has no row at all. That is what a
-     * neradni dan IS: the day was bought back, and there is nothing left of it
-     * for the payroll to say.
+     * <p><b>A NERADNI DAN IS THE EXCEPTION, and reports its whole span.</b> It
+     * used to leave no row at all — covered whole, nothing owed, nothing shown —
+     * and the eight hours then appeared in no report anywhere, only in
+     * absence_records. Supervisors have to be able to see how long somebody was
+     * on ND, so the day is reported under the ND category for its full length.
+     * Nothing is charged for it: ND carries a coefficient of zero, exactly like
+     * NO, so the line shows hours and costs nothing. See
+     * {@link #reportedAbsenceCategory} and {@link #reportedAbsenceMinutes}.
      */
     private List<DailyReportCategory> buildAbsenceCategories(Long workShiftId, DailyReport report) {
+        LocalDate workDate = report.getWorkDate();
         Map<Long, List<AbsenceRecord>> byCategory = absenceRecordRepository.findActiveForShift(workShiftId)
                 .stream()
-                .collect(Collectors.groupingBy(a -> a.getWorkCodeCategory().getId(),
+                .collect(Collectors.groupingBy(a -> reportedAbsenceCategory(a, workDate).getId(),
                         LinkedHashMap::new, Collectors.toList()));
 
         List<DailyReportCategory> rows = new ArrayList<>();
         for (List<AbsenceRecord> group : byCategory.values()) {
-            WorkCodeCategory category = group.get(0).getWorkCodeCategory();
-            int minutes = group.stream()
-                    .mapToInt(a -> Math.max(0,
-                            safeInt(a.getAbsenceMinutes()) - safeInt(a.getCompensatedMinutes())))
-                    .sum();
+            WorkCodeCategory category = reportedAbsenceCategory(group.get(0), workDate);
+            int minutes = group.stream().mapToInt(DailyRecalcService::reportedAbsenceMinutes).sum();
             if (minutes == 0) {
-                // Covered whole. Nothing is owed and nothing is shown.
+                // Nothing left of it to report — a partly covered absence whose
+                // remainder is zero and which did not become a neradni dan.
                 continue;
             }
             int paid = group.stream().mapToInt(a -> safeInt(a.getPaidMinutes())).sum();
@@ -1343,6 +1348,60 @@ public class DailyRecalcService {
                     .build());
         }
         return rows;
+    }
+
+    /**
+     * The category an absence is REPORTED under, which is not always its own.
+     *
+     * <p>A day the overtime bank bought back carries the NO category — that is
+     * the only category the allocation takes part in, so it has to — while what
+     * the day BECAME is a neradni dan. Reported under NO it would read as an
+     * unpaid absence on the karton and the payslip, which is the one thing it is
+     * not.
+     *
+     * <p>Falls back to the record's own category where ND is not in the codebook
+     * for that date. A missing category is a configuration gap, and a day's
+     * recalculation must not fail over one — it would take the whole day's report
+     * with it.
+     */
+    private WorkCodeCategory reportedAbsenceCategory(AbsenceRecord absence, LocalDate workDate) {
+        if (AbsenceOutcome.ND != absence.getOutcome()) {
+            return absence.getWorkCodeCategory();
+        }
+        return workCodeCategoryRepository
+                .findInForceByCategoryNo(AbsenceCategoryCodes.NON_WORKING_DAY, workDate)
+                .orElseGet(() -> {
+                    log.warn("Kategorija ND ne postoji za {}; neradni dan se prijavljuje pod {}.",
+                            workDate, absence.getWorkCodeCategory().getCategoryNo());
+                    return absence.getWorkCodeCategory();
+                });
+    }
+
+    /**
+     * How many minutes of one absence reach the day's report.
+     *
+     * <p><b>A neradni dan reports its WHOLE span.</b> Supervisors have to be able
+     * to see how long somebody was on ND, and the hours are the only way to say
+     * it — this used to report nothing at all, because a fully covered absence
+     * has no uncovered remainder and the row was skipped. It costs nothing: ND
+     * carries a coefficient of zero, so the line shows the hours and charges
+     * for none of them.
+     *
+     * <p>Everything else keeps the older rule: only the part the bank did NOT
+     * cover is reported. Three hours missed with two bought back is one hour of
+     * NO, because the other two were already worked and paid for on the day they
+     * were worked.
+     */
+    private static int reportedAbsenceMinutes(AbsenceRecord absence) {
+        if (AbsenceOutcome.ND == absence.getOutcome()) {
+            return safeIntStatic(absence.getAbsenceMinutes());
+        }
+        return Math.max(0,
+                safeIntStatic(absence.getAbsenceMinutes()) - safeIntStatic(absence.getCompensatedMinutes()));
+    }
+
+    private static int safeIntStatic(Integer value) {
+        return value == null ? 0 : value;
     }
 
     /**
