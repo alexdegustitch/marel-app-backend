@@ -19,9 +19,14 @@ import java.util.Map;
  *
  * <h2>The rules</h2>
  * <ol>
- *   <li><b>Chronological.</b> Absences are covered in the order they happened.
- *       An absence early in the month spends the bank before a later one sees
- *       it, even when the later one would have made better use of it.</li>
+ *   <li><b>Requested days first.</b> A person who marks a day AS a neradni dan
+ *       is making a choice the chronological rule cannot express — they know
+ *       which day should be bought back. Those are covered before anything
+ *       else, in date order among themselves.</li>
+ *   <li><b>Then chronological.</b> Whatever is left is spent in the order the
+ *       absences happened. An absence early in the month spends the bank before
+ *       a later one sees it, even when the later one would have made better use
+ *       of it.</li>
  *   <li><b>Oldest overtime first.</b> Within one absence, the bank is spent
  *       FIFO, so the record reads "two hours from the 12th, one from the 10th"
  *       rather than naming whichever day happened to be loaded first.</li>
@@ -69,12 +74,21 @@ public final class AbsenceAllocationPlanner {
      * @param shiftMinutes    how long the shift was — what a full day costs
      * @param compensable     false for paid absences (GO, PLO, SO) and for sick
      *                        leave, which take no part in the bank at all
+     * @param requestedNd     the day was entered AS a neradni dan; covered before
+     *                        anything the allocation decides for itself
      */
     public record AbsenceInput(Long absenceRecordId,
                                LocalDate workDate,
                                int absenceMinutes,
                                int shiftMinutes,
-                               boolean compensable) {
+                               boolean compensable,
+                               boolean requestedNd) {
+
+        /** Everything the allocation decides on its own. */
+        public AbsenceInput(Long absenceRecordId, LocalDate workDate,
+                            int absenceMinutes, int shiftMinutes, boolean compensable) {
+            this(absenceRecordId, workDate, absenceMinutes, shiftMinutes, compensable, false);
+        }
     }
 
     /** This many minutes of that overtime day paid for this absence. */
@@ -106,7 +120,18 @@ public final class AbsenceAllocationPlanner {
         List<Grant> grants = new ArrayList<>();
         Map<Long, AbsenceVerdict> verdicts = new LinkedHashMap<>();
 
-        for (AbsenceInput absence : absences) {
+        /*
+         * REQUESTED DAYS ARE SERVED FIRST, and the rest keeps its order.
+         *
+         * Both passes walk the caller's list, so the chronological order the
+         * caller established survives inside each. Only the precedence between
+         * the two is decided here.
+         */
+        List<AbsenceInput> ordered = new ArrayList<>(absences.size());
+        absences.stream().filter(AbsenceInput::requestedNd).forEach(ordered::add);
+        absences.stream().filter(a -> !a.requestedNd()).forEach(ordered::add);
+
+        for (AbsenceInput absence : ordered) {
             if (!absence.compensable()) {
                 // A paid absence is not a thing the bank can buy back. It gets no
                 // outcome at all rather than NO, so that "NO" keeps meaning the one
@@ -146,7 +171,17 @@ public final class AbsenceAllocationPlanner {
         // unmodifiableMap, not Map.copyOf: the latter returns an unordered map,
         // and the insertion order here is the chronological order the caller
         // reads the verdicts back in.
-        return new Plan(List.copyOf(grants), Collections.unmodifiableMap(verdicts));
+        // Back into the order the caller gave, so a plan reads down the month
+        // rather than down the requests.
+        Map<Long, AbsenceVerdict> inCallerOrder = new LinkedHashMap<>();
+        for (AbsenceInput absence : absences) {
+            AbsenceVerdict verdict = verdicts.get(absence.absenceRecordId());
+            if (verdict != null) {
+                inCallerOrder.put(absence.absenceRecordId(), verdict);
+            }
+        }
+
+        return new Plan(List.copyOf(grants), Collections.unmodifiableMap(inCallerOrder));
     }
 
 }

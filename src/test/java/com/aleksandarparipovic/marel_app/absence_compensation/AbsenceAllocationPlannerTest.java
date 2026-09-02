@@ -232,6 +232,66 @@ class AbsenceAllocationPlannerTest {
         }
     }
 
+    @Nested
+    @DisplayName("a day somebody asked for")
+    class RequestedDays {
+
+        private static AbsenceInput requestedFullDay(long id, int day, int shiftMinutes) {
+            return new AbsenceInput(id, aug(day), shiftMinutes, shiftMinutes, true, true);
+        }
+
+        /**
+         * The choice the chronological rule cannot express. Without the request
+         * the 10th spends the bank first and the 20th gets nothing; with it, the
+         * 20th is bought and the 10th takes what is left.
+         */
+        @Test
+        @DisplayName("is covered before anything the allocation decides for itself")
+        void requestedDaysComeFirst() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(3L, 3, 480)),
+                    List.of(fullDay(1L, 10, 480), requestedFullDay(2L, 20, 480)));
+
+            assertThat(plan.verdicts().get(2L).outcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(plan.verdicts().get(1L).compensatedMinutes()).isZero();
+        }
+
+        @Test
+        @DisplayName("and without the request the earlier day takes it instead")
+        void withoutTheRequestTheEarlierDayWins() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(3L, 3, 480)),
+                    List.of(fullDay(1L, 10, 480), fullDay(2L, 20, 480)));
+
+            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(plan.verdicts().get(2L).compensatedMinutes()).isZero();
+        }
+
+        /**
+         * Asking does not conjure hours. The day stays NO, and the caller reads
+         * "requested ND, outcome NO" as the warning the floor asked for.
+         */
+        @Test
+        @DisplayName("stays NO when the bank cannot pay for it, however firmly it was asked for")
+        void askingDoesNotCreateHours() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(3L, 3, 120)),
+                    List.of(requestedFullDay(1L, 10, 480)));
+
+            assertThat(plan.verdicts().get(1L).outcome()).isEqualTo(AbsenceOutcome.NO);
+        }
+
+        @Test
+        @DisplayName("verdicts still read down the month, not down the requests")
+        void verdictsKeepTheMonthsOrder() {
+            Plan plan = AbsenceAllocationPlanner.plan(
+                    List.of(overtime(3L, 3, 960)),
+                    List.of(fullDay(1L, 10, 480), requestedFullDay(2L, 20, 480)));
+
+            assertThat(plan.verdicts().keySet()).containsExactly(1L, 2L);
+        }
+    }
+
     @Test
     @DisplayName("the same inputs give the same plan twice — an unchanged month must not rewrite itself")
     void isDeterministic() {

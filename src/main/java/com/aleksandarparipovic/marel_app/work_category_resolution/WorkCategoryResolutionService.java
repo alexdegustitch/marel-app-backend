@@ -159,11 +159,6 @@ public class WorkCategoryResolutionService {
                         .stream()
                         .filter(c -> Boolean.TRUE.equals(c.getIsActive()))
                         .filter(c -> isCategoryInForce(c, workDate))
-                        // ND is written by the application across a shift the
-                        // overtime bank paid for. Offering it would let somebody
-                        // declare their own neradni dan, which is the one thing
-                        // the bank is there to decide.
-                        .filter(c -> !AbsenceCategoryCodes.NON_WORKING_DAY.equals(c.getCategoryNo()))
                         .toList();
 
         List<WorkCategoryResolution> allowed = new ArrayList<>();
@@ -187,16 +182,22 @@ public class WorkCategoryResolutionService {
      */
     @Transactional(readOnly = true)
     public WorkCategoryResolution requireAllowed(Long employeeId, LocalDate workDate, Long sourceCategoryId) {
-        WorkCategoryResolution resolution = contextFor(employeeId, workDate).requireAllowed(sourceCategoryId);
-        // Refused here and not only hidden from the dropdown: the dropdown is a
-        // convenience and this is the rule. A neradni dan is a consequence of the
-        // overtime bank covering a whole shift, never something anybody types.
-        if (AbsenceCategoryCodes.NON_WORKING_DAY.equals(resolution.sourceCategoryCode())) {
-            throw new ConflictException(
-                    "Neradni dan (ND) se ne unosi ručno. Upisuje se sam kada"
-                            + " prekovremeni rad pokrije celu smenu.");
-        }
-        return resolution;
+        /*
+         * ND IS SOMETHING SOMEBODY ENTERS NOW.
+         *
+         * It was refused here, because it used to be a consequence: the
+         * allocation wrote it when the overtime bank covered a whole shift. The
+         * factory changed that — a person knows which day should be bought back,
+         * and the chronological rule cannot express a choice.
+         *
+         * Entering it is a REQUEST, not a guarantee. The allocation serves
+         * requested days before anything it decides for itself, and where the
+         * bank cannot pay the day stays NO with the request recorded beside it —
+         * which is the warning the screen shows. Nothing here has to check the
+         * bank, and deliberately: the bank is a property of the whole month, and
+         * this is asked one log at a time.
+         */
+        return contextFor(employeeId, workDate).requireAllowed(sourceCategoryId);
     }
 
     // ------------------------------------------------------------------------

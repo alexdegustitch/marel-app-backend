@@ -58,9 +58,17 @@ public class ShiftAbsenceSync {
                 .filter(wl -> wl.getWorkCode() != null
                         && AbsenceCategoryCodes.UNPAID_ABSENCE.equals(wl.getWorkCode().getCategoryNo()))
                 .toList();
-        boolean hasNonWorkingDayLog = logs.stream()
-                .anyMatch(wl -> wl.getWorkCode() != null
-                        && AbsenceCategoryCodes.NON_WORKING_DAY.equals(wl.getWorkCode().getCategoryNo()));
+        List<WorkLog> nonWorkingDayLogs = logs.stream()
+                .filter(wl -> wl.getWorkCode() != null
+                        && AbsenceCategoryCodes.NON_WORKING_DAY.equals(wl.getWorkCode().getCategoryNo()))
+                .toList();
+        boolean hasNonWorkingDayLog = !nonWorkingDayLogs.isEmpty();
+
+        // A person entering ND is ASKING for the day to be bought back. Mirrored
+        // like any other absence, with the request recorded — the allocation
+        // serves requested days first, and where the bank cannot pay, the pair
+        // "requested ND, outcome NO" is what the screen warns about.
+        mirrorRequestedNonWorkingDay(shift, nonWorkingDayLogs);
 
         if (unpaidLogs.isEmpty()) {
             if (!hasNonWorkingDayLog) {
@@ -148,18 +156,85 @@ public class ShiftAbsenceSync {
         return aStart.isBefore(bEnd) && bStart.isBefore(aEnd);
     }
 
+    /**
+     * An ND log a PERSON wrote becomes an absence asking to be bought back.
+     *
+     * <p>The allocation writes ND logs too, and those already have an absence —
+     * they are reached through {@code nd_work_log_id}. Only a log nothing points
+     * at came from somebody typing it, and only that one is a request.
+     */
+    private void mirrorRequestedNonWorkingDay(WorkShift shift, List<WorkLog> ndLogs) {
+        if (ndLogs.isEmpty()) {
+            return;
+        }
+        List<AbsenceRecord> existing = absenceRepository.findActiveForShift(shift.getId());
+        boolean alreadyExplained = existing.stream().anyMatch(a -> a.getNdWorkLog() != null)
+                || existing.stream().anyMatch(a -> AbsenceOutcome.ND == a.getRequestedOutcome());
+        if (alreadyExplained) {
+            return;
+        }
+
+        WorkLog ndLog = ndLogs.get(0);
+        requireSpansWholeShift(shift, ndLog,
+                "Neradni dan (ND) mora pokrivati celu smenu."
+                        + " Za deo smene koristite dugme \"Odsustva\" na toj smeni.");
+        requireNothingElseOnTheShift(logs(shift));
+
+        AbsenceRecord absence = newAbsenceFrom(shift, ndLog);
+        absence.setRequestedOutcome(AbsenceOutcome.ND);
+        absence.setNdWorkLog(ndLog);
+        absenceRepository.save(absence);
+        payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), shift.getWorkDate());
+        log.info("Neradni dan requested on shift {} by ND log {}", shift.getId(), ndLog.getId());
+    }
+
+    /**
+     * An absence standing for exactly what a log says, unsaved.
+     *
+     * <p>Shared by both mirrors — the NO log a supervisor writes and the ND log
+     * somebody asks for — so the two cannot drift into recording the same day
+     * differently.
+     */
+    private AbsenceRecord newAbsenceFrom(WorkShift shift, WorkLog log) {
+        OffsetDateTime start = log.getStartAt();
+        OffsetDateTime end = log.getEndAt();
+        return AbsenceRecord.builder()
+                .employee(shift.getEmployee())
+                .workShift(shift)
+                .workCodeCategory(log.getWorkCode())
+                .startAt(start)
+                .endAt(end)
+                .absenceMinutes((int) Duration.between(start, end).toMinutes())
+                .normMultiplierSnapshot(BigDecimal.valueOf(
+                        log.getWorkCode().getNormMultiplier() == null
+                                ? 0d : log.getWorkCode().getNormMultiplier()))
+                .paidMinutes(0)
+                .compensatedMinutes(0)
+                .createdBy(currentUserService.getCurrentUserId())
+                .isActive(true)
+                .build();
+    }
+
+    private List<WorkLog> logs(WorkShift shift) {
+        return workLogRepository.findActiveLogsWithRefsForShift(shift.getId());
+    }
+
     // ── Guards ───────────────────────────────────────────────────────────────
 
-    private void requireSpansWholeShift(WorkShift shift, WorkLog unpaid) {
+    private void requireSpansWholeShift(WorkShift shift, WorkLog log) {
+        requireSpansWholeShift(shift, log,
+                "Neplaćeno odsustvo (NO) kao operacija mora pokrivati celu smenu."
+                        + " Za deo smene koristite dugme \"Odsustva\" na toj smeni.");
+    }
+
+    private void requireSpansWholeShift(WorkShift shift, WorkLog log, String message) {
         if (shift.getStartAt() == null || shift.getEndAt() == null) {
             throw new ConflictException("Smena nema definisano trajanje.");
         }
-        boolean spans = !unpaid.getStartAt().isAfter(shift.getStartAt())
-                && !unpaid.getEndAt().isBefore(shift.getEndAt());
+        boolean spans = !log.getStartAt().isAfter(shift.getStartAt())
+                && !log.getEndAt().isBefore(shift.getEndAt());
         if (!spans) {
-            throw new ConflictException(
-                    "Neplaćeno odsustvo (NO) kao operacija mora pokrivati celu smenu."
-                            + " Za deo smene koristite dugme \"Odsustva\" na toj smeni.");
+            throw new ConflictException(message);
         }
     }
 
@@ -192,21 +267,7 @@ public class ShiftAbsenceSync {
             return;
         }
 
-        absenceRepository.save(AbsenceRecord.builder()
-                .employee(shift.getEmployee())
-                .workShift(shift)
-                .workCodeCategory(unpaid.getWorkCode())
-                .startAt(start)
-                .endAt(end)
-                .absenceMinutes(minutes)
-                .normMultiplierSnapshot(BigDecimal.valueOf(
-                        unpaid.getWorkCode().getNormMultiplier() == null
-                                ? 0d : unpaid.getWorkCode().getNormMultiplier()))
-                .paidMinutes(0)
-                .compensatedMinutes(0)
-                .createdBy(currentUserService.getCurrentUserId())
-                .isActive(true)
-                .build());
+        absenceRepository.save(newAbsenceFrom(shift, unpaid));
         payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), shift.getWorkDate());
         log.info("Full-day absence mirrored from NO log {} on shift {}", unpaid.getId(), shift.getId());
     }

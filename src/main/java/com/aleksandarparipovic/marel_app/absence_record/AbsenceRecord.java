@@ -92,6 +92,24 @@ public class AbsenceRecord {
     private AbsenceOutcome outcome;
 
     /**
+     * ND when a person entered this day AS a neradni dan, rather than the
+     * allocation deciding it was one.
+     *
+     * <p>Deliberately not a second value in {@link #outcome}: ND there has
+     * always meant "the bank covered the whole shift", and an unfulfilled
+     * request would make it mean two things at once. Read as a pair instead —
+     * requested ND with outcome NO is precisely the day somebody asked for and
+     * the bank could not pay for, which is the warning the floor wanted.
+     *
+     * <p>Requested days are covered FIRST by the allocation. Marking a specific
+     * day is a choice the chronological rule cannot express: the person knows
+     * which day should be bought back.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "requested_outcome", length = 20)
+    private AbsenceOutcome requestedOutcome;
+
+    /**
      * The single work log written across the shift when this absence became ND.
      *
      * <p>Held so the reverse is exact: when the bank shrinks and the day stops

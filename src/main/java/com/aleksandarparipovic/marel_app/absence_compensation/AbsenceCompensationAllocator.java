@@ -109,7 +109,8 @@ public class AbsenceCompensationAllocator {
                 shift.getWorkDate(),
                 absence.getAbsenceMinutes() == null ? 0 : absence.getAbsenceMinutes(),
                 shiftMinutes(shift),
-                compensable);
+                compensable,
+                AbsenceOutcome.ND == absence.getRequestedOutcome());
     }
 
     /**
