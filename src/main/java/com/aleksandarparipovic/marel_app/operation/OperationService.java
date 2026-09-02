@@ -76,6 +76,33 @@ public class OperationService {
                 .toList();
     }
 
+    /**
+     * The live operations carrying one work code category, by CODE.
+     *
+     * <p>For the full-day absences: a whole shift nobody came in is drawn as a
+     * single operation across it, and the factory keeps one operation per
+     * category for exactly that. Offered as a list rather than resolved to the
+     * one, because the screen asking has to be able to say "there is none
+     * configured" or "there are two" instead of silently drawing the wrong day —
+     * the same reason {@code OperationRepository} returns a list here.
+     *
+     * <p>Read-only and transactional: the product is a lazy association and this
+     * reports its name.
+     */
+    @Transactional(readOnly = true)
+    public List<AbsenceOperationDto> getActiveOperationsByCategoryNo(String categoryNo) {
+        return operationRepository.findActiveByWorkCodeCategoryNo(categoryNo)
+                .stream()
+                .map(operation -> new AbsenceOperationDto(
+                        operation.getId(),
+                        operation.getOpName(),
+                        operation.getProduct().getId(),
+                        operation.getProduct().getProductName(),
+                        operation.getWorkCodeCategory().getId(),
+                        operation.getWorkCodeCategory().getCategoryNo()))
+                .toList();
+    }
+
     public Page<OperationWithProductInfoRow> searchAll(SearchRequest request){
         Specification<Operation> spec = OperationSpecifications.fromSearchRequest(request);
         Pageable pageable = PageableBuilder.from(request);

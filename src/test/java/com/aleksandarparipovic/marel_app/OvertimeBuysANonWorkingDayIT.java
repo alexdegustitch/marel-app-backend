@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app;
 
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationAllocator;
+import com.aleksandarparipovic.marel_app.absence_compensation.OvertimeBankService;
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationRepository;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceOutcome;
 import com.aleksandarparipovic.marel_app.absence_record.AbsenceRecord;
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.util.List;
 
@@ -73,6 +75,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     @Autowired private AbsenceRecordRepository absenceRepository;
     @Autowired private AbsenceCompensationRepository compensationRepository;
     @Autowired private AbsenceCompensationAllocator allocator;
+    @Autowired private OvertimeBankService overtimeBankService;
     @Autowired private DailyReportRepository dailyReportRepository;
     @Autowired private WorkLogRepository workLogRepository;
     @Autowired private EntityManager entityManager;
@@ -251,12 +254,19 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         fixture.recalculate(thursday);
 
         DailyReport report = dailyReportRepository.findByWorkShiftId(thursday.getId()).orElseThrow();
+        // TIME PRESENT is what must stay zero — nobody was there, so the day
+        // measures nothing and cannot drag the month's efficiency.
         assertThat(report.getTotalShiftMinutes()).isZero();
         assertThat(report.getTotalWorkMinutes()).isZero();
-        // And nothing is owed either: the bank bought the whole day back, so
-        // there is no uncovered absence left for the payroll to charge. The
-        // hours are not lost — they were paid on the day they were worked.
-        assertThat(report.getTotalAbsenceUnpaidMinutes()).isZero();
+        /*
+         * The ABSENCE minutes are a different quantity, and they are reported.
+         *
+         * This asserted zero while a fully covered day left no category row at
+         * all. Supervisors have to be able to see how long somebody was on ND,
+         * so the day is now reported under ND for its whole span — shown, and
+         * charged nothing, because ND carries a coefficient of zero.
+         */
+        assertThat(report.getTotalAbsenceUnpaidMinutes()).isEqualTo(FULL_SHIFT);
         assertThat(report.getTotalCompensatedMinutes()).isEqualTo(FULL_SHIFT);
     }
 
@@ -437,10 +447,15 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
          * own category, and the allocation only ever covers NO — so a requested
          * day came back with outcome NULL and was never covered, whatever the
          * bank held.
+         *
+         * <p>That is still the answer WHERE THE BANK CAN PAY. Where it cannot,
+         * the day is a declared one and the category is ND on purpose — see the
+         * test below.
          */
         @Test
-        @DisplayName("is recorded as an UNPAID absence, so the bank can reach it at all")
-        void isRecordedAsUnpaid() {
+        @DisplayName("with the hours in the bank, is recorded as an UNPAID absence so the bank can reach it")
+        void isRecordedAsUnpaidWhenTheBankCanPay() {
+            workedShift(WEDNESDAY, 6, 960);                  // 480 in the bank
             WorkShift shift = shiftWithRequestedNd(THURSDAY);
 
             assertThat(absenceRepository.findActiveForShift(shift.getId()))
@@ -448,6 +463,26 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
                     .satisfies(a -> {
                         assertThat(a.getWorkCodeCategory().getCategoryNo())
                                 .isEqualTo(AbsenceCategoryCodes.UNPAID_ABSENCE);
+                        assertThat(a.getRequestedOutcome()).isEqualTo(AbsenceOutcome.ND);
+                    });
+        }
+
+        /**
+         * ND IS ALSO HOW A NON-WORKING DAY IS MARKED, and such a day is not
+         * something the bank has to buy: entering it without the hours declares
+         * that nobody was expected in. So it carries the ND category itself, the
+         * allocation leaves it alone, and its minutes are reported under ND.
+         */
+        @Test
+        @DisplayName("without them, is recorded as a NERADNI DAN — a declared day, not an absence to make up")
+        void isRecordedAsNonWorkingDayWithoutTheHours() {
+            WorkShift shift = shiftWithRequestedNd(THURSDAY);
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId()))
+                    .singleElement()
+                    .satisfies(a -> {
+                        assertThat(a.getWorkCodeCategory().getCategoryNo())
+                                .isEqualTo(AbsenceCategoryCodes.NON_WORKING_DAY);
                         assertThat(a.getRequestedOutcome()).isEqualTo(AbsenceOutcome.ND);
                     });
         }
@@ -465,20 +500,66 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             assertThat(after.getCompensatedMinutes()).isEqualTo(FULL_SHIFT);
         }
 
-        /** Warn but allow: the entry stands, and the pair says the hours were short. */
+        /**
+         * Warn but allow, and what is allowed STAYS ND. The screen advises NO
+         * when the hours are short; entering ND anyway is a person saying the
+         * day was a non-working one, and it is not quietly turned into an unpaid
+         * absence behind them.
+         */
         @Test
-        @DisplayName("stays NO when the hours are not there, and the entry is left alone")
-        void staysUnpaidWithoutTheHours() {
+        @DisplayName("stays ND when the hours are not there, and is never compensated")
+        void staysNonWorkingWithoutTheHours() {
             WorkShift thursday = shiftWithRequestedNd(THURSDAY);
 
             allocator.allocate(employee.getId(), MONTH);
 
             AbsenceRecord after = absenceRepository.findActiveForShift(thursday.getId()).get(0);
-            assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.NO);
+            assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.ND);
             assertThat(after.getRequestedOutcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(after.getCompensatedMinutes()).isZero();
             // The log somebody typed is still there — refused is not deleted.
             assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.NON_WORKING_DAY))
                     .isPresent();
+        }
+
+        /**
+         * A declared day does not nibble at the bank. Three hours against an
+         * eight-hour shift would buy nothing anyway, and spending them would
+         * take them from the day that could have used them.
+         */
+        @Test
+        @DisplayName("leaves even a partial bank untouched, so another day can still use it")
+        void aDeclaredDaySpendsNothing() {
+            workedShift(WEDNESDAY, 6, 660);                  // 180 in the bank
+            WorkShift thursday = shiftWithRequestedNd(THURSDAY);
+
+            allocator.allocate(employee.getId(), MONTH);
+
+            AbsenceRecord after = absenceRepository.findActiveForShift(thursday.getId()).get(0);
+            assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(after.getCompensatedMinutes()).isZero();
+            assertThat(compensationRepository.findForAbsences(List.of(after.getId()))).isEmpty();
+        }
+
+        /**
+         * DECIDED ONCE. Overtime worked later in the month does not reach back
+         * and turn a declared day into a bought one: the decision was made when
+         * the day was entered, and the hours stay available for other days.
+         */
+        @Test
+        @DisplayName("and overtime worked later does not buy a day that was declared")
+        void aDeclaredDayIsNotBoughtLater() {
+            WorkShift thursday = shiftWithRequestedNd(THURSDAY);
+            WorkShift wednesday = workedShift(WEDNESDAY, 6, 660);
+            changeWorkTo(wednesday, 960);                    // the bank grows to 480
+
+            allocator.allocate(employee.getId(), MONTH);
+
+            AbsenceRecord after = absenceRepository.findActiveForShift(thursday.getId()).get(0);
+            assertThat(after.getWorkCodeCategory().getCategoryNo())
+                    .isEqualTo(AbsenceCategoryCodes.NON_WORKING_DAY);
+            assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(after.getCompensatedMinutes()).isZero();
         }
 
         @Test
@@ -493,6 +574,96 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
                     .filteredOn(wl -> AbsenceCategoryCodes.NON_WORKING_DAY
                             .equals(wl.getWorkCode().getCategoryNo()))
                     .hasSize(1);
+        }
+    }
+
+    @Nested
+    @DisplayName("a shift that was taken back")
+    class AWithdrawnShift {
+
+        private static final LocalDate FRIDAY = LocalDate.of(2026, 8, 21);
+
+        /** What WorkShiftService.archive writes on the row, and nothing else. */
+        private void archive(WorkShift shift) {
+            shift.setArchivedAt(OffsetDateTime.now());
+            shift.setIsActive(false);
+            entityManager.merge(shift);
+            entityManager.flush();
+            entityManager.clear();
+        }
+
+        private void restore(WorkShift shift) {
+            shift.setArchivedAt(null);
+            shift.setIsActive(true);
+            entityManager.merge(shift);
+            entityManager.flush();
+            entityManager.clear();
+        }
+
+        /**
+         * The bug: the absence rows are left alone on archive — deliberately —
+         * so the hours that bought the day stayed locked to a shift nobody could
+         * see any more. The bank went on reporting them spent.
+         */
+        @Test
+        @DisplayName("gives back the overtime that had bought its day off")
+        void archivingFreesTheBank() {
+            workedShift(WEDNESDAY, 6, 960);                  // 480 in the bank
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absence(thursday);
+            allocator.allocate(employee.getId(), MONTH);
+
+            assertThat(overtimeBankService.remainingMinutes(employee.getId(), MONTH)).isZero();
+
+            archive(thursday);
+
+            assertThat(overtimeBankService.remainingMinutes(employee.getId(), MONTH))
+                    .isEqualTo(FULL_SHIFT);
+        }
+
+        @Test
+        @DisplayName("and the freed hours can buy a day that went without")
+        void theFreedHoursReachAnotherDay() {
+            workedShift(WEDNESDAY, 6, 960);                  // 480: enough for one day
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            absence(thursday);
+            AbsenceRecord friday = fullDayAbsence(FRIDAY);
+            allocator.allocate(employee.getId(), MONTH);
+
+            // Chronological: the earlier day spent it, and Friday got nothing.
+            assertThat(absenceRepository.findById(friday.getId()).orElseThrow().getOutcome())
+                    .isEqualTo(AbsenceOutcome.NO);
+
+            archive(thursday);
+            allocator.allocate(employee.getId(), MONTH);
+
+            assertThat(absenceRepository.findById(friday.getId()).orElseThrow().getOutcome())
+                    .isEqualTo(AbsenceOutcome.ND);
+        }
+
+        /**
+         * Symmetry, and the reason the absence row is filtered rather than
+         * withdrawn: nothing was destroyed on the way out, so putting the shift
+         * back is enough to make its day count again.
+         */
+        @Test
+        @DisplayName("takes its hours back when the shift is restored")
+        void restoringClaimsTheHoursAgain() {
+            workedShift(WEDNESDAY, 6, 960);
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            AbsenceRecord absence = absence(thursday);
+            allocator.allocate(employee.getId(), MONTH);
+
+            archive(thursday);
+            assertThat(overtimeBankService.remainingMinutes(employee.getId(), MONTH))
+                    .isEqualTo(FULL_SHIFT);
+
+            restore(thursday);
+            allocator.allocate(employee.getId(), MONTH);
+
+            assertThat(overtimeBankService.remainingMinutes(employee.getId(), MONTH)).isZero();
+            assertThat(absenceRepository.findById(absence.getId()).orElseThrow().getOutcome())
+                    .isEqualTo(AbsenceOutcome.ND);
         }
     }
 
@@ -605,15 +776,63 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         }
 
         /**
-         * A neradni dan was bought back whole, so there is nothing left of it for
-         * the payroll to charge. No row at all, rather than a row of zero.
+         * A day the bank bought back is STILL A DAY, and how long it was is what
+         * a supervisor has to be able to see. It used to leave no line at all —
+         * covered whole, nothing owed, nothing shown — and those eight hours then
+         * appeared in no report anywhere, only in absence_records.
+         *
+         * <p>Reported under ND rather than NO: the record carries NO because that
+         * is the only category the allocation takes part in, but what the day
+         * BECAME is a neradni dan, and NO on a payslip means something else.
          */
         @Test
-        @DisplayName("a fully covered day leaves no line behind")
-        void aFullyCoveredDayHasNoLine() {
+        @DisplayName("a fully covered day is reported as ND for its whole span, and charged nothing")
+        void aFullyCoveredDayIsReportedAsNd() {
             workedShift(WEDNESDAY, 6, 960);                  // 480 in the bank
             WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
             absence(thursday);
+
+            allocator.allocate(employee.getId(), MONTH);
+            entityManager.flush();
+            entityManager.clear();
+            fixture.recalculate(thursday);
+
+            DailyReport report = dailyReportRepository.findByWorkShiftId(thursday.getId()).orElseThrow();
+            // Not as an unpaid absence — that is no longer what the day is.
+            assertThat(categoryRowRepository.findAllByDailyReportIds(List.of(report.getId())))
+                    .filteredOn(c -> AbsenceCategoryCodes.UNPAID_ABSENCE
+                            .equals(c.getWorkCodeCategory().getCategoryNo()))
+                    .isEmpty();
+            assertThat(categoryRowRepository.findAllByDailyReportIds(List.of(report.getId())))
+                    .filteredOn(c -> AbsenceCategoryCodes.NON_WORKING_DAY
+                            .equals(c.getWorkCodeCategory().getCategoryNo()))
+                    .singleElement()
+                    .satisfies(row -> {
+                        assertThat(row.getTotalMinutes()).isEqualTo(FULL_SHIFT);
+                        // Hours shown, nothing charged: ND carries a coefficient
+                        // of zero exactly as NO does.
+                        assertThat(row.getTotalPaidMinutes()).isZero();
+                        assertThat(row.getNormMultiplier()).isEqualByComparingTo(BigDecimal.ZERO);
+                    });
+
+            // And it reaches the day's own total, which is what the karton sums.
+            assertThat(report.getTotalAbsenceUnpaidMinutes()).isEqualTo(FULL_SHIFT);
+        }
+
+        /**
+         * THE POINT OF A DECLARED NERADNI DAN. The hours are reported under ND,
+         * not under NO. Neither is paid — both carry a coefficient of zero — but
+         * the payslip says which kind of day it was, and a day nobody was
+         * expected in is not an unpaid absence.
+         */
+        @Test
+        @DisplayName("a declared neradni dan is charged as ND, and no NO line stands beside it")
+        void aDeclaredNonWorkingDayIsAnNdLine() {
+            WorkShift thursday = fixture.workShift(employee, THURSDAY, 6, FULL_SHIFT);
+            fixture.workLog(thursday, operationRepository
+                    .findActiveByWorkCodeCategoryNo(AbsenceCategoryCodes.NON_WORKING_DAY).get(0),
+                    nonWorkingDay, 0, FULL_SHIFT, 0);
+            shiftAbsenceSync.syncForShift(thursday);
 
             allocator.allocate(employee.getId(), MONTH);
             entityManager.flush();
@@ -625,6 +844,15 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
                     .filteredOn(c -> AbsenceCategoryCodes.UNPAID_ABSENCE
                             .equals(c.getWorkCodeCategory().getCategoryNo()))
                     .isEmpty();
+            assertThat(categoryRowRepository.findAllByDailyReportIds(List.of(report.getId())))
+                    .filteredOn(c -> AbsenceCategoryCodes.NON_WORKING_DAY
+                            .equals(c.getWorkCodeCategory().getCategoryNo()))
+                    .singleElement()
+                    .satisfies(row -> {
+                        assertThat(row.getTotalMinutes()).isEqualTo(FULL_SHIFT);
+                        assertThat(row.getTotalPaidMinutes()).isZero();
+                        assertThat(row.getSourceType()).isEqualTo("ABSENCE");
+                    });
         }
 
         /**

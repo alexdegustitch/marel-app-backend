@@ -29,6 +29,18 @@ public interface AbsenceRecordRepository extends JpaRepository<AbsenceRecord, Lo
      * <p>The date lives on the shift, not here — an absence is always inside one.
      * Ordering is total and deterministic on purpose; see
      * {@code OvertimeRecordRepository#findForEmployeeBetween}.
+     *
+     * <p><b>A WITHDRAWN SHIFT TAKES ITS ABSENCES WITH IT.</b> Archiving a shift
+     * leaves its absence rows alone — deliberately, they are what somebody
+     * entered — but a day that no longer counts must not go on spending the
+     * overtime bank. Without {@code ws.archivedAt is null} the hours that bought
+     * a neradni dan stayed locked to a shift that had been taken back: the bank
+     * reported them spent, and every allocation pass re-granted them to an
+     * absence nothing else could see.
+     *
+     * <p>Filtering here rather than withdrawing the absence on archive is what
+     * makes RESTORING a shift work by itself — the rows were never touched, so
+     * they simply become visible again and the next allocation re-grants them.
      */
     @Query("""
         select a from AbsenceRecord a
@@ -36,6 +48,7 @@ public interface AbsenceRecordRepository extends JpaRepository<AbsenceRecord, Lo
         join fetch a.workCodeCategory
         where a.employee.id = :employeeId
           and ws.workDate between :from and :to
+          and ws.archivedAt is null
           and a.isActive = true
           and a.archivedAt is null
         order by ws.workDate asc, a.startAt asc, a.id asc

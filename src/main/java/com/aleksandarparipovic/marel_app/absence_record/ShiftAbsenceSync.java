@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.absence_record;
 
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationRepository;
+import com.aleksandarparipovic.marel_app.absence_compensation.OvertimeBankService;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
 
@@ -42,6 +44,7 @@ public class ShiftAbsenceSync {
 
     private final AbsenceRecordRepository absenceRepository;
     private final AbsenceCompensationRepository compensationRepository;
+    private final OvertimeBankService overtimeBankService;
     private final WorkLogRepository workLogRepository;
     private final AbsenceLogWriter absenceLogWriter;
     private final WorkCodeCategoryRepository categoryRepository;
@@ -160,11 +163,14 @@ public class ShiftAbsenceSync {
     }
 
     /**
-     * An ND log a PERSON wrote becomes an absence asking to be bought back.
+     * An ND log a PERSON wrote becomes an absence — bought back, or declared.
      *
      * <p>The allocation writes ND logs too, and those already have an absence —
      * they are reached through {@code nd_work_log_id}. Only a log nothing points
-     * at came from somebody typing it, and only that one is a request.
+     * at came from somebody typing it, and only that one is decided here.
+     *
+     * <p>Which of the two it becomes is settled by the overtime bank, once, at
+     * the moment it is entered. See the comment on the decision itself.
      */
     private void mirrorRequestedNonWorkingDay(WorkShift shift, List<WorkLog> ndLogs) {
         if (ndLogs.isEmpty()) {
@@ -184,32 +190,54 @@ public class ShiftAbsenceSync {
         requireNothingElseOnTheShift(logs(shift));
 
         /*
-         * THE ABSENCE IS AN UNPAID ONE. THE ND IS THE REQUEST.
+         * WHICH KIND OF NERADNI DAN THIS IS, DECIDED ONCE, HERE.
          *
-         * Built with the NO category, not the ND one the log carries. What this
-         * day IS, is an unpaid absence; what somebody ASKED for is a neradni dan,
-         * and that is the separate column — which is the whole reason the two are
-         * kept apart.
+         * A person entering ND means one of two things, and which one is settled
+         * by whether the overtime bank could pay for the whole shift:
          *
-         * Carrying ND as the category made the allocation skip it: it takes part
-         * only where the category is NO, so a requested day was never covered at
-         * all, whatever the bank held. It came back with outcome NULL — neither
-         * NO nor ND — which is the answer for an absence that takes no part.
+         *   BANK COVERS IT — the day is BOUGHT BACK. The absence is built with
+         *   the NO category, because that is what the day IS: an unpaid absence,
+         *   with a neradni dan ASKED for in the separate requested_outcome
+         *   column. Only NO takes part in the allocation, so carrying ND here
+         *   would make it skip the day and never cover it at all.
+         *
+         *   BANK DOES NOT — the day is DECLARED a neradni dan. Somebody is
+         *   saying nobody was expected in, not asking for hours to be made up,
+         *   so it carries the ND category itself: the allocation leaves it
+         *   alone, it spends none of the bank — not even a partial hour that
+         *   another day can still use — and its minutes reach the day under ND
+         *   rather than under NO. That is the point of it. ND is also how a
+         *   non-working day is marked, and such a day is not compensated.
+         *
+         * DECIDED ONCE AND NEVER REVISITED. The guard above returns early where
+         * an absence already explains this shift, so overtime worked later in
+         * the month cannot quietly turn a declared day into a bought one.
          */
-        WorkCodeCategory unpaidCategory = categoryRepository
-                .findInForceByCategoryNo(AbsenceCategoryCodes.UNPAID_ABSENCE, shift.getWorkDate())
+        int shiftMinutes = (int) Duration.between(shift.getStartAt(), shift.getEndAt()).toMinutes();
+        int remainingBankMinutes = overtimeBankService.remainingMinutes(
+                shift.getEmployee().getId(), YearMonth.from(shift.getWorkDate()));
+        boolean bankCanBuyTheWholeDay = shiftMinutes > 0 && remainingBankMinutes >= shiftMinutes;
+
+        String categoryNo = bankCanBuyTheWholeDay
+                ? AbsenceCategoryCodes.UNPAID_ABSENCE
+                : AbsenceCategoryCodes.NON_WORKING_DAY;
+        WorkCodeCategory category = categoryRepository
+                .findInForceByCategoryNo(categoryNo, shift.getWorkDate())
                 .orElseThrow(() -> new IllegalStateException(
-                        "Kategorija NO ne postoji za " + shift.getWorkDate() + "."));
+                        "Kategorija " + categoryNo + " ne postoji za " + shift.getWorkDate() + "."));
 
         AbsenceRecord absence = newAbsenceFrom(shift, ndLog);
-        absence.setWorkCodeCategory(unpaidCategory);
+        absence.setWorkCodeCategory(category);
         absence.setNormMultiplierSnapshot(BigDecimal.valueOf(
-                unpaidCategory.getNormMultiplier() == null ? 0d : unpaidCategory.getNormMultiplier()));
+                category.getNormMultiplier() == null ? 0d : category.getNormMultiplier()));
         absence.setRequestedOutcome(AbsenceOutcome.ND);
         absence.setNdWorkLog(ndLog);
         absenceRepository.save(absence);
         payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), shift.getWorkDate());
-        log.info("Neradni dan requested on shift {} by ND log {}", shift.getId(), ndLog.getId());
+        log.info("Neradni dan on shift {} from ND log {}: {} (bank has {} min, shift is {} min)",
+                shift.getId(), ndLog.getId(),
+                bankCanBuyTheWholeDay ? "requested, the bank can cover it" : "declared, not compensated",
+                remainingBankMinutes, shiftMinutes);
     }
 
     /**

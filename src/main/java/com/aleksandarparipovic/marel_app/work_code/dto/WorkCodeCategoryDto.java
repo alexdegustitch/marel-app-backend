@@ -29,6 +29,21 @@ public record WorkCodeCategoryDto(
         Boolean baseCategory,
         /** May this be an employee's default work category. */
         Boolean baseOperation,
-        Boolean allowsParallelWork
+        Boolean allowsParallelWork,
+        /**
+         * WORK, ABSENCE or SICK_LEAVE — what KIND of time the category stands
+         * for.
+         *
+         * <p>Sent because the shift workspace has to tell time worked from time
+         * nobody was there: it measures efficiency over the day's rows, and the
+         * recalculation excludes absences from that (see
+         * {@code DailyRecalcService#isAbsenceRow}). Without this the client had
+         * no way to make the same distinction, and a whole day of NO reported
+         * itself as 100 % efficiency.
+         *
+         * <p>Costs nothing: the column is already on the row being mapped, and
+         * the list is fetched once and cached.
+         */
+        String type
 ) {
 }
