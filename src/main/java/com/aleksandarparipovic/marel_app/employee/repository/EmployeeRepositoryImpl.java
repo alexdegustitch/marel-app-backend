@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.employee.repository;
 import com.aleksandarparipovic.marel_app.bonus.BonusCategory;
 import com.aleksandarparipovic.marel_app.department.Department;
 import com.aleksandarparipovic.marel_app.employee.Employee;
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDirectorySummary;
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee.specification.EmployeeJoinContext;
 import com.aleksandarparipovic.marel_app.compensation_scheme.CompensationScheme;
@@ -19,8 +20,10 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -184,9 +187,20 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
             throw new UnsupportedOperationException("Unsupported projection type: " + projectionType.getName());
         }
 
-        // Sorting
+        // Sorting.
+        //
+        // ALWAYS ends on the id, whatever the caller asked for. A page is a
+        // window over an ORDER BY, and two employees who tie on the sort column
+        // — the same surname, the same department, no bonus category at all —
+        // have no defined order between them; Postgres is free to return them
+        // one way for page 1 and the other way for page 2, so one of them
+        // appears twice and the other never. With no sort at all it was worse:
+        // there was no ORDER BY, and the DISTINCT made the row order whatever
+        // the hash happened to produce. The id settles every tie the same way
+        // on every page, and is the primary key, so an unsorted first page is
+        // an index walk rather than a sort of the whole table.
+        List<Order> orders = new ArrayList<>();
         if (pageable.getSort().isSorted()) {
-            List<Order> orders = new ArrayList<>();
 
             for (Sort.Order order : pageable.getSort()) {
                 Expression<?> sortExpr;
@@ -227,9 +241,9 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
                         ? cb.asc(sortExpr, Nulls.LAST)
                         : cb.desc(sortExpr, Nulls.LAST));
             }
-
-            query.orderBy(orders);
         }
+        orders.add(cb.asc(root.get("id")));
+        query.orderBy(orders);
 
 
         // Execute main query
@@ -238,7 +252,16 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
         typedQuery.setMaxResults(pageable.getPageSize());
         List<T> content = typedQuery.getResultList();
 
-        // Count query
+        // The count is the expensive half of a paged read over a large table —
+        // the page itself stops after fifty rows, the COUNT(DISTINCT) does not.
+        // It is only run when the page cannot tell the total on its own: a
+        // first page that came back short IS the whole result, and a later
+        // page that came back short ends it. Same rule Spring Data applies to
+        // its own derived queries.
+        return PageableExecutionUtils.getPage(content, pageable, () -> countMatching(spec, cb));
+    }
+
+    private long countMatching(Specification<Employee> spec, CriteriaBuilder cb) {
         CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
         Root<Employee> countRoot = countQuery.from(Employee.class);
         if (spec != null) {
@@ -246,8 +269,65 @@ public class EmployeeRepositoryImpl implements EmployeeRepositoryCustom {
             if (countPredicate != null) countQuery.where(countPredicate);
         }
         countQuery.select(cb.countDistinct(countRoot));
-        Long total = em.createQuery(countQuery).getSingleResult();
+        return em.createQuery(countQuery).getSingleResult();
+    }
 
-        return new PageImpl<>(content, pageable, total);
+    /**
+     * The three headline figures in two statements, however many employees
+     * match.
+     *
+     * <p>The per-scheme counts come from ONE grouped query over the same
+     * predicate the page uses, with the same "open, unarchived period" join the
+     * projection uses for the scheme column — so the tiles above the table and
+     * the badge beside each name can never disagree about who is on what. The
+     * total is the sum of the groups (an employee has at most one open period,
+     * and the group with a null code holds the ones with none), which saves the
+     * third statement that a separate COUNT would have been.
+     */
+    @Override
+    public EmployeeDirectorySummary directorySummary(Specification<Employee> spec, LocalDate today) {
+        CriteriaBuilder cb = em.getCriteriaBuilder();
+
+        CriteriaQuery<EmployeeDirectorySummary.SchemeCount> bySchemeQuery =
+                cb.createQuery(EmployeeDirectorySummary.SchemeCount.class);
+        Root<Employee> root = bySchemeQuery.from(Employee.class);
+        EmployeeJoinContext joins = new EmployeeJoinContext();
+        Join<EmployeeCompensationSchemeHistory, CompensationScheme> schemeJoin = joins.scheme(root, cb);
+
+        if (spec != null) {
+            Predicate predicate = spec.toPredicate(root, bySchemeQuery, cb);
+            if (predicate != null) bySchemeQuery.where(predicate);
+        }
+        // The specification switches DISTINCT on for the page it was written
+        // for; on a grouped query it is meaningless and only costs a sort.
+        bySchemeQuery.distinct(false);
+        bySchemeQuery.select(cb.construct(
+                EmployeeDirectorySummary.SchemeCount.class,
+                schemeJoin.get("code"),
+                schemeJoin.get("name"),
+                cb.countDistinct(root.get("id"))
+        ));
+        bySchemeQuery.groupBy(schemeJoin.get("code"), schemeJoin.get("name"));
+        bySchemeQuery.orderBy(cb.asc(schemeJoin.get("code")));
+        List<EmployeeDirectorySummary.SchemeCount> byScheme = em.createQuery(bySchemeQuery).getResultList();
+
+        long total = byScheme.stream().mapToLong(EmployeeDirectorySummary.SchemeCount::count).sum();
+
+        CriteriaQuery<Long> probationQuery = cb.createQuery(Long.class);
+        Root<Employee> probationRoot = probationQuery.from(Employee.class);
+        List<Predicate> probationPredicates = new ArrayList<>();
+        if (spec != null) {
+            Predicate predicate = spec.toPredicate(probationRoot, probationQuery, cb);
+            if (predicate != null) probationPredicates.add(predicate);
+        }
+        // "Still on probation" is what the table's own column shows: a
+        // probation end date that has not passed yet.
+        probationPredicates.add(cb.greaterThanOrEqualTo(probationRoot.get("probationEndDate"), today));
+        probationQuery.distinct(false);
+        probationQuery.select(cb.countDistinct(probationRoot.get("id")))
+                .where(probationPredicates.toArray(Predicate[]::new));
+        long onProbation = em.createQuery(probationQuery).getSingleResult();
+
+        return new EmployeeDirectorySummary(total, onProbation, byScheme);
     }
 }

@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.employee;
 import com.aleksandarparipovic.marel_app.employee.dto.ArchiveEmployeeRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeBasicInfoDto;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDetailDto;
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDirectorySummary;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeePatchRequest;
 import com.aleksandarparipovic.marel_app.employee.view.EmployeeWithBonusView;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeCreateRequest;
@@ -65,6 +66,16 @@ public class EmployeeController {
     @PostMapping("/search-all")
     public Page<EmployeeWithBonusView> searchAll(@RequestBody SearchRequest request) {
         return employeeService.searchAll(request, EmployeeWithBonusView.class);
+    }
+
+    /**
+     * Headline counts for the directory — total, per scheme, on probation — for
+     * the same request body {@code /search-all} takes. Pagination and sort in
+     * the body are ignored; only the filters and the global search matter.
+     */
+    @PostMapping("/search-all/summary")
+    public EmployeeDirectorySummary directorySummary(@RequestBody SearchRequest request) {
+        return employeeService.directorySummary(request);
     }
 
     @GetMapping("/{id}/details")
