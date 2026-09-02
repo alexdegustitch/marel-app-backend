@@ -217,6 +217,21 @@ public class AbsenceCompensationAllocator {
                 continue;
             }
 
+            if (AbsenceOutcome.ND == absence.getRequestedOutcome()) {
+                /*
+                 * SOMEBODY ELSE OWNS THIS LOG.
+                 *
+                 * A requested day was drawn by the person who asked for it, and
+                 * it stays drawn whatever the answer: granted, it is already the
+                 * ND log this would have written; refused, the entry stands and
+                 * the screen says the hours were not there. Swapping it either
+                 * way would either duplicate the log or delete what somebody
+                 * typed.
+                 */
+                changed.add(absence);
+                continue;
+            }
+
             if (verdict.outcome() == AbsenceOutcome.ND) {
                 absence.setNdWorkLog(absenceLogWriter.promoteToNonWorkingDay(absence));
             } else if (before == AbsenceOutcome.ND) {

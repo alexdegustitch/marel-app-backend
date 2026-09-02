@@ -85,6 +85,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
     private PayrollRunItem payrollItem;
     private WorkCodeCategory workCategory;
     private WorkCodeCategory unpaidAbsence;
+    private WorkCodeCategory nonWorkingDay;
     private Operation workOperation;
 
     @BeforeEach
@@ -96,7 +97,7 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
         workOperation = fixture.operation(workCategory, 10);
 
         unpaidAbsence = absenceCategory("NO", "Neplaćeno odsustvo");
-        WorkCodeCategory nonWorkingDay = absenceCategory("ND", "Neradni dan");
+        nonWorkingDay = absenceCategory("ND", "Neradni dan");
         ndOperation(nonWorkingDay);
     }
 
@@ -414,6 +415,84 @@ class OvertimeBuysANonWorkingDayIT extends AbstractIntegrationTest {
             assertThatThrownBy(() -> shiftAbsenceSync.syncForShift(shift))
                     .isInstanceOf(ConflictException.class)
                     .hasMessageContaining("uz uneti rad");
+        }
+    }
+
+    @Nested
+    @DisplayName("a neradni dan somebody asked for")
+    class ARequestedNonWorkingDay {
+
+        /** Entering ND is asking; the log is the ask, the absence carries it. */
+        private WorkShift shiftWithRequestedNd(LocalDate date) {
+            WorkShift shift = fixture.workShift(employee, date, 6, FULL_SHIFT);
+            Operation ndOp = operationRepository
+                    .findActiveByWorkCodeCategoryNo(AbsenceCategoryCodes.NON_WORKING_DAY).get(0);
+            fixture.workLog(shift, ndOp, nonWorkingDay, 0, FULL_SHIFT, 0);
+            shiftAbsenceSync.syncForShift(shift);
+            return shift;
+        }
+
+        /**
+         * The bug this was written for: the absence was built with the ND log's
+         * own category, and the allocation only ever covers NO — so a requested
+         * day came back with outcome NULL and was never covered, whatever the
+         * bank held.
+         */
+        @Test
+        @DisplayName("is recorded as an UNPAID absence, so the bank can reach it at all")
+        void isRecordedAsUnpaid() {
+            WorkShift shift = shiftWithRequestedNd(THURSDAY);
+
+            assertThat(absenceRepository.findActiveForShift(shift.getId()))
+                    .singleElement()
+                    .satisfies(a -> {
+                        assertThat(a.getWorkCodeCategory().getCategoryNo())
+                                .isEqualTo(AbsenceCategoryCodes.UNPAID_ABSENCE);
+                        assertThat(a.getRequestedOutcome()).isEqualTo(AbsenceOutcome.ND);
+                    });
+        }
+
+        @Test
+        @DisplayName("is granted when the bank can pay for the whole shift")
+        void isGrantedWhenTheBankCanPay() {
+            workedShift(WEDNESDAY, 6, 960);                  // 480 in the bank
+            WorkShift thursday = shiftWithRequestedNd(THURSDAY);
+
+            allocator.allocate(employee.getId(), MONTH);
+
+            AbsenceRecord after = absenceRepository.findActiveForShift(thursday.getId()).get(0);
+            assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.ND);
+            assertThat(after.getCompensatedMinutes()).isEqualTo(FULL_SHIFT);
+        }
+
+        /** Warn but allow: the entry stands, and the pair says the hours were short. */
+        @Test
+        @DisplayName("stays NO when the hours are not there, and the entry is left alone")
+        void staysUnpaidWithoutTheHours() {
+            WorkShift thursday = shiftWithRequestedNd(THURSDAY);
+
+            allocator.allocate(employee.getId(), MONTH);
+
+            AbsenceRecord after = absenceRepository.findActiveForShift(thursday.getId()).get(0);
+            assertThat(after.getOutcome()).isEqualTo(AbsenceOutcome.NO);
+            assertThat(after.getRequestedOutcome()).isEqualTo(AbsenceOutcome.ND);
+            // The log somebody typed is still there — refused is not deleted.
+            assertThat(absenceLogWriter.findLog(thursday, AbsenceCategoryCodes.NON_WORKING_DAY))
+                    .isPresent();
+        }
+
+        @Test
+        @DisplayName("never gains a second ND log, granted or refused")
+        void neverDuplicatesTheLog() {
+            workedShift(WEDNESDAY, 6, 960);
+            WorkShift thursday = shiftWithRequestedNd(THURSDAY);
+
+            allocator.allocate(employee.getId(), MONTH);
+
+            assertThat(workLogRepository.findActiveLogsWithRefsForShift(thursday.getId()))
+                    .filteredOn(wl -> AbsenceCategoryCodes.NON_WORKING_DAY
+                            .equals(wl.getWorkCode().getCategoryNo()))
+                    .hasSize(1);
         }
     }
 

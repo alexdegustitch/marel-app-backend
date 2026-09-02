@@ -3,6 +3,8 @@ package com.aleksandarparipovic.marel_app.absence_record;
 import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationRepository;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
+import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import com.aleksandarparipovic.marel_app.work_log.WorkLog;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import com.aleksandarparipovic.marel_app.work_shift.WorkShift;
@@ -42,6 +44,7 @@ public class ShiftAbsenceSync {
     private final AbsenceCompensationRepository compensationRepository;
     private final WorkLogRepository workLogRepository;
     private final AbsenceLogWriter absenceLogWriter;
+    private final WorkCodeCategoryRepository categoryRepository;
     private final AbsencePayrollNotice payrollNotice;
     private final CurrentUserService currentUserService;
 
@@ -180,7 +183,28 @@ public class ShiftAbsenceSync {
                         + " Za deo smene koristite dugme \"Odsustva\" na toj smeni.");
         requireNothingElseOnTheShift(logs(shift));
 
+        /*
+         * THE ABSENCE IS AN UNPAID ONE. THE ND IS THE REQUEST.
+         *
+         * Built with the NO category, not the ND one the log carries. What this
+         * day IS, is an unpaid absence; what somebody ASKED for is a neradni dan,
+         * and that is the separate column — which is the whole reason the two are
+         * kept apart.
+         *
+         * Carrying ND as the category made the allocation skip it: it takes part
+         * only where the category is NO, so a requested day was never covered at
+         * all, whatever the bank held. It came back with outcome NULL — neither
+         * NO nor ND — which is the answer for an absence that takes no part.
+         */
+        WorkCodeCategory unpaidCategory = categoryRepository
+                .findInForceByCategoryNo(AbsenceCategoryCodes.UNPAID_ABSENCE, shift.getWorkDate())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Kategorija NO ne postoji za " + shift.getWorkDate() + "."));
+
         AbsenceRecord absence = newAbsenceFrom(shift, ndLog);
+        absence.setWorkCodeCategory(unpaidCategory);
+        absence.setNormMultiplierSnapshot(BigDecimal.valueOf(
+                unpaidCategory.getNormMultiplier() == null ? 0d : unpaidCategory.getNormMultiplier()));
         absence.setRequestedOutcome(AbsenceOutcome.ND);
         absence.setNdWorkLog(ndLog);
         absenceRepository.save(absence);
