@@ -38,6 +38,13 @@ public final class AbsenceDtos {
             int compensatedMinutes,
             /** NO, ND, or null for a paid absence that takes no part in the bank. */
             String outcome,
+            /**
+             * ND when somebody entered this day AS a neradni dan.
+             *
+             * <p>Read together with {@code outcome}: requested ND with outcome NO
+             * is the day that was asked for and the bank could not pay for.
+             */
+            String requestedOutcome,
             String note,
             List<CompensationSourceDto> compensatedBy) {
     }

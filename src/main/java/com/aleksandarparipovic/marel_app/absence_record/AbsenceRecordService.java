@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceC
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceCreateRequest;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.AbsenceRecordDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.CompensationSourceDto;
+import com.aleksandarparipovic.marel_app.absence_compensation.AbsenceCompensationAllocator;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.MonthlyAbsencesDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeBankDto;
 import com.aleksandarparipovic.marel_app.absence_record.dto.AbsenceDtos.OvertimeDayDto;
@@ -64,6 +65,7 @@ public class AbsenceRecordService {
     private final RecalcQueueService recalcQueueService;
     private final AbsenceLogWriter absenceLogWriter;
     private final AbsencePayrollNotice payrollNotice;
+    private final AbsenceCompensationAllocator allocator;
     private final WorkIntervalCalculator intervalCalculator;
     private final CurrentUserService currentUserService;
 
@@ -280,6 +282,46 @@ public class AbsenceRecordService {
      * had one, goes — that log asserts a day nobody has to work, and without the
      * absence behind it the assertion has nothing to stand on.
      */
+    /**
+     * Ask for this day to be bought back with overtime.
+     *
+     * <p>Records the REQUEST and lets the allocation answer it, rather than
+     * swapping the log here. The bank is a property of the whole month —
+     * covering this day may take hours another absence was going to use — and
+     * only the allocation can weigh that. It serves requested days first, so the
+     * answer is almost always yes; where it is not, the day stays NO and the
+     * screen says the employee did not have the hours.
+     *
+     * <p>Refused for part of a shift: a neradni dan is a day nobody was expected
+     * in, and half a day is not one.
+     */
+    @Transactional
+    public AbsenceRecordDto requestNonWorkingDay(Long id) {
+        AbsenceRecord absence = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Odsustvo ne postoji: " + id));
+        WorkShift shift = absence.getWorkShift();
+        refuseWhenMonthIsClosed(shift);
+
+        if (!AbsenceCategoryCodes.UNPAID_ABSENCE.equals(absence.getWorkCodeCategory().getCategoryNo())) {
+            throw new ConflictException("Samo neplaćeno odsustvo (NO) može postati neradni dan.");
+        }
+        if (!coversWholeShift(shift, absence.getStartAt(), absence.getEndAt())) {
+            throw new ConflictException(
+                    "Neradni dan važi za celu smenu. Ovo odsustvo pokriva samo deo nje.");
+        }
+
+        absence.setRequestedOutcome(AbsenceOutcome.ND);
+        repository.saveAndFlush(absence);
+
+        LocalDate workDate = shift.getWorkDate();
+        allocator.allocate(shift.getEmployee().getId(), YearMonth.from(workDate));
+        recalcQueueService.enqueueDailyJob(shift, "ND_REQUESTED");
+        payrollNotice.monthNeedsRepricing(shift.getEmployee().getId(), workDate);
+
+        AbsenceRecord after = repository.findById(id).orElseThrow();
+        return withCompensations(List.of(after)).get(0);
+    }
+
     @Transactional
     public void archive(Long id) {
         AbsenceRecord absence = repository.findById(id)
@@ -459,6 +501,7 @@ public class AbsenceRecordService {
                 absence.getAbsenceMinutes() == null ? 0 : absence.getAbsenceMinutes(),
                 absence.getCompensatedMinutes() == null ? 0 : absence.getCompensatedMinutes(),
                 absence.getOutcome() == null ? null : absence.getOutcome().name(),
+                absence.getRequestedOutcome() == null ? null : absence.getRequestedOutcome().name(),
                 absence.getNote(),
                 sources);
     }

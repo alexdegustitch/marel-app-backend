@@ -60,6 +60,12 @@ public class AbsenceRecordController {
     }
 
     /** Withdraws an absence. Archived, not deleted — see the service. */
+    /** Ask for this day to be bought back; the allocation answers. */
+    @PostMapping("/{id}/request-non-working-day")
+    public ResponseEntity<AbsenceRecordDto> requestNonWorkingDay(@PathVariable Long id) {
+        return ResponseEntity.ok(service.requestNonWorkingDay(id));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> archive(@PathVariable Long id) {
         service.archive(id);
