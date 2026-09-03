@@ -4,7 +4,11 @@ import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecord;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordDto;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordEmployeeInfo;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordInfo;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMonthAggregate;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordRecentDto;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordSearchHit;
 import com.aleksandarparipovic.marel_app.employee_record.dto.RecentEmployeeRecordDto;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -134,6 +138,124 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         """, nativeQuery = true)
     List<RecentEmployeeRecordDto> findRecentByEmployeeId(@Param("employeeId") Long employeeId, @Param("size") int size);
 
+
+    /**
+     * Twelve months of a year summed up, one row per month that holds a karton.
+     *
+     * <p>One grouped query over the year's kartoni: how many, for how many
+     * workers, how many shift minutes their monthly reports add up to, the plain
+     * average of the approved performance rate over the ones that have it, and
+     * when anybody last touched a karton of the month. Months with nothing in
+     * them do not appear; the service fills them in.
+     *
+     * <p>The record count is DISTINCT so a karton with more than one monthly
+     * report row (there should be one, but the schema allows a re-built period)
+     * is still one karton.
+     */
+    @Query(value = """
+        WITH recs AS (
+            SELECT er.id,
+                   er.employee_id,
+                   EXTRACT(MONTH FROM er.start_date)::int AS month
+            FROM employee_records er
+            WHERE er.start_date >= :yearStart
+              AND er.start_date <  :yearEnd
+        ),
+        totals AS (
+            SELECT r.month,
+                   COUNT(DISTINCT r.id)                     AS record_count,
+                   COUNT(DISTINCT r.employee_id)            AS employee_count,
+                   COALESCE(SUM(mr.total_shift_minutes), 0) AS total_shift_minutes,
+                   AVG(mr.approved_performance_rate)        AS avg_performance_rate
+            FROM recs r
+            LEFT JOIN monthly_reports mr
+                   ON mr.employee_record_id = r.id
+                  AND mr.archived_at IS NULL
+            GROUP BY r.month
+        ),
+        activity AS (
+            SELECT r.month, MAX(eru.last_activity_at) AS last_activity_at
+            FROM recs r
+            JOIN employee_record_updates eru ON eru.employee_record_id = r.id
+            GROUP BY r.month
+        )
+        SELECT t.month                AS month,
+               t.record_count         AS recordCount,
+               t.employee_count       AS employeeCount,
+               t.total_shift_minutes  AS totalShiftMinutes,
+               t.avg_performance_rate AS avgPerformanceRate,
+               a.last_activity_at     AS lastActivityAt
+        FROM totals t
+        LEFT JOIN activity a ON a.month = t.month
+        ORDER BY t.month
+        """, nativeQuery = true)
+    List<EmployeeRecordMonthAggregate> aggregateMonthsOfYear(@Param("yearStart") LocalDate yearStart,
+                                                             @Param("yearEnd") LocalDate yearEnd);
+
+    /**
+     * The kartoni one user last had open, at most {@code perMonth} for each
+     * month of the year, newest first within the month.
+     *
+     * <p>The same trail {@link #findLastThreePerMonthForSupervisor} reads, ranked
+     * per month in one pass instead of once per month.
+     */
+    @Query(value = """
+        WITH mine AS (
+            SELECT er.id                                  AS record_id,
+                   er.employee_id,
+                   EXTRACT(MONTH FROM er.start_date)::int AS month,
+                   eru.last_activity_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY EXTRACT(MONTH FROM er.start_date)
+                       ORDER BY eru.last_activity_at DESC, er.id DESC
+                   ) AS rn
+            FROM employee_record_updates eru
+            JOIN employee_records er ON er.id = eru.employee_record_id
+            WHERE eru.user_id = :userId
+              AND er.start_date >= :yearStart
+              AND er.start_date <  :yearEnd
+        )
+        SELECT m.month            AS month,
+               m.record_id        AS employeeRecordId,
+               e.id               AS employeeId,
+               e.full_name        AS employeeName,
+               m.last_activity_at AS updateTime
+        FROM mine m
+        JOIN employees e ON e.id = m.employee_id
+        WHERE m.rn <= :perMonth
+        ORDER BY m.month, m.last_activity_at DESC
+        """, nativeQuery = true)
+    List<EmployeeRecordRecentDto> findRecentPerMonthForUser(@Param("userId") Long userId,
+                                                            @Param("yearStart") LocalDate yearStart,
+                                                            @Param("yearEnd") LocalDate yearEnd,
+                                                            @Param("perMonth") int perMonth);
+
+    /**
+     * The kartoni of one year whose worker's name or number contains a fragment.
+     *
+     * <p>Spelled {@code lower(column) LIKE} rather than ILIKE on purpose: that is
+     * the expression the trigram indexes from V31 are built on, and an index is
+     * only used by a query that spells its expression the same way. The pattern
+     * arrives already lower-cased and escaped (see {@code LikePattern}).
+     */
+    @Query(value = """
+        SELECT er.id                                  AS employeeRecordId,
+               e.id                                   AS employeeId,
+               e.full_name                            AS employeeName,
+               e.employee_no                          AS employeeNo,
+               EXTRACT(MONTH FROM er.start_date)::int AS month,
+               EXTRACT(YEAR  FROM er.start_date)::int AS year
+        FROM employee_records er
+        JOIN employees e ON e.id = er.employee_id
+        WHERE er.start_date >= :yearStart
+          AND er.start_date <  :yearEnd
+          AND (lower(e.full_name)   LIKE :pattern
+            OR lower(e.employee_no) LIKE :pattern)
+        ORDER BY er.start_date DESC, e.full_name ASC, er.id ASC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<EmployeeRecordSearchHit> searchInYear(@Param("yearStart") LocalDate yearStart,
+                                               @Param("yearEnd") LocalDate yearEnd,
+                                               @Param("pattern") String pattern,
+                                               @Param("limit") int limit);
 }
-
-

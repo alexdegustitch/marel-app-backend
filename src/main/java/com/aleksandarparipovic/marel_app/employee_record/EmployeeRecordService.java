@@ -1,15 +1,21 @@
 package com.aleksandarparipovic.marel_app.employee_record;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.common.LikePattern;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordCreateResponse;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordDto;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordEmployeeInfo;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordInfo;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMonthAggregate;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordRecentDto;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordSearchHit;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordYearOverview;
 import com.aleksandarparipovic.marel_app.employee_record.dto.RecentEmployeeRecordDto;
 import com.aleksandarparipovic.marel_app.employee_record.repository.EmployeeRecordRepository;
 import com.aleksandarparipovic.marel_app.payroll_run.event.PayrollMonthInitEvent;
+
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -24,7 +30,9 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -142,5 +150,87 @@ public class EmployeeRecordService {
     private void publishInitEvent(int year, int month, List<Long> employeeRecordIds) {
         Long userId = currentUserService.getCurrentUserId();
         eventPublisher.publishEvent(new PayrollMonthInitEvent(year, month, employeeRecordIds, userId));
+    }
+
+
+    // ── The year view ────────────────────────────────────────────────────────
+
+    /** How many of the caller's recently opened kartoni each month lists. */
+    private static final int RECENT_PER_MONTH = 3;
+
+    /** The widest year the view will ask for; anything else is a typo, not a year. */
+    private static final int MIN_YEAR = 2000;
+    private static final int MAX_YEAR = 2100;
+
+    /**
+     * A whole year of kartoni in one answer — see {@link EmployeeRecordYearOverview}.
+     *
+     * <p>Two bounded queries: the twelve totals, and the caller's own recent
+     * kartoni ranked per month. Months the year does not hold are filled in as
+     * empty so the screen always receives twelve.
+     */
+    @Transactional(readOnly = true)
+    public EmployeeRecordYearOverview getYearOverview(int year) {
+        requireSensibleYear(year);
+        LocalDate yearStart = LocalDate.of(year, 1, 1);
+        LocalDate yearEnd = yearStart.plusYears(1);
+
+        Map<Integer, EmployeeRecordMonthAggregate> totals = new HashMap<>();
+        for (EmployeeRecordMonthAggregate row : employeeRecordRepository.aggregateMonthsOfYear(yearStart, yearEnd)) {
+            totals.put(row.getMonth(), row);
+        }
+
+        Map<Integer, List<EmployeeRecordYearOverview.RecentRecord>> recent = new HashMap<>();
+        Long userId = currentUserService.getCurrentUserId();
+        if (userId != null) {
+            for (EmployeeRecordRecentDto row : employeeRecordRepository
+                    .findRecentPerMonthForUser(userId, yearStart, yearEnd, RECENT_PER_MONTH)) {
+                recent.computeIfAbsent(row.getMonth(), m -> new ArrayList<>())
+                        .add(new EmployeeRecordYearOverview.RecentRecord(
+                                row.getEmployeeRecordId(), row.getEmployeeId(), row.getEmployeeName(), row.getUpdateTime()));
+            }
+        }
+
+        List<EmployeeRecordYearOverview.MonthOverview> months = new ArrayList<>(12);
+        for (int month = 1; month <= 12; month++) {
+            EmployeeRecordMonthAggregate t = totals.get(month);
+            List<EmployeeRecordYearOverview.RecentRecord> r = List.copyOf(recent.getOrDefault(month, List.of()));
+            months.add(t == null
+                    ? new EmployeeRecordYearOverview.MonthOverview(month, 0, 0, 0, null, null, r)
+                    : new EmployeeRecordYearOverview.MonthOverview(
+                            month,
+                            t.getRecordCount(),
+                            t.getEmployeeCount(),
+                            t.getTotalShiftMinutes(),
+                            t.getAvgPerformanceRate(),
+                            t.getLastActivityAt(),
+                            r));
+        }
+        return new EmployeeRecordYearOverview(year, months);
+    }
+
+    /**
+     * The kartoni of one year found by a fragment of a worker's name or number.
+     *
+     * <p>Empty for a blank fragment rather than everything: the search box is a
+     * way in, not a listing. The size is capped so a client cannot turn it into
+     * one either.
+     */
+    @Transactional(readOnly = true)
+    public List<EmployeeRecordSearchHit> searchInYear(int year, String query, int size) {
+        requireSensibleYear(year);
+        String fragment = query == null ? "" : query.strip();
+        if (fragment.isEmpty()) {
+            return List.of();
+        }
+        LocalDate yearStart = LocalDate.of(year, 1, 1);
+        return employeeRecordRepository.searchInYear(
+                yearStart, yearStart.plusYears(1), LikePattern.contains(fragment), Math.max(1, Math.min(size, 25)));
+    }
+
+    private static void requireSensibleYear(int year) {
+        if (year < MIN_YEAR || year > MAX_YEAR) {
+            throw new IllegalArgumentException("year must be between " + MIN_YEAR + " and " + MAX_YEAR + ": " + year);
+        }
     }
 }
