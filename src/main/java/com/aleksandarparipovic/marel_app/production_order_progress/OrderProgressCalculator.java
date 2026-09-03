@@ -198,6 +198,7 @@ public final class OrderProgressCalculator {
 
             long whole = 0;
             String bottleneck = null;
+            Long bottleneckId = null;
             if (!operations.isEmpty()) {
                 whole = Long.MAX_VALUE;
                 for (OperationProgress operation : operations) {
@@ -205,6 +206,7 @@ public final class OrderProgressCalculator {
                     if (supported < whole) {
                         whole = supported;
                         bottleneck = operation.operationName();
+                        bottleneckId = operation.operationId();
                     }
                 }
                 // A product cannot be finished more times than it was ordered.
@@ -212,6 +214,7 @@ public final class OrderProgressCalculator {
             }
             if (whole >= requiredProducts) {
                 bottleneck = null;
+                bottleneckId = null;
             }
 
             return new ProductProgress(
@@ -221,6 +224,7 @@ public final class OrderProgressCalculator {
                     requiredProducts,
                     operations.isEmpty() ? 0 : whole,
                     operations.isEmpty() ? null : percent(whole, requiredProducts),
+                    bottleneckId,
                     bottleneck,
                     operations);
         }

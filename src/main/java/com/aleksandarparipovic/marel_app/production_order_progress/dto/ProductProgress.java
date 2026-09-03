@@ -28,7 +28,12 @@ public record ProductProgress(
         long wholeProductsDone,
         /** wholeProductsDone ÷ requiredProducts, never above 100. */
         BigDecimal percent,
-        /** Which operation is holding the product back, or null when it is finished. */
+        /**
+         * Which operation is holding the product back, or null when it is
+         * finished. The id travels with the name so a screen can link to the
+         * operation rather than only naming it.
+         */
+        Long bottleneckOperationId,
         String bottleneckOperationName,
         List<OperationProgress> operations
 ) {

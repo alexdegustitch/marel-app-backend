@@ -48,6 +48,8 @@ class OrderProgressCalculatorTest {
         assertThat(product.requiredProducts()).isEqualTo(10);
         assertThat(product.percent()).isEqualByComparingTo("20.0");
         assertThat(product.bottleneckOperationName()).isEqualTo("x1");
+        // The id travels with the name so the screen can link to the operation.
+        assertThat(product.bottleneckOperationId()).isEqualTo(1L);
     }
 
     @Test
@@ -162,6 +164,7 @@ class OrderProgressCalculatorTest {
         assertThat(product.wholeProductsDone()).isEqualTo(10);
         assertThat(product.percent()).isEqualByComparingTo("100.0");
         assertThat(product.bottleneckOperationName()).isNull();
+        assertThat(product.bottleneckOperationId()).isNull();
         assertThat(progress.percent()).isEqualByComparingTo("100.0");
     }
 
@@ -174,6 +177,7 @@ class OrderProgressCalculatorTest {
 
         assertThat(progress.products().get(0).wholeProductsDone()).isZero();
         assertThat(progress.products().get(0).bottleneckOperationName()).isEqualTo("x2");
+        assertThat(progress.products().get(0).bottleneckOperationId()).isEqualTo(2L);
         // Half the work is genuinely done, and the order says so.
         assertThat(progress.percent()).isEqualByComparingTo("50.0");
     }
