@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.operation;
 
+import com.aleksandarparipovic.marel_app.production_order_progress.OrderProgressService;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormActivationDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormVersionCreateRequest;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormVersionDto;
@@ -57,6 +58,7 @@ public class OperationDetailService {
     private final SampleOrderLineItemRepository sampleOrderLineItemRepository;
     private final WorkLogRepository workLogRepository;
     private final UserRepository userRepository;
+    private final OrderProgressService orderProgressService;
 
     // ── Norm history ────────────────────────────────────────────────────────
 
@@ -330,8 +332,13 @@ public class OperationDetailService {
      *
      * <p>An operation belongs to a product, and a production order carries a
      * quantity of that product — so the pieces required are that quantity times
-     * how many of this operation one product needs. When the operation does not
-     * say how many that is, the requirement is left null rather than guessed.
+     * how many of this operation one product needs.
+     *
+     * <p>How many that is comes from the ORDER'S agreed scope where one exists,
+     * and from the catalogue otherwise. The scope is the better answer and the
+     * whole reason it is written down: it is the floor saying what THIS order's
+     * variant actually needs, which is not always what the catalogue lists. When
+     * neither can say, the requirement stays null rather than being guessed.
      */
     @Transactional(readOnly = true)
     public List<OperationOrderUsageRow> getProductionOrders(Long operationId) {
@@ -342,20 +349,27 @@ public class OperationDetailService {
         workLogRepository.sumOutputPerOrderForOperation(operationId)
                 .forEach(row -> doneByOrder.put(row.getOrderId(), row.getQuantity()));
 
+        Map<Long, Long> agreed = orderProgressService.agreedRequirementForOperation(operationId);
+
         return productionOrderLineItemRepository
                 .findOrderRowsByProductId(operation.getProduct().getId())
                 .stream()
-                .map(row -> new OperationOrderUsageRow(
-                        row.orderId(),
-                        row.code(),
-                        row.name(),
-                        row.status(),
-                        row.orderDate(),
-                        row.deliveryDeadline(),
-                        row.quantity(),
-                        requiredPieces(row.quantity(), unitsPerProduct),
-                        Math.toIntExact(doneByOrder.getOrDefault(row.orderId(), 0L))
-                ))
+                .map(row -> {
+                    Long fromScope = agreed.get(row.orderId());
+                    return new OperationOrderUsageRow(
+                            row.orderId(),
+                            row.code(),
+                            row.name(),
+                            row.status(),
+                            row.orderDate(),
+                            row.deliveryDeadline(),
+                            row.quantity(),
+                            fromScope != null
+                                    ? Math.toIntExact(fromScope)
+                                    : requiredPieces(row.quantity(), unitsPerProduct),
+                            Math.toIntExact(doneByOrder.getOrDefault(row.orderId(), 0L)),
+                            fromScope != null);
+                })
                 .toList();
     }
 
