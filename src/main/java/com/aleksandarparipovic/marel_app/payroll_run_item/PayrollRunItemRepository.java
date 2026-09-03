@@ -1,8 +1,12 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item;
 
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollMonthAggregate;
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRecentDto;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunInfoDto;
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSearchRow;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -308,4 +312,119 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
         ORDER BY pri.id
         """)
     List<Long> findAllRecalculableIds();
+
+
+    /**
+     * Twelve months of obračuni summed up, one row per month that holds any.
+     *
+     * <p>Counts by status, the two sums the payroll list shows per row, and when
+     * anybody last touched an item of the month. Archived items are left out,
+     * exactly as the paged list leaves them out, so the two agree. Nothing here
+     * is masked: the SERVICE decides what the caller may see.
+     */
+    @Query(value = """
+        WITH items AS (
+            SELECT pri.id,
+                   pri.status,
+                   pri.net_payable_amount,
+                   pri.total_net_earnings,
+                   pr.report_month AS month
+            FROM payroll_run_items pri
+            JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+            WHERE pr.report_year = :year
+              AND pri.archived_at IS NULL
+        ),
+        totals AS (
+            SELECT i.month,
+                   COUNT(*)                                      AS item_count,
+                   COUNT(*) FILTER (WHERE i.status = 'DRAFT')    AS draft_count,
+                   COUNT(*) FILTER (WHERE i.status = 'APPROVED') AS approved_count,
+                   COUNT(*) FILTER (WHERE i.status = 'LOCKED')   AS locked_count,
+                   SUM(i.net_payable_amount)                     AS total_net_payable,
+                   SUM(i.total_net_earnings)                     AS total_net_earnings
+            FROM items i
+            GROUP BY i.month
+        ),
+        activity AS (
+            SELECT i.month, MAX(u.last_activity_at) AS last_activity_at
+            FROM items i
+            JOIN employee_payroll_run_item_updates u ON u.payroll_run_item_id = i.id
+            GROUP BY i.month
+        )
+        SELECT t.month              AS month,
+               t.item_count         AS itemCount,
+               t.draft_count        AS draftCount,
+               t.approved_count     AS approvedCount,
+               t.locked_count       AS lockedCount,
+               t.total_net_payable  AS totalNetPayable,
+               t.total_net_earnings AS totalNetEarnings,
+               a.last_activity_at   AS lastActivityAt
+        FROM totals t
+        LEFT JOIN activity a ON a.month = t.month
+        ORDER BY t.month
+        """, nativeQuery = true)
+    List<PayrollMonthAggregate> aggregateMonthsOfYear(@Param("year") int year);
+
+    /**
+     * The obračuni one user last had open, at most {@code perMonth} per month of
+     * the year — {@link #findItemLastActivityByUserAndMonth} for the whole year
+     * in one pass.
+     */
+    @Query(value = """
+        WITH mine AS (
+            SELECT pri.monthly_report_id,
+                   pri.employee_id,
+                   pr.report_month AS month,
+                   u.last_activity_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY pr.report_month
+                       ORDER BY u.last_activity_at DESC, pri.id DESC
+                   ) AS rn
+            FROM employee_payroll_run_item_updates u
+            JOIN payroll_run_items pri ON pri.id = u.payroll_run_item_id
+            JOIN payroll_runs pr       ON pr.id  = pri.payroll_run_id
+            WHERE u.user_id = :userId
+              AND pr.report_year = :year
+              AND pri.archived_at IS NULL
+        )
+        SELECT m.month             AS month,
+               m.monthly_report_id AS monthlyReportId,
+               e.id                AS employeeId,
+               e.full_name         AS employeeName,
+               m.last_activity_at  AS updateTime
+        FROM mine m
+        JOIN employees e ON e.id = m.employee_id
+        WHERE m.rn <= :perMonth
+        ORDER BY m.month, m.last_activity_at DESC
+        """, nativeQuery = true)
+    List<PayrollRecentDto> findRecentPerMonthForUser(@Param("userId") Long userId,
+                                                     @Param("year") int year,
+                                                     @Param("perMonth") int perMonth);
+
+    /**
+     * The obračuni of one year whose worker's name or number contains a fragment.
+     * Same {@code lower(column) LIKE} spelling as the karton search, for the same
+     * trigram indexes. The status is raw here; the service masks it.
+     */
+    @Query(value = """
+        SELECT pri.monthly_report_id AS monthlyReportId,
+               e.id                  AS employeeId,
+               e.full_name           AS employeeName,
+               e.employee_no         AS employeeNo,
+               pr.report_month       AS month,
+               pr.report_year        AS year,
+               pri.status            AS status
+        FROM payroll_run_items pri
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        JOIN employees e     ON e.id  = pri.employee_id
+        WHERE pr.report_year = :year
+          AND pri.archived_at IS NULL
+          AND (lower(e.full_name)   LIKE :pattern
+            OR lower(e.employee_no) LIKE :pattern)
+        ORDER BY pr.report_month DESC, e.full_name ASC, pri.id ASC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<PayrollRunSearchRow> searchInYear(@Param("year") int year,
+                                           @Param("pattern") String pattern,
+                                           @Param("limit") int limit);
 }

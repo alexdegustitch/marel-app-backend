@@ -17,6 +17,7 @@ import com.aleksandarparipovic.marel_app.employee.dto.ArchiveEmployeeRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeBasicInfoDto;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeCreateRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDetailDto;
+import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDirectorySummary;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeDto;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeeEditRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeePatchRequest;
@@ -250,6 +251,7 @@ public class EmployeeService {
                 .build());
     }
 
+    @Transactional(readOnly = true)
     public Page<EmployeeWithBonusView> search(SearchRequest state) {
 
         Specification<Employee> spec =
@@ -261,7 +263,31 @@ public class EmployeeService {
         return employeeRowEnricher.enrich(repository.searchWithBonus(spec, pageable));
     }
 
+    /**
+     * The figures the directory shows above its table, for the same filters
+     * the table is showing. A scheme filter in the request is dropped on
+     * purpose: the tiles say how many people are on EACH scheme, which is only
+     * an answer if the question was not already narrowed to one of them.
+     */
+    @Transactional(readOnly = true)
+    public EmployeeDirectorySummary directorySummary(SearchRequest request) {
+        SearchRequest withoutScheme = new SearchRequest();
+        withoutScheme.setGlobalSearch(request == null ? null : request.getGlobalSearch());
+        if (request != null && request.getFilters() != null) {
+            withoutScheme.setFilters(request.getFilters().stream()
+                    .filter(f -> f == null || !"schemeCode".equals(f.getField()))
+                    .toList());
+        }
+        Specification<Employee> spec = EmployeeSpecifications.fromSearchRequest(withoutScheme);
+        return repository.directorySummary(spec, LocalDate.now());
+    }
 
+
+    // Read-only, and not only as documentation: the enricher loads value-history
+    // ENTITIES for every row on the page, and outside a read-only transaction
+    // Hibernate dirty-checks each of them at the end of the request for a write
+    // that never happens.
+    @Transactional(readOnly = true)
     public <T> Page<T> searchAll(SearchRequest request, Class<T> projectionType) {
         Specification<Employee> spec = EmployeeSpecifications.fromSearchRequest(request);
         Pageable pageable = PageableBuilder.from(request);

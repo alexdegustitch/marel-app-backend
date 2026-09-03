@@ -3,7 +3,10 @@ package com.aleksandarparipovic.marel_app.payroll_run;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunInfoDto;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunResponse;
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSearchHit;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSummaryDto;
+import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollYearOverview;
+
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -30,6 +33,29 @@ public class PayrollRunController {
     @GetMapping("/year/{year}")
     public ResponseEntity<List<PayrollRunSummaryDto>> getSummariesByYear(@PathVariable int year) {
         return ResponseEntity.ok(payrollRunService.getSummariesByYear(year));
+    }
+
+    /**
+     * GET /api/payroll-runs/year-overview?year= — the whole year in one answer:
+     * twelve months, their counts by status, their sums, and the obračuni the
+     * caller last had open. Sums and the locked count are withheld from anyone
+     * without payroll access, in the response.
+     */
+    @GetMapping("/year-overview")
+    public ResponseEntity<PayrollYearOverview> getYearOverview(@RequestParam int year) {
+        return ResponseEntity.ok(payrollRunService.getYearOverview(year));
+    }
+
+    /**
+     * GET /api/payroll-runs/search?year=&q=&size= — the obračuni of one year
+     * whose worker's name or number contains {@code q}.
+     */
+    @GetMapping("/search")
+    public ResponseEntity<List<PayrollRunSearchHit>> search(
+            @RequestParam int year,
+            @RequestParam String q,
+            @RequestParam(defaultValue = "8") int size) {
+        return ResponseEntity.ok(payrollRunService.searchInYear(year, q, size));
     }
 
     /** GET /api/payroll-runs/last-activity?year=&month= — last 3 items touched by current user */

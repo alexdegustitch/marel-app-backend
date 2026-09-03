@@ -48,17 +48,42 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     List<WorkShiftDto> findLastThreePerMonthForSupervisor(Long supervisorId, int year);*/
 
     /**
-     * Years that actually hold kartoni.
+     * Years that actually hold kartoni, newest first.
      *
      * <p>The Kartoni year view offered a fixed list starting at 2020, so years
      * without a single shift were still shown as empty sections. Archived
      * shifts do not count as a reason to keep a year on the page.
+     *
+     * <p>Written as a recursive "loose index scan" rather than {@code SELECT
+     * DISTINCT EXTRACT(YEAR ...)}: DISTINCT over an expression reads every shift
+     * ever written to name six years, and this table is the largest in the
+     * database. Each step here asks only for the newest shift older than the
+     * year just found — one backward probe of the {@code start_at} index — so
+     * the cost is a handful of probes however many shifts there are. Postgres
+     * forbids an aggregate in the recursive term, which is why each step is an
+     * {@code ORDER BY ... LIMIT 1} subquery rather than {@code MAX}.
      */
     @Query(value = """
-        SELECT DISTINCT EXTRACT(YEAR FROM ws.start_at)::int AS year
-        FROM work_shifts ws
-        WHERE ws.archived_at IS NULL
-        ORDER BY year DESC
+        WITH RECURSIVE years AS (
+            SELECT (SELECT EXTRACT(YEAR FROM ws.start_at)::int
+                    FROM work_shifts ws
+                    WHERE ws.archived_at IS NULL
+                    ORDER BY ws.start_at DESC
+                    LIMIT 1) AS year
+            UNION ALL
+            SELECT (SELECT EXTRACT(YEAR FROM ws.start_at)::int
+                    FROM work_shifts ws
+                    WHERE ws.archived_at IS NULL
+                      AND ws.start_at < make_timestamptz(y.year, 1, 1, 0, 0, 0)
+                    ORDER BY ws.start_at DESC
+                    LIMIT 1)
+            FROM years y
+            WHERE y.year IS NOT NULL
+        )
+        SELECT y.year
+        FROM years y
+        WHERE y.year IS NOT NULL
+        ORDER BY y.year DESC
         """, nativeQuery = true)
     List<Integer> findYearsWithShifts();
 
