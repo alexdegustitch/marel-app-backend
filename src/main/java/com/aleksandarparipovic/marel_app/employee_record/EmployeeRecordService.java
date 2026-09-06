@@ -10,7 +10,9 @@ import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordEmplo
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordInfo;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMonthAggregate;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordRecentDto;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMissing;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordSearchHit;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeWithoutRecord;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordYearOverview;
 import com.aleksandarparipovic.marel_app.employee_record.dto.RecentEmployeeRecordDto;
 import com.aleksandarparipovic.marel_app.employee_record.repository.EmployeeRecordRepository;
@@ -226,6 +228,37 @@ public class EmployeeRecordService {
         LocalDate yearStart = LocalDate.of(year, 1, 1);
         return employeeRecordRepository.searchInYear(
                 yearStart, yearStart.plusYears(1), LikePattern.contains(fragment), Math.max(1, Math.min(size, 25)));
+    }
+
+    /** Widest list of missing workers a caller may ask for in one answer. */
+    private static final int MAX_MISSING_ROWS = 200;
+
+    /**
+     * The active workers a month has no karton for.
+     *
+     * <p>Two bounded queries against one definition: the count, which is what
+     * the month screen states and exactly what the create button would write,
+     * and a capped list of who they are. A month nobody has created kartoni for
+     * yet would otherwise answer with the whole register.
+     *
+     * <p>{@code globalSearch} is the month list's own search, applied here too,
+     * so a search never leaves rows on screen that do not match it.
+     */
+    @Transactional(readOnly = true)
+    public EmployeeRecordMissing getEmployeesWithoutRecord(int year, int month, String globalSearch, int limit) {
+        requireSensibleYear(year);
+        LocalDate monthStart = YearMonth.of(year, month).atDay(1);
+
+        String fragment = globalSearch == null ? "" : globalSearch.strip();
+        String pattern = fragment.isEmpty() ? "%" : LikePattern.contains(fragment);
+
+        long total = employeeRecordRepository.countActiveWithoutRecord(monthStart, pattern);
+        List<EmployeeWithoutRecord> rows = total == 0
+                ? List.of()
+                : employeeRecordRepository.findActiveWithoutRecord(
+                        monthStart, pattern, Math.max(1, Math.min(limit, MAX_MISSING_ROWS)));
+
+        return new EmployeeRecordMissing(year, month, total, rows);
     }
 
     private static void requireSensibleYear(int year) {

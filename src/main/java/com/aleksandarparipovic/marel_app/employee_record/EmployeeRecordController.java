@@ -58,6 +58,20 @@ public class EmployeeRecordController {
         return ResponseEntity.ok(service.getEmployeeRecordsByYearAndMonth(year, month, globalSearch, pageable));
     }
 
+    /**
+     * GET /api/employee-records/missing?year=&month=&globalSearch=&limit= — the
+     * active workers this month has no karton for: how many, and who the first
+     * of them are. The same count the create button would act on.
+     */
+    @GetMapping("/missing")
+    public ResponseEntity<EmployeeRecordMissing> getEmployeesWithoutRecord(
+            @RequestParam Integer year,
+            @RequestParam Integer month,
+            @RequestParam(required = false) String globalSearch,
+            @RequestParam(defaultValue = "50") int limit) {
+        return ResponseEntity.ok(service.getEmployeesWithoutRecord(year, month, globalSearch, limit));
+    }
+
     @GetMapping("/exists")
     public ResponseEntity<Boolean> existsForEmployeeAndMonth(
             @RequestParam Long employeeId,

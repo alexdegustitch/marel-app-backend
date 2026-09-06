@@ -7,6 +7,7 @@ import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordInfo;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMonthAggregate;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordRecentDto;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordSearchHit;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeWithoutRecord;
 import com.aleksandarparipovic.marel_app.employee_record.dto.RecentEmployeeRecordDto;
 
 import org.springframework.data.domain.Page;
@@ -229,6 +230,64 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
                                                             @Param("yearStart") LocalDate yearStart,
                                                             @Param("yearEnd") LocalDate yearEnd,
                                                             @Param("perMonth") int perMonth);
+
+    /**
+     * How many active workers have no karton for a month.
+     *
+     * <p>The definition of "active" is the one
+     * {@code createEmployeeRecordsForMonth} creates by — {@code is_active} and
+     * not archived — so this count and what the create button would actually
+     * write can never disagree.
+     *
+     * <p>{@code :pattern} is a LIKE pattern that is {@code %} when nothing was
+     * searched for, so the query has one shape rather than two.
+     */
+    @Query(value = """
+        SELECT COUNT(*)
+        FROM employees e
+        WHERE e.is_active = true
+          AND e.archived_at IS NULL
+          AND (lower(e.full_name) LIKE :pattern OR lower(e.employee_no) LIKE :pattern)
+          AND NOT EXISTS (
+                SELECT 1
+                FROM employee_records er
+                WHERE er.employee_id = e.id
+                  AND er.start_date = :monthStart)
+        """, nativeQuery = true)
+    long countActiveWithoutRecord(@Param("monthStart") LocalDate monthStart,
+                                  @Param("pattern") String pattern);
+
+    /** Those same workers, by name, capped — see {@link #countActiveWithoutRecord}. */
+    @Query(value = """
+        SELECT e.id          AS employeeId,
+               e.full_name   AS employeeName,
+               e.employee_no AS employeeNo,
+               d.name        AS employeeDepartment,
+               bc.category_no AS employeeBonus,
+               (SELECT cs.code FROM employee_compensation_scheme_history h
+                         JOIN compensation_schemes cs ON cs.id = h.compensation_scheme_id
+                        WHERE h.employee_id = e.id AND h.valid_until IS NULL AND h.archived_at IS NULL
+                        LIMIT 1) AS employeeSchemeCode
+        FROM employees e
+        JOIN departments d ON d.id = e.department_id
+        LEFT JOIN employees_bonus_history eb
+               ON eb.employee_id = e.id
+              AND eb.end_date IS NULL
+        LEFT JOIN bonus_categories bc ON bc.id = eb.bonus_category_id
+        WHERE e.is_active = true
+          AND e.archived_at IS NULL
+          AND (lower(e.full_name) LIKE :pattern OR lower(e.employee_no) LIKE :pattern)
+          AND NOT EXISTS (
+                SELECT 1
+                FROM employee_records er
+                WHERE er.employee_id = e.id
+                  AND er.start_date = :monthStart)
+        ORDER BY e.full_name ASC, e.id ASC
+        LIMIT :limit
+        """, nativeQuery = true)
+    List<EmployeeWithoutRecord> findActiveWithoutRecord(@Param("monthStart") LocalDate monthStart,
+                                                        @Param("pattern") String pattern,
+                                                        @Param("limit") int limit);
 
     /**
      * The kartoni of one year whose worker's name or number contains a fragment.
