@@ -109,6 +109,17 @@ public class AppSettingService {
     public List<AppSettingHistoryDto> getAllHistory() {
         List<AppSetting> all = appSettingRepository.findByArchivedAtIsNullOrderBySettingKeyAscValidFromDesc();
 
+        // Who entered each version, per the audit trail. Absent entries stay null.
+        Map<Long, String> authors = all.isEmpty()
+                ? Map.of()
+                : appSettingRepository.findInsertAuthors(
+                        all.stream().map(AppSetting::getId).toList())
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> ((Number) row[0]).longValue(),
+                        row -> (String) row[1],
+                        (a, b) -> a));
+
         // group by settingKey preserving order (already sorted by key asc)
         Map<String, List<AppSetting>> byKey = all.stream()
                 .collect(Collectors.groupingBy(AppSetting::getSettingKey));
@@ -123,7 +134,11 @@ public class AppSettingService {
                             .orElseThrow();
                     List<AppSettingResponse> history = records.stream()
                             .sorted(Comparator.comparing(AppSetting::getValidFrom).reversed())
-                            .map(AppSettingResponse::new)
+                            .map(s -> {
+                                AppSettingResponse r = new AppSettingResponse(s);
+                                r.setCreatedByName(authors.get(s.getId()));
+                                return r;
+                            })
                             .toList();
                     return new AppSettingHistoryDto(
                             latest.getSettingKey(),

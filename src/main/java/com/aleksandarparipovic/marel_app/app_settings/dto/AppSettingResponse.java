@@ -21,6 +21,10 @@ public class AppSettingResponse {
     private final BigDecimal settingValueNumeric;
     private final Boolean settingValueBoolean;
     private final String unit;
+    private final OffsetDateTime createdAt;
+
+    /** Who inserted this version, resolved from the audit trail when it knows. */
+    private String createdByName;
 
     public AppSettingResponse(AppSetting s) {
         this.id = s.getId();
@@ -35,5 +39,10 @@ public class AppSettingResponse {
         this.settingValueNumeric = s.getSettingValueNumeric();
         this.settingValueBoolean = s.getSettingValueBoolean();
         this.unit = s.getUnit();
+        this.createdAt = s.getCreatedAt();
+    }
+
+    public void setCreatedByName(String createdByName) {
+        this.createdByName = createdByName;
     }
 }
