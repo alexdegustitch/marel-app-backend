@@ -13,7 +13,11 @@ public class WorkCalendarDayMapper {
                 day.getDayType(),
                 day.getLabel(),
                 day.getWorkingOverride(),
-                WorkCalendarDayEffectiveStatus.isWorking(day)
+                WorkCalendarDayEffectiveStatus.isWorking(day),
+                // updated_at is set by a DB trigger; on a just-saved entity the
+                // in-memory value is stale, but every write path is followed by
+                // a re-read on the client, so only the GET value is ever shown.
+                day.getUpdatedAt()
         );
     }
 }
