@@ -12,7 +12,10 @@ import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderDea
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderDetailDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderLineItemDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderOptionDto;
+import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderStatsDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderUpdateRequest;
+import com.aleksandarparipovic.marel_app.production_order_progress.OrderProgressService;
+import com.aleksandarparipovic.marel_app.production_order_progress.dto.OrderProgressSummary;
 import com.aleksandarparipovic.marel_app.production_order.repository.ProductionOrderRepository;
 import com.aleksandarparipovic.marel_app.production_order.specification.ProductionOrderSpecifications;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderLineItemNoteDto;
@@ -53,6 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.util.ArrayList;
@@ -60,6 +64,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -70,6 +75,15 @@ import java.util.stream.Collectors;
 public class ProductionOrderService {
 
     private static final String DEADLINE_SORT_FIELD = "deliveryDeadline";
+
+    /**
+     * The pseudo-filter a clicked KPI sends — not a column, a derived state
+     * (see {@link ProductionOrderAttention}). Stripped from the request before
+     * the generic criteria builder ever sees it, exactly as {@code priorityFlags}
+     * is, because it is answered in memory from the effective deadline and the
+     * agreed razrada, not by a WHERE clause.
+     */
+    private static final String ATTENTION_FILTER_FIELD = "attention";
 
     /**
      * The dates a customer's order list may be sorted on, and the one it sorts
@@ -97,6 +111,7 @@ public class ProductionOrderService {
     private final ProductionOrderRecipientService recipientService;
     private final PermissionService permissionService;
     private final OutboxEventPublisher outboxEventPublisher;
+    private final OrderProgressService orderProgressService;
 
     @Transactional
     public ProductionOrderDetailDto create(ProductionOrderCreateRequest req) {
@@ -545,11 +560,20 @@ public class ProductionOrderService {
     }
 
     public Page<ProductionOrderCardRow> searchAll(SearchRequest request) {
-        Specification<ProductionOrder> specification = ProductionOrderSpecifications.fromSearchRequest(request);
+        // Both pseudo-filters are lifted out BEFORE the criteria builder runs:
+        // neither is a column, and a generic field named "attention" would reach
+        // the builder as a JPA path and come back as a stack trace.
+        ProductionOrderAttention attention = extractAndStripAttentionFilter(request);
         SearchRequest.Direction deadlineSortDirection = extractAndStripDeadlineSort(request);
+        Specification<ProductionOrder> specification = ProductionOrderSpecifications.fromSearchRequest(request);
 
-        if (deadlineSortDirection != null) {
-            return searchAllSortedByEffectiveDeadline(specification, request, deadlineSortDirection);
+        // A derived filter, or a sort on the effective deadline, cannot be
+        // expressed in SQL against these tables — both are computed from the
+        // order's own deadlines AND its line items — so the whole matching set is
+        // read, narrowed and ordered in memory, then paged. The measurements that
+        // make that affordable are on searchAllInMemory.
+        if (attention != null || deadlineSortDirection != null) {
+            return searchAllInMemory(specification, request, deadlineSortDirection, attention);
         }
 
         Pageable pageable = stableSort(PageableBuilder.from(request));
@@ -558,6 +582,101 @@ public class ProductionOrderService {
         List<ProductionOrderCardRow> rows = buildCardRows(page.getContent(), context);
 
         return new PageImpl<>(rows, pageable, page.getTotalElements());
+    }
+
+    /**
+     * What a clicked KPI narrows to — {@code null} when the request carries no
+     * {@code attention} pseudo-filter. Removes it from the request so the rest of
+     * the pipeline treats the request as if it were never there.
+     */
+    private ProductionOrderAttention extractAndStripAttentionFilter(SearchRequest request) {
+        if (request == null || request.getFilters() == null) {
+            return null;
+        }
+
+        ProductionOrderAttention attention = null;
+        List<SearchRequest.FilterField> remaining = new ArrayList<>();
+        for (SearchRequest.FilterField filter : request.getFilters()) {
+            if (filter != null && ATTENTION_FILTER_FIELD.equals(filter.getField())) {
+                attention = parseAttention(filter.getValue());
+            } else {
+                remaining.add(filter);
+            }
+        }
+
+        request.setFilters(remaining);
+        return attention;
+    }
+
+    private static ProductionOrderAttention parseAttention(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return ProductionOrderAttention.valueOf(value.toString().trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            // An unknown value narrows to nothing rather than throwing: a stale
+            // client asking for a state this server no longer has is an empty
+            // list, not a 500.
+            return null;
+        }
+    }
+
+    /**
+     * The counts the list shows above itself.
+     *
+     * <p>Deliberately NOT derived from the current search: the four figures are
+     * "what needs attention across every open order", which is a fixed question
+     * the page asks whatever the reader has filtered the rows down to. Computed
+     * over all non-archived orders, once, in the same effective-deadline terms
+     * the cards use so a KPI and the row it points at never disagree.
+     *
+     * <p>Late and due-soon read the effective deadline — the nearest of the
+     * order's own deadlines and any line-item date — exactly as
+     * {@link #searchAllSortedByEffectiveDeadline} does. An order with no date at
+     * all counts as neither: "no rok entered" is not "late".
+     *
+     * <p>"Bez razrade" goes through the one source of truth for progress,
+     * {@link OrderProgressService}, rather than re-deciding here what an agreed
+     * scope is. Four queries whatever the number of open orders.
+     */
+    @Transactional(readOnly = true)
+    public ProductionOrderStatsDto stats() {
+        List<ProductionOrder> active = productionOrderRepository.findAll(ProductionOrderSpecifications.notArchived());
+
+        List<ProductionOrder> open = active.stream()
+                .filter(order -> order.getStatus() == ProductionOrderStatus.CREATED)
+                .toList();
+        long delivered = active.size() - open.size();
+
+        DeadlineContext context = loadDeadlineContext(open);
+        LocalDate today = LocalDate.now();
+
+        long late = 0;
+        long dueSoon = 0;
+        for (ProductionOrder order : open) {
+            LocalDate effective = context.effectiveByOrder()
+                    .getOrDefault(order.getId(), EffectiveDeadline.EMPTY).date();
+            if (effective == null) {
+                continue;
+            }
+            long days = ChronoUnit.DAYS.between(today, effective);
+            if (days < 0) {
+                late++;
+            } else if (days <= 3) {
+                dueSoon++;
+            }
+        }
+
+        long withoutScope = 0;
+        if (!open.isEmpty()) {
+            List<Long> openIds = open.stream().map(ProductionOrder::getId).toList();
+            withoutScope = orderProgressService.summaries(openIds).values().stream()
+                    .filter(summary -> !summary.scopeDefined())
+                    .count();
+        }
+
+        return new ProductionOrderStatsDto(active.size(), open.size(), delivered, late, dueSoon, withoutScope);
     }
 
     /**
@@ -595,27 +714,32 @@ public class ProductionOrderService {
         return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), Sort.by(orders));
     }
 
-    private Page<ProductionOrderCardRow> searchAllSortedByEffectiveDeadline(
+    /**
+     * The whole matching set read, narrowed by the derived filter, ordered and
+     * paged in memory. Taken whenever the answer depends on the effective
+     * deadline or the agreed razrada — a sort on the deadline, a KPI's attention
+     * filter, or both.
+     *
+     * <p>What makes reading everything affordable is the same thing the stats
+     * lean on: these are bounded populations (open orders of a factory), and the
+     * per-order figures come from four batch queries, never one per order.
+     */
+    private Page<ProductionOrderCardRow> searchAllInMemory(
             Specification<ProductionOrder> specification,
             SearchRequest request,
-            SearchRequest.Direction direction
+            SearchRequest.Direction deadlineDirection,
+            ProductionOrderAttention attention
     ) {
         List<ProductionOrder> allMatching = productionOrderRepository.findAll(specification);
         DeadlineContext context = loadDeadlineContext(allMatching);
 
-        Comparator<LocalDate> dateComparator = direction == SearchRequest.Direction.DESC
-                ? Comparator.<LocalDate>reverseOrder()
-                : Comparator.<LocalDate>naturalOrder();
+        List<ProductionOrder> narrowed = attention == null
+                ? allMatching
+                : filterByAttention(allMatching, attention, context);
 
-        Comparator<ProductionOrder> comparator = Comparator
-                .comparing((ProductionOrder order) -> !Boolean.TRUE.equals(order.getIsHighPriority()))
-                .thenComparing(
-                        order -> context.effectiveByOrder().getOrDefault(order.getId(), EffectiveDeadline.EMPTY).date(),
-                        Comparator.nullsLast(dateComparator)
-                )
-                .thenComparing(ProductionOrder::getId);
-
-        List<ProductionOrder> sorted = allMatching.stream().sorted(comparator).toList();
+        List<ProductionOrder> sorted = narrowed.stream()
+                .sorted(inMemoryComparator(request, deadlineDirection, context))
+                .toList();
 
         Pageable pageable = PageableBuilder.from(request);
         int fromIndex = Math.min(pageable.getPageNumber() * pageable.getPageSize(), sorted.size());
@@ -624,6 +748,85 @@ public class ProductionOrderService {
 
         List<ProductionOrderCardRow> rows = buildCardRows(pageContent, context);
         return new PageImpl<>(rows, pageable, sorted.size());
+    }
+
+    /**
+     * The open orders in one of the attention states. All three are OPEN-only
+     * (a delivered order is neither late nor missing a scope), read from the same
+     * effective deadline and razrada the cards and stats read.
+     */
+    private List<ProductionOrder> filterByAttention(
+            List<ProductionOrder> orders, ProductionOrderAttention attention, DeadlineContext context) {
+        List<ProductionOrder> open = orders.stream()
+                .filter(order -> order.getStatus() == ProductionOrderStatus.CREATED)
+                .toList();
+
+        if (attention == ProductionOrderAttention.WITHOUT_SCOPE) {
+            if (open.isEmpty()) {
+                return List.of();
+            }
+            List<Long> openIds = open.stream().map(ProductionOrder::getId).toList();
+            Set<Long> withoutScope = orderProgressService.summaries(openIds).values().stream()
+                    .filter(summary -> !summary.scopeDefined())
+                    .map(OrderProgressSummary::orderId)
+                    .collect(Collectors.toSet());
+            return open.stream().filter(order -> withoutScope.contains(order.getId())).toList();
+        }
+
+        LocalDate today = LocalDate.now();
+        return open.stream().filter(order -> {
+            LocalDate effective = context.effectiveByOrder()
+                    .getOrDefault(order.getId(), EffectiveDeadline.EMPTY).date();
+            if (effective == null) {
+                return false;
+            }
+            long days = ChronoUnit.DAYS.between(today, effective);
+            return attention == ProductionOrderAttention.LATE ? days < 0 : (days >= 0 && days <= 3);
+        }).toList();
+    }
+
+    /**
+     * The order for the in-memory path — the effective-deadline sort when one was
+     * asked for (high-priority first, then nearest date), otherwise the request's
+     * own creation-date sort, always with the id last so a page is stable.
+     */
+    private Comparator<ProductionOrder> inMemoryComparator(
+            SearchRequest request, SearchRequest.Direction deadlineDirection, DeadlineContext context) {
+        if (deadlineDirection != null) {
+            Comparator<LocalDate> dateComparator = deadlineDirection == SearchRequest.Direction.DESC
+                    ? Comparator.<LocalDate>reverseOrder()
+                    : Comparator.<LocalDate>naturalOrder();
+            return Comparator
+                    .comparing((ProductionOrder order) -> !Boolean.TRUE.equals(order.getIsHighPriority()))
+                    .thenComparing(
+                            order -> context.effectiveByOrder().getOrDefault(order.getId(), EffectiveDeadline.EMPTY).date(),
+                            Comparator.nullsLast(dateComparator))
+                    .thenComparing(ProductionOrder::getId);
+        }
+
+        SearchRequest.SortField sort = firstSortField(request);
+        if (sort != null && "creationDate".equals(sort.getField())) {
+            Comparator<LocalDate> dateComparator = sort.getDirection() == SearchRequest.Direction.DESC
+                    ? Comparator.<LocalDate>reverseOrder()
+                    : Comparator.<LocalDate>naturalOrder();
+            return Comparator
+                    .comparing(ProductionOrder::getCreationDate, Comparator.nullsLast(dateComparator))
+                    .thenComparing(ProductionOrder::getId, Comparator.reverseOrder());
+        }
+
+        return Comparator.comparing(ProductionOrder::getId, Comparator.reverseOrder());
+    }
+
+    private static SearchRequest.SortField firstSortField(SearchRequest request) {
+        if (request == null || request.getSort() == null) {
+            return null;
+        }
+        for (SearchRequest.SortField sortField : request.getSort()) {
+            if (sortField != null && sortField.getField() != null) {
+                return sortField;
+            }
+        }
+        return null;
     }
 
     private SearchRequest.Direction extractAndStripDeadlineSort(SearchRequest request) {

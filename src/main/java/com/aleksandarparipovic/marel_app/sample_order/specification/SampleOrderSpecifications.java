@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.sample_order.specification;
 
 import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.sample_order.SampleOrder;
+import com.aleksandarparipovic.marel_app.sample_order.SampleOrderStatus;
 import com.aleksandarparipovic.marel_app.sample_order.SampleOrderFieldMapper;
 import com.aleksandarparipovic.marel_app.sample_order_line_item.SampleOrderLineItem;
 import com.aleksandarparipovic.marel_app.sample_order_line_item_note.SampleOrderLineItemNote;
@@ -55,6 +56,33 @@ public final class SampleOrderSpecifications {
     /** The sample orders made for one customer. */
     public static Specification<SampleOrder> forCustomer(Long customerId) {
         return (root, query, cb) -> cb.equal(root.get("customer").get("id"), customerId);
+    }
+
+    /**
+     * Still open — anything but {@code closed}, read case-insensitively because
+     * the status column is free text (see {@link com.aleksandarparipovic.marel_app.sample_order.SampleOrderStatus}).
+     * A null status is the default {@code created}, so it counts as open.
+     */
+    public static Specification<SampleOrder> notClosed() {
+        return (root, query, cb) -> cb.or(
+                cb.isNull(root.get("status")),
+                cb.notEqual(cb.lower(root.get("status")), SampleOrderStatus.CLOSED));
+    }
+
+    /** Open, and the rok is in the past. */
+    public static Specification<SampleOrder> lateAsOf(LocalDate today) {
+        return notClosed().and((root, query, cb) -> cb.lessThan(root.get("deadlineDate"), today));
+    }
+
+    /**
+     * Open, and the rok falls within {@code days} of today, today included — the
+     * "rok u ≤ N dana" the list header counts.
+     */
+    public static Specification<SampleOrder> dueWithin(LocalDate today, int days) {
+        LocalDate horizon = today.plusDays(days);
+        return notClosed().and((root, query, cb) -> cb.and(
+                cb.greaterThanOrEqualTo(root.get("deadlineDate"), today),
+                cb.lessThanOrEqualTo(root.get("deadlineDate"), horizon)));
     }
 
     /**

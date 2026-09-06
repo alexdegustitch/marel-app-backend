@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderCar
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderCreateRequest;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderDetailDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderOptionDto;
+import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderStatsDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderUpdateRequest;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import jakarta.validation.Valid;
@@ -40,6 +41,17 @@ public class ProductionOrderController {
     @PostMapping("/search-all")
     ResponseEntity<Page<ProductionOrderCardRow>> searchAll(@RequestBody SearchRequest request) {
         return ResponseEntity.ok(productionOrderService.searchAll(request));
+    }
+
+    /**
+     * The whole-population counts the list shows above itself — late, due soon,
+     * without razrada, in progress. A GET under {@code /api/production-orders},
+     * so the {@code PRODUCTION_ORDER_VIEW} rule already guards it; everyone who
+     * may read the list may read its summary.
+     */
+    @GetMapping("/stats")
+    ResponseEntity<ProductionOrderStatsDto> stats() {
+        return ResponseEntity.ok(productionOrderService.stats());
     }
 
     /**

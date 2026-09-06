@@ -20,6 +20,7 @@ import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderLineItemDto
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderLineItemNoteDto;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderLineItemQuantityDto;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderOptionDto;
+import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderStatsDto;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderUpdateRequest;
 import com.aleksandarparipovic.marel_app.sample_order.repository.SampleOrderRepository;
 import com.aleksandarparipovic.marel_app.sample_order.specification.SampleOrderSpecifications;
@@ -49,6 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -341,15 +343,87 @@ public class SampleOrderService {
                 .toList();
     }
 
+    /** The pseudo-filter a clicked KPI sends; see {@link #extractAndStripAttentionFilter}. */
+    private static final String ATTENTION_FILTER_FIELD = "attention";
+
     @Transactional(readOnly = true)
     public Page<SampleOrderCardRow> searchAll(SearchRequest request) {
+        // Lifted out before the criteria builder runs: "attention" is not a
+        // column, and would otherwise reach the builder as a JPA path.
+        SampleOrderAttention attention = extractAndStripAttentionFilter(request);
+
         Specification<SampleOrder> specification = SampleOrderSpecifications.fromSearchRequest(request);
+        if (attention != null) {
+            // Unlike the production side these narrow in SQL — the rok is one
+            // column — so the query stays a plain paged findAll.
+            specification = specification.and(attentionSpecification(attention, LocalDate.now()));
+        }
+
         Pageable pageable = stableSort(PageableBuilder.from(request));
 
         Page<SampleOrder> page = sampleOrderRepository.findAll(specification, pageable);
         List<SampleOrderCardRow> rows = buildCardRows(page.getContent());
 
         return new PageImpl<>(rows, pageable, page.getTotalElements());
+    }
+
+    /**
+     * The counts the list shows above itself — over every non-archived sample
+     * order, independent of the current search, the same way the cards read.
+     * Five cheap counts rather than loading the rows.
+     */
+    @Transactional(readOnly = true)
+    public SampleOrderStatsDto stats() {
+        LocalDate today = LocalDate.now();
+        Specification<SampleOrder> base = SampleOrderSpecifications.notArchived();
+
+        long total = sampleOrderRepository.count(base);
+        long open = sampleOrderRepository.count(base.and(SampleOrderSpecifications.notClosed()));
+        long late = sampleOrderRepository.count(base.and(SampleOrderSpecifications.lateAsOf(today)));
+        long dueSoon = sampleOrderRepository.count(base.and(SampleOrderSpecifications.dueWithin(today, 3)));
+
+        return new SampleOrderStatsDto(total, open, total - open, late, dueSoon);
+    }
+
+    private static Specification<SampleOrder> attentionSpecification(SampleOrderAttention attention, LocalDate today) {
+        return attention == SampleOrderAttention.LATE
+                ? SampleOrderSpecifications.lateAsOf(today)
+                : SampleOrderSpecifications.dueWithin(today, 3);
+    }
+
+    /**
+     * What a clicked KPI narrows to — {@code null} when there is no such filter.
+     * Removes it from the request so the rest of the pipeline never sees it.
+     */
+    private SampleOrderAttention extractAndStripAttentionFilter(SearchRequest request) {
+        if (request == null || request.getFilters() == null) {
+            return null;
+        }
+
+        SampleOrderAttention attention = null;
+        List<SearchRequest.FilterField> remaining = new ArrayList<>();
+        for (SearchRequest.FilterField filter : request.getFilters()) {
+            if (filter != null && ATTENTION_FILTER_FIELD.equals(filter.getField())) {
+                attention = parseAttention(filter.getValue());
+            } else {
+                remaining.add(filter);
+            }
+        }
+
+        request.setFilters(remaining);
+        return attention;
+    }
+
+    private static SampleOrderAttention parseAttention(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return SampleOrderAttention.valueOf(value.toString().trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            // An unknown value narrows to nothing rather than throwing.
+            return null;
+        }
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.sample_order;
 
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderCardRow;
+import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderStatsDto;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderCopySourceRow;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderCreateRequest;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderDetailDto;
@@ -45,6 +46,16 @@ public class SampleOrderController {
     @PostMapping("/search-all")
     ResponseEntity<Page<SampleOrderCardRow>> searchAll(@RequestBody SearchRequest request) {
         return ResponseEntity.ok(sampleOrderService.searchAll(request));
+    }
+
+    /**
+     * The whole-population counts the list shows above itself — late, due soon,
+     * open, closed. A GET under {@code /api/sample-orders}, so the
+     * {@code SAMPLE_ORDER_VIEW} rule already guards it.
+     */
+    @GetMapping("/stats")
+    ResponseEntity<SampleOrderStatsDto> stats() {
+        return ResponseEntity.ok(sampleOrderService.stats());
     }
 
     /**
