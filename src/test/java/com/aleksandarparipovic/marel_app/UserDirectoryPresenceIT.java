@@ -49,7 +49,7 @@ class UserDirectoryPresenceIT extends AbstractIntegrationTest {
 
     private UserDto rowFor(Long userId) {
         return userService
-                .getUsers(0, 200, null, null, null, null, null, Sort.Direction.ASC, "id")
+                .getUsers(0, 200, null, null, null, null, null, null, Sort.Direction.ASC, "id")
                 .getContent().stream()
                 .filter(row -> row.getId().equals(userId))
                 .findFirst().orElseThrow();

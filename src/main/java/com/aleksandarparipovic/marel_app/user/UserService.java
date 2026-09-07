@@ -7,6 +7,7 @@ import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
 import com.aleksandarparipovic.marel_app.role.Role;
 import com.aleksandarparipovic.marel_app.role.RoleRepository;
+import com.aleksandarparipovic.marel_app.user.dto.UserDirectoryStatsDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
 import com.aleksandarparipovic.marel_app.user_preferences.UserPreferences;
 import com.aleksandarparipovic.marel_app.user_preferences.UserPreferencesRepository;
@@ -120,12 +121,28 @@ public class UserService {
             String role,
             Long employeeId,
             Boolean active,
+            Boolean online,
             Sort.Direction direction,
             String sortBy
     ) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
 
         Specification<User> spec = Specification.allOf();
+
+        /*
+         * "Na vezi" is not a column — it is a live heartbeat in the session
+         * table. Resolved FIRST, into a plain id list, so the ordinary paged
+         * query keeps doing everything else (search, role, sort) on top of it.
+         * Nobody online is a normal morning, not an error: it answers with an
+         * empty page rather than an IN () the database would refuse.
+         */
+        if (Boolean.TRUE.equals(online)) {
+            List<Long> onlineIds = userSessionService.onlineUserIds(userRepository.findActiveIds());
+            if (onlineIds.isEmpty()) {
+                return Page.empty(pageable);
+            }
+            spec = spec.and(UserSpecifications.idIn(onlineIds));
+        }
 
         if (username != null && !username.isBlank()) {
             spec = spec.and(UserSpecifications.usernameContains(username));
@@ -185,6 +202,23 @@ public class UserService {
             user.setOnline(online.contains(user.getId()));
             return user;
         });
+    }
+
+    /**
+     * The numbers over the directory: how many accounts, how many here right
+     * now, how they split by role. Each figure backs a filter tile, so they
+     * count exactly what the filtered list would show — active accounts.
+     */
+    @Transactional(readOnly = true)
+    public UserDirectoryStatsDto getDirectoryStats() {
+        long total = userRepository.countByActiveTrue();
+        long online = userSessionService.onlineUserIds(userRepository.findActiveIds()).size();
+
+        List<UserDirectoryStatsDto.RoleCount> roles = userRepository.countActiveByRole().stream()
+                .map(row -> new UserDirectoryStatsDto.RoleCount((String) row[0], (Long) row[1]))
+                .toList();
+
+        return new UserDirectoryStatsDto(total, online, roles);
     }
 
     @Transactional(readOnly = true)

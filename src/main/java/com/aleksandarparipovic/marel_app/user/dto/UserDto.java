@@ -70,4 +70,14 @@ public class UserDto {
      * <p>Null where a screen did not ask, which is not the same as false.
      */
     private Boolean online;
+
+    /**
+     * When the account was made — the directory's "član od".
+     *
+     * <p>The creation timestamp, not {@code activatedAt}: an account made by an
+     * administrator is active from birth, and the question a colleague's card
+     * answers is "how long has this person been here", which starts when the
+     * account did.
+     */
+    private java.time.OffsetDateTime memberSince;
 }

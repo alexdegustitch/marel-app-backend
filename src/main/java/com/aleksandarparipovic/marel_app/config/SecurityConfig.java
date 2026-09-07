@@ -86,6 +86,13 @@ public class SecurityConfig {
                          */
                         .requestMatchers(HttpMethod.GET, "/api/users").authenticated()
                         /*
+                         * The directory's tile figures — counts of the very list
+                         * the rule above already opens. Same audience on purpose:
+                         * a reader who may page through everyone may know how
+                         * many everyone is.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/users/stats").authenticated()
+                        /*
                          * Linking an account to a worker. Authenticated here and
                          * decided by @PreAuthorize on the method, which asks for
                          * USER_EMPLOYEE_LINK — held by admins and supervisors.

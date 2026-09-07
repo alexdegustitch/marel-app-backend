@@ -23,6 +23,7 @@ public class UserMapper {
                 // users by how many of them are workers rather than by page size.
                 .employeeId(user.getEmployee() != null ? user.getEmployee().getId() : null)
                 .employeeName(user.getEmployee() != null ? user.getEmployee().getFullName() : null)
+                .memberSince(user.getCreatedAt())
                 .build();
     }
 }

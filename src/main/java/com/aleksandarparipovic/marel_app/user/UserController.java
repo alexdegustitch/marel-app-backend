@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.user;
 
 import com.aleksandarparipovic.marel_app.user.dto.UserCreateRequest;
+import com.aleksandarparipovic.marel_app.user.dto.UserDirectoryStatsDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserOptionDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserUpdateRequest;
@@ -37,13 +38,21 @@ public class UserController {
             /** Whose account is this worker's. Zero rows or one — never more. */
             @RequestParam(required = false) Long employeeId,
             @RequestParam(required = false) Boolean active,
+            /** Only the people at the application right now — the "na vezi" tile. */
+            @RequestParam(required = false) Boolean online,
             @RequestParam(defaultValue = "ASC") Sort.Direction direction,
             @RequestParam(defaultValue = "id") String sortBy
     ) {
         Page<UserDto> result =
-                userService.getUsers(page, size, username, search, role, employeeId, active, direction, sortBy);
+                userService.getUsers(page, size, username, search, role, employeeId, active, online, direction, sortBy);
 
         return ResponseEntity.ok(result);
+    }
+
+    /** The directory's tile figures: total, online, and the split by role. */
+    @GetMapping("/stats")
+    public ResponseEntity<UserDirectoryStatsDto> getDirectoryStats() {
+        return ResponseEntity.ok(userService.getDirectoryStats());
     }
 
     @GetMapping("/active-users")

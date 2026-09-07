@@ -46,6 +46,19 @@ public class UserSpecifications {
         return (root, query, cb) -> cb.equal(root.get("employee").get("id"), employeeId);
     }
 
+    /**
+     * The accounts on a known-id list — how the directory narrows to "na vezi".
+     *
+     * <p>Presence lives in the session table, not on the user row, so an
+     * online FILTER is resolved in two steps: ask the sessions whose heartbeat
+     * is live, then hand those ids to the ordinary paged query so search, role
+     * and sorting still apply on top. The caller must handle the empty list
+     * itself (an empty IN () is not a valid predicate everywhere).
+     */
+    public static Specification<User> idIn(java.util.Collection<Long> ids) {
+        return (root, query, cb) -> root.get("id").in(ids);
+    }
+
     public static Specification<User> isActive(Boolean active) {
         return (root, query, cb) ->
                 cb.equal(root.get("active"), active);

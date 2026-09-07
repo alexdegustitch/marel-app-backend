@@ -288,7 +288,7 @@ class AccountBelongsToOneWorkerIT extends AbstractIntegrationTest {
         userService.update(account.getId(), linkTo(worker.getId()));
 
         var found = userService.getUsers(
-                0, 10, null, null, null, worker.getId(), null,
+                0, 10, null, null, null, worker.getId(), null, null,
                 org.springframework.data.domain.Sort.Direction.ASC, "id");
 
         assertThat(found.getContent()).hasSize(1);
@@ -296,7 +296,7 @@ class AccountBelongsToOneWorkerIT extends AbstractIntegrationTest {
 
         // And a worker with no account answers with nothing, not with everybody.
         assertThat(userService.getUsers(
-                0, 10, null, null, null, somebodyElse.getId(), null,
+                0, 10, null, null, null, somebodyElse.getId(), null, null,
                 org.springframework.data.domain.Sort.Direction.ASC, "id").getContent())
                 .isEmpty();
     }
@@ -317,7 +317,7 @@ class AccountBelongsToOneWorkerIT extends AbstractIntegrationTest {
         userService.update(account.getId(), rename);
 
         var byName = userService.getUsers(
-                0, 10, null, "mihajlov", null, null, null,
+                0, 10, null, "mihajlov", null, null, null, null,
                 org.springframework.data.domain.Sort.Direction.ASC, "id");
 
         assertThat(byName.getContent()).extracting(UserDto::getId).contains(account.getId());

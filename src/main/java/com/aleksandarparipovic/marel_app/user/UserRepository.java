@@ -42,6 +42,35 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
 
     Page<User> findByUsernameContainingIgnoreCase(String username, Pageable pageable);
 
+    /** How many accounts the directory lists at all — its tiles' "Svi". */
+    long countByActiveTrue();
+
+    /**
+     * Just the ids of the active accounts, for the presence check.
+     *
+     * <p>Presence is answered by the session table for a LIST of candidates
+     * (see {@code UserSessionService#onlineUserIds}), so the directory's
+     * "who is here right now" needs the candidate ids and nothing else —
+     * loading whole User rows to read one column would drag the role join
+     * and every name along for no reader.
+     */
+    @org.springframework.data.jpa.repository.Query("select u.id from User u where u.active = true")
+    List<Long> findActiveIds();
+
+    /**
+     * Active accounts per role, in one round trip.
+     *
+     * <p>Each row is {@code [roleName (String), count (Long)]}. A role nobody
+     * active holds returns no row at all, which the stats DTO documents.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            select r.roleName, count(u) from User u
+            join u.role r
+            where u.active = true
+            group by r.roleName
+            """)
+    List<Object[]> countActiveByRole();
+
     Page<User> findByRole_RoleNameIgnoreCase(String roleName, Pageable pageable);
 
     Page<User> findByActive(Boolean active, Pageable pageable);
