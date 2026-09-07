@@ -10,6 +10,7 @@ import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationCountRo
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
+import com.aleksandarparipovic.marel_app.product.dto.ProductStatsRow;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
 import com.aleksandarparipovic.marel_app.production_order_line_item.repository.ProductionOrderLineItemRepository;
 import com.aleksandarparipovic.marel_app.sample_order_line_item.repository.SampleOrderLineItemRepository;
@@ -117,6 +118,16 @@ public class ProductService {
         if (productRepository.findByIdAndArchivedAtIsNull(productId).isEmpty()) {
             throw new EntityNotFoundException("Product not found");
         }
+    }
+
+    /** The product board's KPI figures — one request for the whole page. */
+    @Transactional(readOnly = true)
+    public ProductStatsRow getStats() {
+        long total = productRepository.countByArchivedAtIsNull();
+        long active = productRepository.countByArchivedAtIsNullAndActiveTrue();
+        long withoutOperations = productRepository.countWithoutLiveOperations();
+        long totalOperations = productRepository.countLiveOperations();
+        return new ProductStatsRow(total, active, total - active, withoutOperations, totalOperations);
     }
 
     public Page<ProductWithOperationListRow> searchAll(SearchRequest request) {

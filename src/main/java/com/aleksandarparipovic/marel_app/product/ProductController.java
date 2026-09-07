@@ -6,6 +6,7 @@ import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductOptionDto;
+import com.aleksandarparipovic.marel_app.product.dto.ProductStatsRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import jakarta.validation.Valid;
@@ -47,6 +48,11 @@ public class ProductController {
     @GetMapping("/{productId}/sample-orders")
     public ResponseEntity<List<ProductSampleOrderRow>> getProductSampleOrders(@PathVariable Long productId) {
         return ResponseEntity.ok(productService.getProductSampleOrders(productId));
+    }
+
+    @GetMapping("/stats")
+    public ResponseEntity<ProductStatsRow> getStats() {
+        return ResponseEntity.ok(productService.getStats());
     }
 
     @PostMapping("/search-all")
