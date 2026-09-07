@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.user;
 
 import com.aleksandarparipovic.marel_app.account.PasswordPolicy;
 import com.aleksandarparipovic.marel_app.account.UsernameRules;
+import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
@@ -46,6 +47,7 @@ public class UserService {
     private final UserSessionService userSessionService;
     private final EmployeeRepository employeeRepository;
     private final PasswordEncoder passwordEncoder;
+    private final CurrentUserService currentUserService;
 
     public UserDto getCurrentUser() {
         Authentication authentication =
@@ -137,7 +139,7 @@ public class UserService {
          * empty page rather than an IN () the database would refuse.
          */
         if (Boolean.TRUE.equals(online)) {
-            List<Long> onlineIds = userSessionService.onlineUserIds(userRepository.findActiveIds());
+            Set<Long> onlineIds = onlineIncludingSelf(userRepository.findActiveIds());
             if (onlineIds.isEmpty()) {
                 return Page.empty(pageable);
             }
@@ -186,7 +188,7 @@ public class UserService {
             return page;
         }
 
-        Set<Long> online = new HashSet<>(userSessionService.onlineUserIds(ids));
+        Set<Long> online = onlineIncludingSelf(ids);
 
         Map<Long, String> avatars = new HashMap<>();
         for (UserPreferences preferences : userPreferencesRepository.findAllById(ids)) {
@@ -212,13 +214,35 @@ public class UserService {
     @Transactional(readOnly = true)
     public UserDirectoryStatsDto getDirectoryStats() {
         long total = userRepository.countByActiveTrue();
-        long online = userSessionService.onlineUserIds(userRepository.findActiveIds()).size();
+        long online = onlineIncludingSelf(userRepository.findActiveIds()).size();
 
         List<UserDirectoryStatsDto.RoleCount> roles = userRepository.countActiveByRole().stream()
                 .map(row -> new UserDirectoryStatsDto.RoleCount((String) row[0], (Long) row[1]))
                 .toList();
 
         return new UserDirectoryStatsDto(total, online, roles);
+    }
+
+    /**
+     * The online set for a list of candidates, with the CALLER always in it.
+     *
+     * <p>Presence is a heartbeat, and the heartbeat pauses while the browser tab
+     * is in the background — so somebody who looks away for two minutes and comes
+     * back would, for one refresh, see themselves counted as absent and the
+     * presence corner blink out. But the person asking "who is here" is here:
+     * they just made this request. So the caller is folded into their own answer.
+     *
+     * <p>This is strictly per-request and never leaks: self is added only when
+     * self is among the candidates being asked about, so it marks nobody online
+     * in anybody else's view. A colleague genuinely away still reads as away.
+     */
+    private Set<Long> onlineIncludingSelf(List<Long> candidateIds) {
+        Set<Long> online = new HashSet<>(userSessionService.onlineUserIds(candidateIds));
+        Long selfId = currentUserService.getCurrentUserId();
+        if (selfId != null && candidateIds.contains(selfId)) {
+            online.add(selfId);
+        }
+        return online;
     }
 
     @Transactional(readOnly = true)

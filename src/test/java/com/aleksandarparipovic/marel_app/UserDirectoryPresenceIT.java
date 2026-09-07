@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app;
 
+import com.aleksandarparipovic.marel_app.auth.CustomUserDetails;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
 import com.aleksandarparipovic.marel_app.user.UserService;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
@@ -11,10 +12,13 @@ import com.aleksandarparipovic.marel_app.user.UserRepository;
 import com.aleksandarparipovic.marel_app.user_session.UserSession;
 import com.aleksandarparipovic.marel_app.user_session.UserSessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -64,6 +68,18 @@ class UserDirectoryPresenceIT extends AbstractIntegrationTest {
                 .build());
     }
 
+    /** The principal the application itself builds, so the caller's id is read. */
+    private void signedInAs(User user) {
+        CustomUserDetails principal = new CustomUserDetails(user);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, "p", principal.getAuthorities()));
+    }
+
+    @AfterEach
+    void clearCaller() {
+        SecurityContextHolder.clearContext();
+    }
+
     // ── Presence ────────────────────────────────────────────────────────────
 
     @Test
@@ -107,6 +123,52 @@ class UserDirectoryPresenceIT extends AbstractIntegrationTest {
         User user = anAccount();
 
         assertThat(rowFor(user.getId()).getOnline()).isFalse();
+    }
+
+    /*
+     * The bug this fixes: the heartbeat pauses while the tab is in the
+     * background, so a person who looks away for two minutes has a stale
+     * session — yet they are the one reading the screen. The caller is here by
+     * definition, so their own row reads online even when their heartbeat has
+     * lapsed, and the presence corner never blinks out under their own eyes.
+     */
+    @Test
+    @DisplayName("the caller is online in their own view even with a stale heartbeat")
+    void callerIsAlwaysOnlineToThemselves() {
+        User me = anAccount();
+        OffsetDateTime now = OffsetDateTime.now();
+        giveSession(me, now.minusHours(3), now.plusDays(1)); // stale — would be offline
+
+        signedInAs(me);
+
+        assertThat(rowFor(me.getId()).getOnline()).isTrue();
+        assertThat(userService.getDirectoryStats().online()).isGreaterThanOrEqualTo(1);
+        assertThat(
+                userService.getUsers(0, 200, null, null, null, null, null, true, Sort.Direction.ASC, "id")
+                        .getContent())
+                .extracting(UserDto::getId)
+                .contains(me.getId());
+    }
+
+    /*
+     * The other half of "per-request": folding the caller in must not make them
+     * appear online to anybody else. A colleague who is genuinely away still
+     * reads as away in a DIFFERENT person's view.
+     */
+    @Test
+    @DisplayName("a stale colleague still reads as away in another person's view")
+    void selfInclusionDoesNotLeakToOthers() {
+        var accounts = userRepository.findAll().stream()
+                .filter(u -> u.getAccountStatus() == UserAccountStatus.ACTIVE)
+                .toList();
+        User me = accounts.get(0);
+        User other = accounts.get(1);
+        OffsetDateTime now = OffsetDateTime.now();
+        giveSession(other, now.minusHours(3), now.plusDays(1)); // other is stale/away
+
+        signedInAs(me);
+
+        assertThat(rowFor(other.getId()).getOnline()).isFalse();
     }
 
     // ── The chosen picture ──────────────────────────────────────────────────
