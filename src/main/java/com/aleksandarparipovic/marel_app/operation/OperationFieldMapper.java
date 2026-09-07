@@ -33,7 +33,14 @@ public final class OperationFieldMapper implements EntityFieldMapper<Operation> 
                     Map.entry("unitsPerProduct", (root, cb,jm)->root.get("unitsPerProduct")),
                     Map.entry("normDate", (root, cb,jm)->root.get("normDate")),
                     Map.entry("productId", (root, cb,jm)->productJoin(jm, cb).get("id")),
-                    Map.entry("productName", (root, cb,jm)->productJoin(jm, cb).get("productName"))
+                    Map.entry("productName", (root, cb,jm)->productJoin(jm, cb).get("productName")),
+                    /*
+                     * Filtered through the RELATION, not the joined id: the join is
+                     * LEFT, so IS_NULL on the joined id would also be true for a row
+                     * whose join simply found nothing. The reference itself says
+                     * whether the operation carries a category.
+                     */
+                    Map.entry("workCodeCategoryId", (root, cb,jm)->root.get("workCodeCategory").get("id"))
             );
 
     private static Join<Operation, Product> productJoin(

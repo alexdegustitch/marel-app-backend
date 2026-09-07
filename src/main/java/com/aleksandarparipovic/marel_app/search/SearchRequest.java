@@ -39,6 +39,8 @@ public class SearchRequest {
 
     public enum Operator {
         EQ, NE, LIKE, STARTS_WITH, ENDS_WITH,
-        IN, GT, GTE, LT, LTE, CONTAINS_DATE, BETWEEN
+        IN, GT, GTE, LT, LTE, CONTAINS_DATE, BETWEEN,
+        /** Presence filters — the value is ignored, absence itself is the fact. */
+        IS_NULL, NOT_NULL
     }
 }

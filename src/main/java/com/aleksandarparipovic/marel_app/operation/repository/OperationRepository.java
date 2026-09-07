@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.operation.repository;
 
 import com.aleksandarparipovic.marel_app.operation.Operation;
+import com.aleksandarparipovic.marel_app.operation.dto.OperationStatsRow;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductInfoRow;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductNameDto;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -42,6 +43,22 @@ where o.id = :id
 
 
     List<Operation> findByProductIdAndArchivedAtIsNull(Long productId);
+
+    /**
+     * The board's four figures in one query, over the same population the
+     * search grid shows: live operations, whatever the state of their product.
+     */
+    @Query("""
+            select new com.aleksandarparipovic.marel_app.operation.dto.OperationStatsRow(
+                count(o),
+                coalesce(sum(case when o.minNorm is null then 1 else 0 end), 0),
+                coalesce(sum(case when o.workCodeCategory is null then 1 else 0 end), 0),
+                count(distinct o.product.id)
+            )
+            from Operation o
+            where o.archivedAt is null
+            """)
+    OperationStatsRow getStats();
 
     /**
      * The live operations carrying a given work code category, by CODE.

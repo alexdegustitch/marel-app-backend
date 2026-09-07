@@ -35,7 +35,12 @@ public class SearchSpecification<T> implements Specification<T> {
         List<Predicate> predicates = new ArrayList<>();
 
         for (SearchRequest.FilterField filter : safeFilters()) {
-            if (!isValidFilter(filter) || isBlankValue(filter.getValue())) {
+            if (!isValidFilter(filter)) {
+                continue;
+            }
+            // Presence operators carry no value on purpose; every other operator
+            // without a value is an empty filter box, not a filter.
+            if (!isPresenceOperator(filter.getOperator()) && isBlankValue(filter.getValue())) {
                 continue;
             }
 
@@ -72,6 +77,8 @@ public class SearchSpecification<T> implements Specification<T> {
         return switch (filter.getOperator()) {
             case CONTAINS_DATE -> containsDatePredicate(filter, root, cb, joinManager);
             case BETWEEN -> betweenPredicate(filter, root, cb, joinManager);
+            case IS_NULL -> cb.isNull(fieldMapper.resolvePath(filter.getField(), root, cb, joinManager));
+            case NOT_NULL -> cb.isNotNull(fieldMapper.resolvePath(filter.getField(), root, cb, joinManager));
             default -> simplePredicate(filter, root, cb, joinManager);
         };
     }
@@ -186,6 +193,11 @@ public class SearchSpecification<T> implements Specification<T> {
 
     private String globalSearch() {
         return request == null ? null : request.getGlobalSearch();
+    }
+
+    private boolean isPresenceOperator(SearchRequest.Operator operator) {
+        return operator == SearchRequest.Operator.IS_NULL
+                || operator == SearchRequest.Operator.NOT_NULL;
     }
 
     private boolean isValidFilter(SearchRequest.FilterField filter) {

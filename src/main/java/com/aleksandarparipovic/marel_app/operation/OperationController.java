@@ -29,6 +29,12 @@ public class OperationController {
         return operationService.searchAll(searchRequest);
     }
 
+    /** The operations board's KPI figures — one request for the whole page. */
+    @GetMapping("/stats")
+    public ResponseEntity<OperationStatsRow> getStats() {
+        return ResponseEntity.ok(operationService.getStats());
+    }
+
     @GetMapping("/active-operations-for-product/id={id}&date={date}")
     public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(@PathVariable Long id, @PathVariable LocalDate date){
         List<OperationBasicInfoDto> operationBasicInfoDtos = operationService.getAllOperationsForProduct(id, date);

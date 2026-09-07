@@ -109,6 +109,12 @@ public class OperationService {
         return operationRepository.searchWithProjection(spec, pageable, OperationWithProductInfoRow.class);
     }
 
+    /** The operations board's KPI figures — one request for the whole page. */
+    @Transactional(readOnly = true)
+    public OperationStatsRow getStats() {
+        return operationRepository.getStats();
+    }
+
     @Transactional(readOnly = true)
     public OperationWithProductNameDto getOperation(Long id){
         /*Operation operation = operationRepository.findById(id)
