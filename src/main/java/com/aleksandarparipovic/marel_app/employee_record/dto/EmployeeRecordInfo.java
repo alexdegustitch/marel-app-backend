@@ -14,6 +14,8 @@ public interface EmployeeRecordInfo {
 
     Boolean getEmployeeForeigner();
 
+    String getEmployeeSchemeCode();
+
     String getEmployeeDepartment();
 
     String getEmployeeBonus();
@@ -21,6 +23,9 @@ public interface EmployeeRecordInfo {
     Instant getUpdateTime();
 
     Integer getTotalShiftMinutes();
+
+    /** "Priznati sati" u minutima — ponderisani norma-minuti mesečnog izveštaja. */
+    BigDecimal getTotalWeightedNormMinutes();
 
     BigDecimal getApprovedPerformanceRate();
 }

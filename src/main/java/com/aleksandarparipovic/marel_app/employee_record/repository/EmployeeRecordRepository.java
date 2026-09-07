@@ -7,6 +7,7 @@ import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordInfo;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMonthAggregate;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordRecentDto;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordSearchHit;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordShiftGlance;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeWithoutRecord;
 import com.aleksandarparipovic.marel_app.employee_record.dto.RecentEmployeeRecordDto;
 
@@ -66,6 +67,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             bc.category_no AS employeeBonus,
             MAX(eru.last_activity_at) AS updateTime,
             mr.total_shift_minutes AS totalShiftMinutes,
+            mr.total_weighted_norm_minutes AS totalWeightedNormMinutes,
             mr.approved_performance_rate AS approvedPerformanceRate
         FROM employee_records er
         JOIN employees e ON e.id = er.employee_id
@@ -84,7 +86,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
                 OR e.employee_no ILIKE '%' || :search || '%'
               )
         GROUP BY er.id, e.full_name, e.id, e.employee_no, d.name, bc.category_no,
-                 mr.total_shift_minutes, mr.approved_performance_rate
+                 mr.total_shift_minutes, mr.total_weighted_norm_minutes, mr.approved_performance_rate
     """,
             countQuery = """
         SELECT COUNT(er.id)
@@ -118,6 +120,44 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         WHERE er.id = :id
         """, nativeQuery = true)
     Optional<EmployeeRecordEmployeeInfo> findDtoById(@Param("id") Long id);
+
+    /**
+     * The last three shifts of each listed karton, in one query for the page.
+     *
+     * <p>Feeds the month list's per-row shift badges. Newest work day first;
+     * category resolved the way the karton itself resolves it (effective when a
+     * bonus remap applies, the original otherwise); the day's approved rate
+     * LEFT-joined because a shift exists before its daily report does.
+     */
+    @Query(value = """
+        WITH ranked AS (
+            SELECT ws.id                AS work_shift_id,
+                   ws.employee_record_id,
+                   ws.work_date,
+                   COALESCE(ws.effective_work_code_category_id, ws.work_code_category_id) AS category_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ws.employee_record_id
+                       ORDER BY ws.work_date DESC, ws.start_at DESC, ws.id DESC
+                   ) AS rn
+            FROM work_shifts ws
+            WHERE ws.employee_record_id IN (:recordIds)
+              AND ws.archived_at IS NULL
+        )
+        SELECT r.employee_record_id          AS employeeRecordId,
+               r.work_shift_id               AS workShiftId,
+               r.work_date                   AS workDate,
+               wcc.category_no               AS categoryNo,
+               wcc.category_name             AS categoryName,
+               dr.approved_performance_rate  AS approvedPerformanceRate
+        FROM ranked r
+        LEFT JOIN work_code_categories wcc ON wcc.id = r.category_id
+        LEFT JOIN daily_reports dr
+               ON dr.work_shift_id = r.work_shift_id
+              AND dr.archived_at IS NULL
+        WHERE r.rn <= 3
+        ORDER BY r.employee_record_id, r.work_date DESC, r.work_shift_id DESC
+        """, nativeQuery = true)
+    List<EmployeeRecordShiftGlance> findRecentShiftsForRecords(@Param("recordIds") List<Long> recordIds);
 
     @Query(value = """
         SELECT

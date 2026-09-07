@@ -49,7 +49,7 @@ public class EmployeeRecordController {
     }
 
     @GetMapping
-    public ResponseEntity<Page<EmployeeRecordInfo>> getEmployeeRecordsByYearAndMonth(
+    public ResponseEntity<Page<EmployeeRecordListRow>> getEmployeeRecordsByYearAndMonth(
             @RequestParam Integer year,
             @RequestParam Integer month,
             @RequestParam(required = false) String globalSearch,

@@ -8,7 +8,9 @@ import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordCreat
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordDto;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordEmployeeInfo;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordInfo;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordListRow;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMonthAggregate;
+import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordShiftGlance;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordRecentDto;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordMissing;
 import com.aleksandarparipovic.marel_app.employee_record.dto.EmployeeRecordSearchHit;
@@ -35,7 +37,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -116,11 +120,29 @@ public class EmployeeRecordService {
         return employeeRecordRepository.findRecentByEmployeeId(employeeId, size);
     }
 
-    public Page<EmployeeRecordInfo> getEmployeeRecordsByYearAndMonth(int year, int month, String globalSearch, Pageable pageable){
+    @Transactional(readOnly = true)
+    public Page<EmployeeRecordListRow> getEmployeeRecordsByYearAndMonth(int year, int month, String globalSearch, Pageable pageable){
         OffsetDateTime start = YearMonth.of(year, month).atDay(1).atStartOfDay().atOffset(ZoneOffset.UTC);
         OffsetDateTime end = start.plusMonths(1);
 
-        return employeeRecordRepository.findMonthlyRecords(start, end, globalSearch, pageable);
+        Page<EmployeeRecordInfo> page = employeeRecordRepository.findMonthlyRecords(start, end, globalSearch, pageable);
+
+        // The page's last shifts in ONE second query, not one per row: the list
+        // glances at each karton's tail without opening any of them.
+        List<Long> recordIds = page.getContent().stream()
+                .map(EmployeeRecordInfo::getId)
+                .filter(Objects::nonNull)
+                .toList();
+        Map<Long, List<EmployeeRecordListRow.ShiftGlance>> shiftsByRecord = recordIds.isEmpty()
+                ? Map.of()
+                : employeeRecordRepository.findRecentShiftsForRecords(recordIds).stream()
+                        .collect(Collectors.groupingBy(
+                                EmployeeRecordShiftGlance::getEmployeeRecordId,
+                                Collectors.mapping(EmployeeRecordListRow.ShiftGlance::of, Collectors.toList())));
+
+        return page.map(info -> EmployeeRecordListRow.of(
+                info,
+                shiftsByRecord.getOrDefault(info.getId(), List.of())));
     }
 
     @Transactional
