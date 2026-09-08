@@ -18,6 +18,7 @@ public class ProductTypeMapper {
                 .code(t.getCode())
                 .description(t.getDescription())
                 .note(t.getNote())
+                .standard(t.getStandard())
                 .sortOrder(t.getSortOrder())
                 .active(t.getIsActive())
                 .archivedAt(t.getArchivedAt())

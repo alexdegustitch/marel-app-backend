@@ -24,6 +24,8 @@ public class ProductTypeUpdateRequest {
 
     private String note;
 
+    private String standard;
+
     private Integer sortOrder;
 
     private Boolean active;

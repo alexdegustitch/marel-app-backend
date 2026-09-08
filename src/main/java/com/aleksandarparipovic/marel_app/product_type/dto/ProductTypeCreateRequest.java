@@ -28,6 +28,9 @@ public class ProductTypeCreateRequest {
 
     private String note;
 
+    /** The standard(s) the type is made and tested to; free text, optional. */
+    private String standard;
+
     /** Where the type sits in its family's list; defaults to 0 when absent. */
     private Integer sortOrder;
 }

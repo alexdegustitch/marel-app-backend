@@ -19,4 +19,13 @@ public class ProductWithOperationCountRow {
     @JsonProperty("isActive")
     private Boolean active;
     private Long operationCount;
+
+    // Catalogue fields the list shows: the catalogue number that identifies the
+    // article, the subtype the product name is qualified by, and the type/family
+    // it is filed under. All null for an uncategorised product. The constructor
+    // (JPA projection) keeps these in positional order after operationCount.
+    private String catalogNumber;
+    private String subtype;
+    private String productTypeName;
+    private String familyName;
 }

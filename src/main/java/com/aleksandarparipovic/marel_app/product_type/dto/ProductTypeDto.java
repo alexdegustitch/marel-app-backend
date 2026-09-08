@@ -16,6 +16,7 @@ public class ProductTypeDto {
     private String code;
     private String description;
     private String note;
+    private String standard;
     private Integer sortOrder;
     private Boolean active;
     /** When the type was deactivated; null while active. */

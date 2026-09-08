@@ -51,6 +51,10 @@ public class ProductType {
     @Column(name = "note")
     private String note;
 
+    /** The standard(s) the type is made and tested to (e.g. "SRPS N.F4.101 | EN 61238-1-1"); free text. */
+    @Column(name = "standard")
+    private String standard;
+
     @Column(name = "sort_order", nullable = false)
     @Builder.Default
     private Integer sortOrder = 0;

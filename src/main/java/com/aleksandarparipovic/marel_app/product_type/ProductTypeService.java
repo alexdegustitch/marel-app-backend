@@ -53,6 +53,7 @@ public class ProductTypeService {
                 .code(code)
                 .description(blankToNull(request.getDescription()))
                 .note(blankToNull(request.getNote()))
+                .standard(blankToNull(request.getStandard()))
                 .sortOrder(request.getSortOrder() != null ? request.getSortOrder() : 0)
                 .isActive(true)
                 .build();
@@ -146,6 +147,9 @@ public class ProductTypeService {
         }
         if (request.getNote() != null) {
             type.setNote(blankToNull(request.getNote()));
+        }
+        if (request.getStandard() != null) {
+            type.setStandard(blankToNull(request.getStandard()));
         }
         if (request.getSortOrder() != null) {
             type.setSortOrder(request.getSortOrder());

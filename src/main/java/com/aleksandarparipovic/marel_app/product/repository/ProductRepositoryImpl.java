@@ -42,6 +42,10 @@ public class ProductRepositoryImpl implements ProductRepositoryCustom {
         Root<Product> root = query.from(Product.class);
         Join<Product, Operation> operationJoin = root.join("operations", JoinType.LEFT);
         operationJoin.on(cb.isNull(operationJoin.get("archivedAt")));
+        // Left joins so an uncategorised product (no type) still appears, with
+        // null type and family. The list reads these for the catalogue cue.
+        Join<Object, Object> typeJoin = root.join("productType", JoinType.LEFT);
+        Join<Object, Object> familyJoin = typeJoin.join("family", JoinType.LEFT);
 
         if (specification != null) {
             Predicate predicate = specification.toPredicate(root, query, cb);
@@ -58,7 +62,11 @@ public class ProductRepositoryImpl implements ProductRepositoryCustom {
                     root.get("productName"),
                     root.get("productCode"),
                     root.get("description"),
-                    root.get("active")
+                    root.get("active"),
+                    root.get("catalogNumber"),
+                    root.get("subtype"),
+                    typeJoin.get("name"),
+                    familyJoin.get("name")
             );
             query.select(cb.construct(
                     projectionType,
@@ -67,7 +75,11 @@ public class ProductRepositoryImpl implements ProductRepositoryCustom {
                     root.get("productCode"),
                     root.get("description"),
                     root.get("active"),
-                    operationCountExpr
+                    operationCountExpr,
+                    root.get("catalogNumber"),
+                    root.get("subtype"),
+                    typeJoin.get("name"),
+                    familyJoin.get("name")
             ));
         } else {
             throw new UnsupportedOperationException("Unsupported projection type: " + projectionType.getName());
@@ -113,6 +125,7 @@ public class ProductRepositoryImpl implements ProductRepositoryCustom {
             case "id", "productId" -> root.get("id");
             case "productName" -> root.get("productName");
             case "productCode" -> root.get("productCode");
+            case "catalogNumber" -> root.get("catalogNumber");
             case "description" -> root.get("description");
             case "active" -> root.get("active");
             case "createdAt" -> root.get("createdAt");
