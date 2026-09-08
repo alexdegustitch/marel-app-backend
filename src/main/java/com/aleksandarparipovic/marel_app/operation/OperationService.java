@@ -44,6 +44,7 @@ public class OperationService {
     private final OperationDetailService operationDetailService;
     private final OperationNormInForceService normInForce;
     private final OperationNormVersionRepository normVersionRepository;
+    private final com.aleksandarparipovic.marel_app.product_type_operation.ProductTypeOperationRepository productTypeOperationRepository;
 
     private WorkCodeCategory resolveWorkCodeCategory(Long id) {
         if (id == null) {
@@ -327,6 +328,78 @@ public class OperationService {
             // The copy starts its norm history where the source is today —
             // same reason create() records one: a norm the version table never
             // saw is a norm the audit trail cannot explain.
+            normInForce.recordCurrentFromOperation(copy, normInForce.currentUser());
+            copied.add(copy.getOpName());
+        }
+
+        return new CopyOperationsResult(copied, skipped);
+    }
+
+    /**
+     * Copies a product type's TEMPLATE operations onto a product — the "preuzmi
+     * operacije tipa" flow when a product is created or edited. Each id names a
+     * template operation ({@code product_type_operations}); the copy takes its
+     * definition (name, category, suggested norm, units, description) and starts
+     * its own norm history there.
+     *
+     * <p>The template carries no norm DATE, so the copy is left undated: when it
+     * has a suggested norm it is recorded as a provisional ("privremena") norm —
+     * a norm without a date, by the operation's own definition — for the product's
+     * real dated norm to replace later. What it deliberately does NOT bring: any
+     * link back to the template. Once copied, the operation is fully independent;
+     * editing or retiring the template never touches it (a snapshot).
+     *
+     * <p>Duplicates are skipped, not refused, exactly like
+     * {@link #copyOperationsToProduct}: a name the target already carries live
+     * (case-insensitively), an id repeated in the batch, or a retired template.
+     */
+    @Transactional
+    public CopyOperationsResult copyTypeOperationsToProduct(CopyTypeOperationsRequest request) {
+        Product target = productRepository.findByIdAndArchivedAtIsNull(request.getTargetProductId())
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+
+        Set<String> takenNames = operationRepository
+                .findByProductIdAndArchivedAtIsNull(target.getId())
+                .stream()
+                .map(o -> o.getOpName().toLowerCase(java.util.Locale.ROOT))
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
+
+        List<String> copied = new java.util.ArrayList<>();
+        List<String> skipped = new java.util.ArrayList<>();
+        Set<Long> seenIds = new HashSet<>();
+
+        for (Long templateId : request.getProductTypeOperationIds()) {
+            if (templateId == null || !seenIds.add(templateId)) {
+                continue;
+            }
+            var template = productTypeOperationRepository.findById(templateId)
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "Operacija tipa nije pronađena: " + templateId));
+            if (Boolean.FALSE.equals(template.getIsActive())) {
+                skipped.add(template.getOpName());
+                continue;
+            }
+            if (!takenNames.add(template.getOpName().toLowerCase(java.util.Locale.ROOT))) {
+                skipped.add(template.getOpName());
+                continue;
+            }
+
+            Operation copy = new Operation();
+            copy.setProduct(target);
+            copy.setOpName(template.getOpName());
+            copy.setDescription(template.getDescription());
+            copy.setWorkCodeCategory(template.getWorkCodeCategory());
+            copy.setNormRequired(Boolean.TRUE.equals(template.getNormRequired()));
+            copy.setMinNorm(template.getDefaultMinNorm());
+            copy.setMaxNorm(template.getDefaultMaxNorm());
+            copy.setUnitsPerProduct(template.getDefaultUnitsPerProduct());
+            // The template has no date; a defaulted norm is therefore undated, which
+            // is precisely what "privremena" means on an operation. The person
+            // entering the product's real norm dates it then.
+            copy.setNormDate(null);
+            copy.setTemporary(hasNormValue(template.getDefaultMinNorm(), template.getDefaultMaxNorm()));
+            copy = operationRepository.save(copy);
+
             normInForce.recordCurrentFromOperation(copy, normInForce.currentUser());
             copied.add(copy.getOpName());
         }

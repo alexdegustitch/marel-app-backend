@@ -47,6 +47,18 @@ public class OperationController {
         return ResponseEntity.ok(operationService.copyOperationsToProduct(request));
     }
 
+    /**
+     * Copy a product type's TEMPLATE operations onto a product — the "preuzmi
+     * operacije tipa" flow. The copies are independent from that moment on; names
+     * the target already carries are skipped, not refused.
+     */
+    @PostMapping("/copy-from-type")
+    public ResponseEntity<CopyOperationsResult> copyFromType(
+            @Valid @RequestBody CopyTypeOperationsRequest request
+    ) {
+        return ResponseEntity.ok(operationService.copyTypeOperationsToProduct(request));
+    }
+
     @GetMapping("/active-operations-for-product/id={id}&date={date}")
     public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(@PathVariable Long id, @PathVariable LocalDate date){
         List<OperationBasicInfoDto> operationBasicInfoDtos = operationService.getAllOperationsForProduct(id, date);

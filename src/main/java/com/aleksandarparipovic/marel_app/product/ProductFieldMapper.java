@@ -39,6 +39,10 @@ public final class ProductFieldMapper implements EntityFieldMapper<Product> {
                     // filtering by type or family therefore returns only categorised products.
                     Map.entry("productTypeId", (root, cb, jm) -> root.get("productType").get("id")),
                     Map.entry("familyId", (root, cb, jm) -> root.get("productType").get("family").get("id")),
+                    // The type's code ("CESp/CNT") — half of the product's visible "kod"
+                    // (type code + subtype). A LEFT join so global search over it never
+                    // drops the uncategorised products, which have no type.
+                    Map.entry("typeCode", (root, cb, jm) -> typeJoin(jm).get("code")),
                     Map.entry("operationId", (root, cb, jm) -> activeOperationJoin(jm, cb).get("id")),
                     Map.entry("operationName", (root, cb, jm) -> activeOperationJoin(jm, cb).get("opName")),
                     Map.entry("operationDescription", (root, cb, jm) -> activeOperationJoin(jm, cb).get("description")),
@@ -59,6 +63,14 @@ public final class ProductFieldMapper implements EntityFieldMapper<Product> {
         return operations;
     }
 
+    /**
+     * A LEFT join to the product's type, so a path through it (the type code)
+     * does not turn into an inner join that would drop the uncategorised products.
+     */
+    private static Join<Product, ?> typeJoin(JoinManager<Product> joinManager) {
+        return joinManager.join("productType", JoinType.LEFT);
+    }
+
     @Override
     public Path<?> resolvePath(String fieldName, Root<Product> root, CriteriaBuilder cb, JoinManager<Product> joinManager) {
         TriFunction<Root<Product>, CriteriaBuilder, JoinManager<Product>, Path<?>> resolver = FIELD_MAP.get(fieldName);
@@ -70,6 +82,9 @@ public final class ProductFieldMapper implements EntityFieldMapper<Product> {
 
     @Override
     public List<String> getGlobalSearchFields() {
-        return List.of("productName", "productCode", "description", "operationName");
+        // The catalogue's global search: name, the product code (type code +
+        // subtype), catalogue number, description and operation name. Deliberately
+        // NOT productCode ("šifra") — it is a legacy field the business no longer uses.
+        return List.of("productName", "typeCode", "subtype", "catalogNumber", "description", "operationName");
     }
 }
