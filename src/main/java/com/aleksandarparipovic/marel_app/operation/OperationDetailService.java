@@ -22,6 +22,8 @@ import com.aleksandarparipovic.marel_app.user.UserRepository;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -352,7 +354,9 @@ public class OperationDetailService {
         Map<Long, Long> agreed = orderProgressService.agreedRequirementForOperation(operationId);
 
         return productionOrderLineItemRepository
-                .findOrderRowsByProductId(operation.getProduct().getId())
+                .findOrderRowsByProductId(operation.getProduct().getId(), null,
+                        JpaSort.unsafe(Sort.Direction.DESC, "po.orderDate")
+                                .and(JpaSort.unsafe(Sort.Direction.DESC, "po.id")))
                 .stream()
                 .map(row -> {
                     Long fromScope = agreed.get(row.orderId());
@@ -383,7 +387,10 @@ public class OperationDetailService {
     @Transactional(readOnly = true)
     public List<ProductSampleOrderRow> getSampleOrders(Long operationId) {
         Operation operation = requireOperation(operationId);
-        return sampleOrderLineItemRepository.findOrderRowsByProductId(operation.getProduct().getId());
+        return sampleOrderLineItemRepository.findOrderRowsByProductId(
+                operation.getProduct().getId(), null,
+                JpaSort.unsafe(Sort.Direction.DESC, "so.creationDate")
+                        .and(JpaSort.unsafe(Sort.Direction.DESC, "so.id")));
     }
 
     // ── What was actually worked ────────────────────────────────────────────

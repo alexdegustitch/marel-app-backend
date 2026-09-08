@@ -35,6 +35,18 @@ public class OperationController {
         return ResponseEntity.ok(operationService.getStats());
     }
 
+    /**
+     * Copy existing operations onto a product — the product page's "add from
+     * catalogue" and "take over another product's operations" flows. Names the
+     * target already carries are skipped, not refused; the result says which.
+     */
+    @PostMapping("/copy-to-product")
+    public ResponseEntity<CopyOperationsResult> copyToProduct(
+            @Valid @RequestBody CopyOperationsRequest request
+    ) {
+        return ResponseEntity.ok(operationService.copyOperationsToProduct(request));
+    }
+
     @GetMapping("/active-operations-for-product/id={id}&date={date}")
     public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(@PathVariable Long id, @PathVariable LocalDate date){
         List<OperationBasicInfoDto> operationBasicInfoDtos = operationService.getAllOperationsForProduct(id, date);

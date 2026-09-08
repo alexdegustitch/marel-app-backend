@@ -62,4 +62,24 @@ public interface ProductRepository
     boolean catalogNumberTakenByAnother(@Param("catalogNumber") String catalogNumber,
                                         @Param("excludeId") Long excludeId);
 
+    /** "Does another live product already carry this name" — for renames. */
+    @Query("""
+            select count(p) > 0 from Product p
+            where p.archivedAt is null
+              and lower(p.productName) = lower(:productName)
+              and (:excludeId is null or p.id <> :excludeId)
+            """)
+    boolean productNameTakenByAnother(@Param("productName") String productName,
+                                      @Param("excludeId") Long excludeId);
+
+    /** "Does another live product already carry this code" — for code edits. */
+    @Query("""
+            select count(p) > 0 from Product p
+            where p.archivedAt is null
+              and lower(p.productCode) = lower(:productCode)
+              and (:excludeId is null or p.id <> :excludeId)
+            """)
+    boolean productCodeTakenByAnother(@Param("productCode") String productCode,
+                                      @Param("excludeId") Long excludeId);
+
 }

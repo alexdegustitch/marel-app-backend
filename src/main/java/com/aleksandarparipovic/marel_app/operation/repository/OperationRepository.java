@@ -45,6 +45,13 @@ where o.id = :id
     List<Operation> findByProductIdAndArchivedAtIsNull(Long productId);
 
     /**
+     * Operations that were archived BECAUSE their product was archived — the
+     * ones a product restore is allowed to bring back. Operations archived on
+     * their own stay archived.
+     */
+    List<Operation> findByProductIdAndArchivedByProductTrue(Long productId);
+
+    /**
      * The board's four figures in one query, over the same population the
      * search grid shows: live operations, whatever the state of their product.
      */

@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.sample_order_line_item.repository;
 
 import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
 import com.aleksandarparipovic.marel_app.sample_order_line_item.SampleOrderLineItem;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -32,8 +33,10 @@ public interface SampleOrderLineItemRepository extends JpaRepository<SampleOrder
     List<SampleOrderLineItem> findActiveWithProductByOrderIds(@Param("orderIds") List<Long> orderIds);
 
     /**
-     * Every live sample order the product appears on, newest first. Same
-     * both-sides filtering as the production-order query.
+     * Every live sample order the product appears on. Same both-sides
+     * filtering as the production-order query. Ordering comes from the caller
+     * (the product page sorts server-side); {@code pattern} is a ready-made
+     * lower-cased LIKE pattern over order name, or null for "all".
      */
     @Query("""
             select new com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow(
@@ -45,7 +48,11 @@ public interface SampleOrderLineItemRepository extends JpaRepository<SampleOrder
               and li.archivedAt is null
               and so.isActive = true
               and so.archivedAt is null
-            order by so.creationDate desc nulls last, so.id desc
+              and (:pattern is null
+                   or lower(so.name) like :pattern
+                   or lower(li.catalogNo) like :pattern)
             """)
-    List<ProductSampleOrderRow> findOrderRowsByProductId(@Param("productId") Long productId);
+    List<ProductSampleOrderRow> findOrderRowsByProductId(@Param("productId") Long productId,
+                                                         @Param("pattern") String pattern,
+                                                         Sort sort);
 }

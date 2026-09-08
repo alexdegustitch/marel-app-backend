@@ -1,8 +1,13 @@
 package com.aleksandarparipovic.marel_app.product;
 
+import com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.common.LikePattern;
+import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.operation.OperationMapper;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
+import com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus;
 import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductUpdateRequest;
@@ -26,10 +31,14 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +55,7 @@ public class ProductService {
     private final ProductTypeRepository productTypeRepository;
     private final ProductionOrderLineItemRepository productionOrderLineItemRepository;
     private final SampleOrderLineItemRepository sampleOrderLineItemRepository;
+    private final PasswordConfirmationService passwordConfirmation;
 
     @Transactional
     @CacheEvict(value = "product-options", allEntries = true)
@@ -83,10 +93,10 @@ public class ProductService {
     }
 
     /**
-     * Edit a product's catalogue placement and fields — how an existing,
-     * uncategorised product is filed under a type. Null leaves a field alone; a
-     * blank string clears an optional text field. Name, code, description and
-     * active status are out of scope here.
+     * Edit a product from its detail page, one field at a time. Null leaves a
+     * field alone; a blank string clears an optional text field. The name is
+     * the exception — a provided blank name is refused rather than treated as
+     * "leave it", because a product without a name is not a product.
      */
     @Transactional
     @CacheEvict(value = "product-options", allEntries = true)
@@ -94,8 +104,35 @@ public class ProductService {
         Product product = productRepository.findByIdAndArchivedAtIsNull(productId)
                 .orElseThrow(() -> new EntityNotFoundException("Product not found"));
 
+        if (request.getProductName() != null) {
+            String productName = request.getProductName().trim();
+            if (productName.isEmpty()) {
+                throw new IllegalArgumentException("Naziv proizvoda je obavezan.");
+            }
+            if (productRepository.productNameTakenByAnother(productName, productId)) {
+                throw new IllegalArgumentException("Proizvod sa tim nazivom već postoji.");
+            }
+            product.setProductName(productName);
+        }
+        if (request.getProductCode() != null) {
+            String productCode = blankToNull(request.getProductCode());
+            if (productCode != null
+                    && productRepository.productCodeTakenByAnother(productCode, productId)) {
+                throw new IllegalArgumentException("Proizvod sa tim kodom već postoji.");
+            }
+            product.setProductCode(productCode);
+        }
+        if (request.getDescription() != null) {
+            product.setDescription(blankToNull(request.getDescription()));
+        }
+        if (request.getActive() != null) {
+            product.setActive(request.getActive());
+        }
         if (request.getProductTypeId() != null) {
-            product.setProductType(resolveType(request.getProductTypeId()));
+            // 0 is the "clear it" sentinel — null already means "leave it".
+            product.setProductType(request.getProductTypeId() == 0
+                    ? null
+                    : resolveType(request.getProductTypeId()));
         }
         if (request.getCatalogNumber() != null) {
             String catalogNumber = blankToNull(request.getCatalogNumber());
@@ -161,18 +198,152 @@ public class ProductService {
                 .toList();
     }
 
-    /** Production orders this product appears on. */
+    /**
+     * The sortable columns of the two order tables on the product page, by the
+     * UI's field name. Whitelists, because the sort path goes into the query
+     * verbatim via {@link JpaSort#unsafe} — an unknown field must answer 400,
+     * not reach the database.
+     */
+    private static final Map<String, String> PRODUCTION_ORDER_SORTS = Map.of(
+            "code", "po.code",
+            "name", "po.name",
+            "status", "po.status",
+            "orderDate", "po.orderDate",
+            "deliveryDeadline", "po.deliveryDeadline",
+            "quantity", "li.quantity"
+    );
+
+    private static final Map<String, String> SAMPLE_ORDER_SORTS = Map.of(
+            "name", "so.name",
+            "status", "so.status",
+            "creationDate", "so.creationDate",
+            "deadlineDate", "so.deadlineDate",
+            "quantity", "li.quantity",
+            "catalogNo", "li.catalogNo"
+    );
+
+    /** Production orders this product appears on — searched and sorted server-side. */
     @Transactional(readOnly = true)
-    public List<ProductProductionOrderRow> getProductProductionOrders(Long productId) {
+    public List<ProductProductionOrderRow> getProductProductionOrders(
+            Long productId, String query, String sortBy, String direction) {
         requireProduct(productId);
-        return productionOrderLineItemRepository.findOrderRowsByProductId(productId);
+        return productionOrderLineItemRepository.findOrderRowsByProductId(
+                productId,
+                toPattern(query),
+                orderSort(PRODUCTION_ORDER_SORTS, sortBy, direction, "po.orderDate", "po.id"));
     }
 
-    /** Sample orders this product appears on. */
+    /** Sample orders this product appears on — searched and sorted server-side. */
     @Transactional(readOnly = true)
-    public List<ProductSampleOrderRow> getProductSampleOrders(Long productId) {
+    public List<ProductSampleOrderRow> getProductSampleOrders(
+            Long productId, String query, String sortBy, String direction) {
         requireProduct(productId);
-        return sampleOrderLineItemRepository.findOrderRowsByProductId(productId);
+        return sampleOrderLineItemRepository.findOrderRowsByProductId(
+                productId,
+                toPattern(query),
+                orderSort(SAMPLE_ORDER_SORTS, sortBy, direction, "so.creationDate", "so.id"));
+    }
+
+    private static String toPattern(String query) {
+        return (query == null || query.isBlank()) ? null : LikePattern.contains(query.trim());
+    }
+
+    /**
+     * The caller's sort resolved against a whitelist, with the id as the
+     * tie-breaker so the order is stable. No sort asked for = newest first.
+     */
+    private static Sort orderSort(Map<String, String> whitelist, String sortBy,
+                                  String direction, String defaultPath, String idPath) {
+        Sort.Direction dir = "ASC".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        String path;
+        if (sortBy == null || sortBy.isBlank()) {
+            path = defaultPath;
+            dir = Sort.Direction.DESC;
+        } else {
+            path = whitelist.get(sortBy);
+            if (path == null) {
+                throw new IllegalArgumentException("Nepoznata kolona za sortiranje: " + sortBy);
+            }
+        }
+        return JpaSort.unsafe(dir, path).and(JpaSort.unsafe(Sort.Direction.DESC, idPath));
+    }
+
+    /**
+     * Why this product cannot be archived right now, as sentences the modal can
+     * print. An empty list means it may be archived. The rule mirrors the
+     * operation-level one a level up: no LIVE order may still be counting on
+     * this product — a production order blocks until it is delivered, a sample
+     * order until it is closed.
+     */
+    @Transactional(readOnly = true)
+    public List<String> getArchiveBlockers(Long productId) {
+        requireProduct(productId);
+        List<String> blockers = new ArrayList<>();
+
+        for (ProductProductionOrderRow order : productionOrderLineItemRepository
+                .findOrderRowsByProductId(productId, null,
+                        JpaSort.unsafe(Sort.Direction.DESC, "po.orderDate"))) {
+            if (order.status() != ProductionOrderStatus.DELIVERED) {
+                blockers.add("Nalog %s nije isporučen".formatted(order.code()));
+            }
+        }
+
+        for (ProductSampleOrderRow sample : sampleOrderLineItemRepository
+                .findOrderRowsByProductId(productId, null,
+                        JpaSort.unsafe(Sort.Direction.DESC, "so.creationDate"))) {
+            if (!CLOSED_SAMPLE_STATUS.equalsIgnoreCase(sample.status())) {
+                blockers.add("Nalog za uzorak „%s“ nije zatvoren".formatted(sample.name()));
+            }
+        }
+
+        return blockers;
+    }
+
+    /** The one sample-order status that means the work is over (see OperationDetailService). */
+    private static final String CLOSED_SAMPLE_STATUS = "closed";
+
+    /**
+     * Archives a product, with the caller's password as the signature under
+     * the action. The product's live operations go with it, marked
+     * {@code archivedByProduct} so a restore knows which ones to bring back —
+     * an operation archived on its own stays archived either way.
+     */
+    @Transactional
+    @CacheEvict(value = "product-options", allEntries = true)
+    public void archiveProduct(Long productId, String password, Authentication authentication) {
+        passwordConfirmation.confirm(authentication, password);
+
+        Product product = productRepository.findByIdAndArchivedAtIsNull(productId)
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+
+        List<String> blockers = getArchiveBlockers(productId);
+        if (!blockers.isEmpty()) {
+            throw new ConflictException(
+                    "Proizvod se ne može arhivirati dok postoje otvoreni nalozi: "
+                            + String.join("; ", blockers));
+        }
+
+        for (Operation operation : operationRepository.findByProductIdAndArchivedAtIsNull(productId)) {
+            operation.archive();
+            operation.setArchivedByProduct(true);
+        }
+        product.archive();
+    }
+
+    /** Brings an archived product back, together with the operations its archive took down. */
+    @Transactional
+    @CacheEvict(value = "product-options", allEntries = true)
+    public void restoreProduct(Long productId) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+        if (!product.isArchived()) {
+            return;
+        }
+        product.reactivate();
+        for (Operation operation : operationRepository.findByProductIdAndArchivedByProductTrue(productId)) {
+            operation.reactivate();
+            operation.setArchivedByProduct(false);
+        }
     }
 
     /**

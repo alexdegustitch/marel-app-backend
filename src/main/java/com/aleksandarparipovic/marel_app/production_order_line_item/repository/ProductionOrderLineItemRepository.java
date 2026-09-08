@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.production_order_line_item.repository;
 
 import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
 import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -36,9 +37,12 @@ public interface ProductionOrderLineItemRepository extends JpaRepository<Product
     List<ProductionOrderLineItem> findActiveWithProductByOrderIds(@Param("productionOrderIds") List<Long> productionOrderIds);
 
     /**
-     * Every live production order the product appears on, newest first.
+     * Every live production order the product appears on.
      * Archived or deactivated lines and orders are excluded on both sides — a
      * removed line must not resurrect the order on the product's page.
+     * Ordering comes from the caller (the product page sorts server-side);
+     * {@code pattern} is a ready-made lower-cased LIKE pattern over the
+     * order's code and name, or null for "all".
      */
     @Query("""
             select new com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow(
@@ -50,7 +54,11 @@ public interface ProductionOrderLineItemRepository extends JpaRepository<Product
               and li.archivedAt is null
               and po.isActive = true
               and po.archivedAt is null
-            order by po.orderDate desc nulls last, po.id desc
+              and (:pattern is null
+                   or lower(po.code) like :pattern
+                   or lower(po.name) like :pattern)
             """)
-    List<ProductProductionOrderRow> findOrderRowsByProductId(@Param("productId") Long productId);
+    List<ProductProductionOrderRow> findOrderRowsByProductId(@Param("productId") Long productId,
+                                                             @Param("pattern") String pattern,
+                                                             Sort sort);
 }

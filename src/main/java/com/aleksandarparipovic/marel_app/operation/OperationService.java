@@ -265,6 +265,75 @@ public class OperationService {
         );
     }
 
+    /**
+     * Copies existing operations onto a product — the "dodaj iz kataloga" /
+     * "preuzmi od proizvoda" flows on the product page. Each id names a LIVE
+     * source operation; the copy takes the operation's definition (name,
+     * category, norm, units, description) and starts its own norm history at
+     * the copied values. What it deliberately does NOT take: the source's norm
+     * version history, work logs, or archive state — the copy is a new
+     * operation that happens to start where the source is today.
+     *
+     * <p>Duplicates are skipped, not refused: a name the target already
+     * carries live (compared case-insensitively, matching
+     * {@code uq_operations_product_op_name_ci}), an id repeated in the batch,
+     * or a source already belonging to the target. The result names both
+     * halves so the modal can say what happened.
+     */
+    @Transactional
+    public CopyOperationsResult copyOperationsToProduct(CopyOperationsRequest request) {
+        Product target = productRepository.findByIdAndArchivedAtIsNull(request.getTargetProductId())
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+
+        Set<String> takenNames = operationRepository
+                .findByProductIdAndArchivedAtIsNull(target.getId())
+                .stream()
+                .map(o -> o.getOpName().toLowerCase(java.util.Locale.ROOT))
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
+
+        List<String> copied = new java.util.ArrayList<>();
+        List<String> skipped = new java.util.ArrayList<>();
+        Set<Long> seenIds = new HashSet<>();
+
+        for (Long operationId : request.getOperationIds()) {
+            if (operationId == null || !seenIds.add(operationId)) {
+                continue;
+            }
+            Operation source = operationRepository.findById(operationId)
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "Operacija nije pronađena: " + operationId));
+            if (source.isArchived() || source.getProduct().getId().equals(target.getId())) {
+                skipped.add(source.getOpName());
+                continue;
+            }
+            if (!takenNames.add(source.getOpName().toLowerCase(java.util.Locale.ROOT))) {
+                skipped.add(source.getOpName());
+                continue;
+            }
+
+            Operation copy = new Operation();
+            copy.setProduct(target);
+            copy.setOpName(source.getOpName());
+            copy.setDescription(source.getDescription());
+            copy.setWorkCodeCategory(source.getWorkCodeCategory());
+            copy.setNormRequired(source.isNormRequired());
+            copy.setMinNorm(source.getMinNorm());
+            copy.setMaxNorm(source.getMaxNorm());
+            copy.setUnitsPerProduct(source.getUnitsPerProduct());
+            copy.setNormDate(source.getNormDate());
+            copy.setTemporary(source.isTemporary());
+            copy = operationRepository.save(copy);
+
+            // The copy starts its norm history where the source is today —
+            // same reason create() records one: a norm the version table never
+            // saw is a norm the audit trail cannot explain.
+            normInForce.recordCurrentFromOperation(copy, normInForce.currentUser());
+            copied.add(copy.getOpName());
+        }
+
+        return new CopyOperationsResult(copied, skipped);
+    }
+
     private static boolean hasNormValue(Integer minNorm, Integer maxNorm) {
         return minNorm != null || maxNorm != null;
     }

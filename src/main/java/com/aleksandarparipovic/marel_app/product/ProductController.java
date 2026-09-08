@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.product;
 
+import com.aleksandarparipovic.marel_app.common.ArchiveConfirmationRequest;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
@@ -15,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -51,13 +53,48 @@ public class ProductController {
     }
 
     @GetMapping("/{productId}/production-orders")
-    public ResponseEntity<List<ProductProductionOrderRow>> getProductProductionOrders(@PathVariable Long productId) {
-        return ResponseEntity.ok(productService.getProductProductionOrders(productId));
+    public ResponseEntity<List<ProductProductionOrderRow>> getProductProductionOrders(
+            @PathVariable Long productId,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String direction
+    ) {
+        return ResponseEntity.ok(
+                productService.getProductProductionOrders(productId, query, sortBy, direction));
     }
 
     @GetMapping("/{productId}/sample-orders")
-    public ResponseEntity<List<ProductSampleOrderRow>> getProductSampleOrders(@PathVariable Long productId) {
-        return ResponseEntity.ok(productService.getProductSampleOrders(productId));
+    public ResponseEntity<List<ProductSampleOrderRow>> getProductSampleOrders(
+            @PathVariable Long productId,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String direction
+    ) {
+        return ResponseEntity.ok(
+                productService.getProductSampleOrders(productId, query, sortBy, direction));
+    }
+
+    /** Why the product cannot be archived right now; an empty list means it can. */
+    @GetMapping("/{productId}/archive-blockers")
+    public ResponseEntity<List<String>> getArchiveBlockers(@PathVariable Long productId) {
+        return ResponseEntity.ok(productService.getArchiveBlockers(productId));
+    }
+
+    /** Archive, signed with the caller's re-typed password. Takes the live operations with it. */
+    @PostMapping("/{productId}/archive")
+    public ResponseEntity<Void> archiveProduct(
+            @PathVariable Long productId,
+            @Valid @RequestBody ArchiveConfirmationRequest request,
+            Authentication authentication
+    ) {
+        productService.archiveProduct(productId, request.getPassword(), authentication);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{productId}/restore")
+    public ResponseEntity<Void> restoreProduct(@PathVariable Long productId) {
+        productService.restoreProduct(productId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/stats")
