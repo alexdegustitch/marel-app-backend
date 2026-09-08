@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
+import com.aleksandarparipovic.marel_app.product.dto.ProductUpdateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductOptionDto;
 import com.aleksandarparipovic.marel_app.product.dto.ProductStatsRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
@@ -33,6 +34,15 @@ public class ProductController {
     @GetMapping("/{productId}")
     public ResponseEntity<ProductBaseRow> getProduct(@PathVariable Long productId) {
         return ResponseEntity.ok(productService.getProduct(productId));
+    }
+
+    /** Edit a product's catalogue placement and fields (type, catalog number, subtype…). */
+    @PatchMapping("/{productId}")
+    public ResponseEntity<ProductBaseRow> updateProduct(
+            @PathVariable Long productId,
+            @Valid @RequestBody ProductUpdateRequest request
+    ) {
+        return ResponseEntity.ok(productService.updateProduct(productId, request));
     }
 
     @GetMapping("/{productId}/operations")

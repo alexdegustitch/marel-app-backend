@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.product;
 
 import com.aleksandarparipovic.marel_app.operation.Operation;
+import com.aleksandarparipovic.marel_app.product_type.ProductType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -29,6 +30,31 @@ public class Product {
 
     @Column(name = "description")
     private String description;
+
+    /**
+     * The catalogue type this product belongs to, when it belongs to one.
+     * NULL means uncategorised/administration — a permanent, valid answer.
+     * The type owns the spec schema this product's attribute values fill in.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_type_id")
+    private ProductType productType;
+
+    /** The catalogue number (e.g. 390010). Unique among products that carry one. */
+    @Column(name = "catalog_number", length = 50)
+    private String catalogNumber;
+
+    /** The discriminator inside the code (CBM 95 → 95). A label, not a hierarchy level. */
+    @Column(name = "subtype", length = 50)
+    private String subtype;
+
+    /** Free-text person responsible for the product. Optional. */
+    @Column(name = "supervisor_name")
+    private String supervisorName;
+
+    /** Optional shown-name override. When null the display name is productName [+ " " + subtype]. */
+    @Column(name = "display_name")
+    private String displayName;
 
     @Column(name = "is_active", nullable = false)
     private boolean active = true;

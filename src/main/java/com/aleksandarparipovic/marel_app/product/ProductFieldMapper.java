@@ -33,6 +33,12 @@ public final class ProductFieldMapper implements EntityFieldMapper<Product> {
                     Map.entry("createdAt", (root, cb, jm) -> root.get("createdAt")),
                     Map.entry("updatedAt", (root, cb, jm) -> root.get("updatedAt")),
                     Map.entry("archivedAt", (root, cb, jm) -> root.get("archivedAt")),
+                    Map.entry("catalogNumber", (root, cb, jm) -> root.get("catalogNumber")),
+                    Map.entry("subtype", (root, cb, jm) -> root.get("subtype")),
+                    // Catalogue hierarchy filters. A path through productType joins in;
+                    // filtering by type or family therefore returns only categorised products.
+                    Map.entry("productTypeId", (root, cb, jm) -> root.get("productType").get("id")),
+                    Map.entry("familyId", (root, cb, jm) -> root.get("productType").get("family").get("id")),
                     Map.entry("operationId", (root, cb, jm) -> activeOperationJoin(jm, cb).get("id")),
                     Map.entry("operationName", (root, cb, jm) -> activeOperationJoin(jm, cb).get("opName")),
                     Map.entry("operationDescription", (root, cb, jm) -> activeOperationJoin(jm, cb).get("description")),

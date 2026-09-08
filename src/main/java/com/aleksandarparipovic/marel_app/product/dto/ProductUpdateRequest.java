@@ -1,25 +1,21 @@
 package com.aleksandarparipovic.marel_app.product.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 
+/**
+ * Editing a product's catalogue placement and fields. Null means "leave it";
+ * a blank string clears an optional text field. This is how an existing,
+ * uncategorised product is filed under a type — the whole point of the wiring.
+ *
+ * <p>Name, code, description and active status are not touched here; this request
+ * is scoped to the catalogue fields the hierarchy added.
+ */
 @Getter
 @Setter
-public class ProductCreateRequest {
+public class ProductUpdateRequest {
 
-    @NotBlank(message = "Product name is required")
-    @Size(max = 255, message = "Product name is too long")
-    private String productName;
-
-    @Size(max = 100, message = "Product code is too long")
-    private String productCode;
-
-    @Size(max = 1000, message = "Description is too long")
-    private String description;
-
-    // Catalogue placement + fields. All optional — a product can start uncategorised.
     private Long productTypeId;
 
     @Size(max = 50, message = "Kataloški broj je predugačak.")

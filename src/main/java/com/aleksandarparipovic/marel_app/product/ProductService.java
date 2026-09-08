@@ -5,7 +5,10 @@ import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
 import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
+import com.aleksandarparipovic.marel_app.product.dto.ProductUpdateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductOptionDto;
+import com.aleksandarparipovic.marel_app.product_type.ProductType;
+import com.aleksandarparipovic.marel_app.product_type.ProductTypeRepository;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationCountRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductWithOperationListRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
@@ -40,6 +43,7 @@ public class ProductService {
     private final OperationRepository operationRepository;
     private final OperationMapper operationMapper;
     private final ProductMapper productMapper;
+    private final ProductTypeRepository productTypeRepository;
     private final ProductionOrderLineItemRepository productionOrderLineItemRepository;
     private final SampleOrderLineItemRepository sampleOrderLineItemRepository;
 
@@ -58,14 +62,75 @@ public class ProductService {
             throw new IllegalArgumentException("Product with this code already exists");
         }
 
+        String catalogNumber = blankToNull(request.getCatalogNumber());
+        if (catalogNumber != null && productRepository.catalogNumberTakenByAnother(catalogNumber, null)) {
+            throw new IllegalArgumentException("Proizvod sa tim kataloškim brojem već postoji.");
+        }
+
         Product product = Product.builder()
                 .productName(productName)
                 .productCode(productCode == null || productCode.isBlank() ? null : productCode)
                 .description(request.getDescription())
+                .productType(resolveType(request.getProductTypeId()))
+                .catalogNumber(catalogNumber)
+                .subtype(blankToNull(request.getSubtype()))
+                .supervisorName(blankToNull(request.getSupervisorName()))
+                .displayName(blankToNull(request.getDisplayName()))
                 .active(true)
                 .build();
 
         return productMapper.toBaseRow(productRepository.save(product));
+    }
+
+    /**
+     * Edit a product's catalogue placement and fields — how an existing,
+     * uncategorised product is filed under a type. Null leaves a field alone; a
+     * blank string clears an optional text field. Name, code, description and
+     * active status are out of scope here.
+     */
+    @Transactional
+    @CacheEvict(value = "product-options", allEntries = true)
+    public ProductBaseRow updateProduct(Long productId, ProductUpdateRequest request) {
+        Product product = productRepository.findByIdAndArchivedAtIsNull(productId)
+                .orElseThrow(() -> new EntityNotFoundException("Product not found"));
+
+        if (request.getProductTypeId() != null) {
+            product.setProductType(resolveType(request.getProductTypeId()));
+        }
+        if (request.getCatalogNumber() != null) {
+            String catalogNumber = blankToNull(request.getCatalogNumber());
+            if (catalogNumber != null
+                    && productRepository.catalogNumberTakenByAnother(catalogNumber, productId)) {
+                throw new IllegalArgumentException("Proizvod sa tim kataloškim brojem već postoji.");
+            }
+            product.setCatalogNumber(catalogNumber);
+        }
+        if (request.getSubtype() != null) {
+            product.setSubtype(blankToNull(request.getSubtype()));
+        }
+        if (request.getSupervisorName() != null) {
+            product.setSupervisorName(blankToNull(request.getSupervisorName()));
+        }
+        if (request.getDisplayName() != null) {
+            product.setDisplayName(blankToNull(request.getDisplayName()));
+        }
+
+        return productMapper.toBaseRow(productRepository.save(product));
+    }
+
+    /** Resolve a product type by id, or null when none is given. */
+    private ProductType resolveType(Long productTypeId) {
+        if (productTypeId == null) {
+            return null;
+        }
+        return productTypeRepository.findById(productTypeId)
+                .orElseThrow(() -> new EntityNotFoundException("Tip proizvoda nije pronađen: " + productTypeId));
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     public List<ProductOptionDto> getAllProducts(){
