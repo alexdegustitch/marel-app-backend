@@ -48,8 +48,14 @@ public class ProductController {
     }
 
     @GetMapping("/{productId}/operations")
-    public ResponseEntity<List<OperationDto>> getProductOperations(@PathVariable Long productId) {
-        return ResponseEntity.ok(productService.getProductOperations(productId));
+    public ResponseEntity<List<OperationDto>> getProductOperations(
+            @PathVariable Long productId,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String direction
+    ) {
+        return ResponseEntity.ok(
+                productService.getProductOperations(productId, query, sortBy, direction));
     }
 
     @GetMapping("/{productId}/production-orders")

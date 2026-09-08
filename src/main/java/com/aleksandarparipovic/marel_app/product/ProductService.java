@@ -39,7 +39,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -185,16 +184,28 @@ public class ProductService {
         return productMapper.toBaseRow(product);
     }
 
-    /** The product's live operations, in name order — norms included. */
+    /** The sortable columns of the product page's operations table. */
+    private static final Map<String, String> OPERATION_SORTS = Map.of(
+            "operationName", "opName",
+            "minNorm", "minNorm",
+            "maxNorm", "maxNorm",
+            "normDate", "normDate",
+            "unitsPerProduct", "unitsPerProduct"
+    );
+
+    /** The product's live operations — searched and sorted server-side, norms included. */
     @Transactional(readOnly = true)
-    public List<OperationDto> getProductOperations(Long productId) {
+    public List<OperationDto> getProductOperations(
+            Long productId, String query, String sortBy, String direction) {
         requireProduct(productId);
-        return operationRepository.findByProductIdAndArchivedAtIsNull(productId)
+        Sort sort = (sortBy == null || sortBy.isBlank())
+                // Name order is the page's default, as it always was.
+                ? JpaSort.unsafe(Sort.Direction.ASC, "opName")
+                        .and(JpaSort.unsafe(Sort.Direction.ASC, "id"))
+                : orderSort(OPERATION_SORTS, sortBy, direction, "opName", "id");
+        return operationRepository.searchByProduct(productId, toPattern(query), sort)
                 .stream()
                 .map(operationMapper::toDto)
-                .sorted(Comparator.comparing(
-                        OperationDto::getOperationName,
-                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
                 .toList();
     }
 

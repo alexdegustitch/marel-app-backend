@@ -4,6 +4,7 @@ import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationStatsRow;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductInfoRow;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductNameDto;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Query;
@@ -50,6 +51,24 @@ where o.id = :id
      * their own stay archived.
      */
     List<Operation> findByProductIdAndArchivedByProductTrue(Long productId);
+
+    /**
+     * A product's live operations, searched and sorted for the product page.
+     * {@code pattern} is a ready-made lower-cased LIKE pattern over the
+     * operation's name and description, or null for "all"; ordering comes from
+     * the caller.
+     */
+    @Query("""
+            select o from Operation o
+            where o.product.id = :productId
+              and o.archivedAt is null
+              and (:pattern is null
+                   or lower(o.opName) like :pattern
+                   or lower(o.description) like :pattern)
+            """)
+    List<Operation> searchByProduct(@Param("productId") Long productId,
+                                    @Param("pattern") String pattern,
+                                    Sort sort);
 
     /**
      * The board's four figures in one query, over the same population the
