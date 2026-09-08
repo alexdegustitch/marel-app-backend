@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.department;
 
+import com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService;
 import com.aleksandarparipovic.marel_app.department.dto.DepartmentCreateRequest;
 import com.aleksandarparipovic.marel_app.department.dto.DepartmentDto;
 import com.aleksandarparipovic.marel_app.department.dto.DepartmentOptionDto;
@@ -18,6 +19,7 @@ public class DepartmentService {
 
     private final DepartmentRepository departmentRepository;
     private final DepartmentMapper mapper;
+    private final PasswordConfirmationService passwordConfirmation;
 
     @Transactional
     public DepartmentDto createDepartment(DepartmentCreateRequest request) {
@@ -120,6 +122,13 @@ public class DepartmentService {
 
         department.setActive(false);
         departmentRepository.save(department);
+    }
+
+    /** Archive signed with the caller's re-typed password — the catalogue screen's route. */
+    @Transactional
+    public void softDelete(Long id, String password, org.springframework.security.core.Authentication authentication) {
+        passwordConfirmation.confirm(authentication, password);
+        softDelete(id);
     }
 
     @Transactional

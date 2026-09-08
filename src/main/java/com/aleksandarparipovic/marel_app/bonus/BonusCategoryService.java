@@ -18,13 +18,25 @@ public class BonusCategoryService {
 
     private final BonusCategoryRepository repository;
     private final BonusCategoryMapper mapper;
+    private final com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService passwordConfirmation;
 
 
+    /**
+     * {@code includeArchived} exists for the admin catalogue screen, which lists
+     * archived categories so they can be restored. Every other caller keeps the
+     * old behaviour: an archived category is simply gone from the answer.
+     */
     List<BonusCategoryDto> search(Boolean active,
                                   String code,
-                                  LocalDate validOn){
-        Specification<BonusCategory> spec = Specification
-                .where(BonusCategorySpecifications.notArchived())
+                                  LocalDate validOn,
+                                  boolean includeArchived){
+        // Specification.where(null) is refused by this Spring Data version, so
+        // the base is the empty allOf() and notArchived joins conditionally.
+        Specification<BonusCategory> spec = Specification.allOf();
+        if (!includeArchived) {
+            spec = spec.and(BonusCategorySpecifications.notArchived());
+        }
+        spec = spec
                 .and(BonusCategorySpecifications.isActive(active))
                 .and(BonusCategorySpecifications.hasCode(code))
                 .and(BonusCategorySpecifications.validOn(validOn));
@@ -55,9 +67,16 @@ public class BonusCategoryService {
     @Transactional
     public BonusCategory create(BonusCategory cat) {
         cat.setId(null);
+        requireValidDates(cat);
         return repository.save(cat);
     }
 
+    /**
+     * Edits the fields the form offers. Deliberately NOT touched here:
+     * {@code minHours} (legacy logic the form no longer shows — an edit must not
+     * silently wipe a recorded threshold) and {@code active} (archiving and
+     * restoring own that flag, not the edit form).
+     */
     @Transactional
     public BonusCategory update(Long id, BonusCategory updated) {
         BonusCategory existing = repository.findById(id)
@@ -66,20 +85,35 @@ public class BonusCategoryService {
         existing.setCategoryNo(updated.getCategoryNo());
         existing.setCategoryName(updated.getCategoryName());
         existing.setBonusAmount(updated.getBonusAmount());
-        existing.setMinHours(updated.getMinHours());
         existing.setDescription(updated.getDescription());
-        existing.setActive(updated.isActive());
         existing.setValidFrom(updated.getValidFrom());
         existing.setValidUntil(updated.getValidUntil());
+        requireValidDates(existing);
 
         return repository.save(existing);
     }
 
+    /** Archive, signed with the caller's re-typed password. */
     @Transactional
-    public void archive(Long id) {
+    public void archive(Long id, String password, org.springframework.security.core.Authentication authentication) {
+        passwordConfirmation.confirm(authentication, password);
         BonusCategory c = repository.findById(id).orElseThrow();
         c.setArchivedAt(OffsetDateTime.now());
         c.setActive(false);
         repository.save(c);
+    }
+
+    @Transactional
+    public void restore(Long id) {
+        BonusCategory c = repository.findById(id).orElseThrow();
+        c.setArchivedAt(null);
+        c.setActive(true);
+        repository.save(c);
+    }
+
+    private static void requireValidDates(BonusCategory cat) {
+        if (cat.getValidUntil() != null && cat.getValidUntil().isBefore(cat.getValidFrom())) {
+            throw new IllegalArgumentException("Datum „važi do“ ne može biti pre datuma „važi od“.");
+        }
     }
 }

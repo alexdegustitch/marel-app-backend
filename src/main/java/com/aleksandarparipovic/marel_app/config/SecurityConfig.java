@@ -68,7 +68,20 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/actuator", "/actuator/**").hasRole("developer")
                         .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers("/api/departments/**").permitAll()
+                        /*
+                         * DEPARTMENTS. This whole path was permitAll since the
+                         * beginning — including DELETE, which meant anybody on the
+                         * network could soft-delete a sector with no token at all.
+                         * Nothing public ever needed it: the registration screen
+                         * does not offer a sector, and every consumer (the employee
+                         * screens' picker, the catalogue page) is signed in.
+                         * Tightened 2026-09-08 with the owner's approval: reading
+                         * is any signed-in account, changing them is the same
+                         * capability that owns the catalogue screen.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/departments/**").authenticated()
+                        .requestMatchers("/api/departments/**")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
                         .requestMatchers("/ws/**").permitAll()          // WebSocket endpoint
                         .requestMatchers("/api/admin/**").hasRole("admin")
                         .requestMatchers("/api/users/me").authenticated()

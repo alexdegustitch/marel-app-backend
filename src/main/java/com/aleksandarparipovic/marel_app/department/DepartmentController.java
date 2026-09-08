@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.department;
 
+import com.aleksandarparipovic.marel_app.common.ArchiveConfirmationRequest;
 import com.aleksandarparipovic.marel_app.department.dto.DepartmentCreateRequest;
 import com.aleksandarparipovic.marel_app.department.dto.DepartmentDto;
 import com.aleksandarparipovic.marel_app.department.dto.DepartmentOptionDto;
@@ -10,6 +11,7 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -75,6 +77,20 @@ public class DepartmentController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteDepartment(@PathVariable Long id) {
         departmentService.softDelete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Archive, signed with the caller's password — the route the catalogue
+     * screen uses. The plain DELETE above predates it and stays as it was.
+     */
+    @PostMapping("/{id}/archive")
+    public ResponseEntity<Void> archiveDepartment(
+            @PathVariable Long id,
+            @Valid @RequestBody ArchiveConfirmationRequest request,
+            Authentication authentication
+    ) {
+        departmentService.softDelete(id, request.getPassword(), authentication);
         return ResponseEntity.noContent().build();
     }
 
