@@ -40,6 +40,15 @@
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
+			<!-- AWS SDK v2 BOM: aligns s3 + the http client. Cloudflare R2 is
+			     S3-compatible, so the same client talks to it via an endpoint override. -->
+			<dependency>
+				<groupId>software.amazon.awssdk</groupId>
+				<artifactId>bom</artifactId>
+				<version>2.29.52</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 
@@ -127,6 +136,24 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
+		</dependency>
+
+		<!-- Object storage (Cloudflare R2 in prod, local disk in dev), behind a
+		     FileStorage abstraction. url-connection-client is the lightweight
+		     SDK HTTP client; the s3 module carries the S3Presigner too. -->
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>url-connection-client</artifactId>
+		</dependency>
+		<!-- Pure-Java image downscaling on upload (no native libs). -->
+		<dependency>
+			<groupId>net.coobird</groupId>
+			<artifactId>thumbnailator</artifactId>
+			<version>0.4.20</version>
 		</dependency>
 
 		<dependency>
