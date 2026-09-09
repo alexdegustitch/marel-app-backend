@@ -8,6 +8,9 @@ import com.aleksandarparipovic.marel_app.operation.OperationMapper;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus;
+import com.aleksandarparipovic.marel_app.production_order_progress.OrderProgressService;
+import com.aleksandarparipovic.marel_app.production_order_progress.dto.OrderProgress;
+import com.aleksandarparipovic.marel_app.production_order_progress.dto.ProductProgress;
 import com.aleksandarparipovic.marel_app.product.dto.ProductBaseRow;
 import com.aleksandarparipovic.marel_app.product.dto.ProductCreateRequest;
 import com.aleksandarparipovic.marel_app.product.dto.ProductUpdateRequest;
@@ -55,6 +58,8 @@ public class ProductService {
     private final ProductionOrderLineItemRepository productionOrderLineItemRepository;
     private final SampleOrderLineItemRepository sampleOrderLineItemRepository;
     private final PasswordConfirmationService passwordConfirmation;
+    private final OrderProgressService orderProgressService;
+    private final OpenRequestBlockers openRequestBlockers;
 
     @Transactional
     @CacheEvict(value = "product-options", allEntries = true)
@@ -281,37 +286,54 @@ public class ProductService {
 
     /**
      * Why this product cannot be archived right now, as sentences the modal can
-     * print. An empty list means it may be archived. The rule mirrors the
-     * operation-level one a level up: no LIVE order may still be counting on
-     * this product — a production order blocks until it is delivered, a sample
-     * order until it is closed.
+     * print. An empty list means it may be archived.
+     *
+     * <p>Two rules stand in the way, the same two the operation-level check
+     * applies. An OPEN request — a razrada or a manufacturing-time request that
+     * is waiting or claimed — pins the product (see {@link OpenRequestBlockers}).
+     * And no UNDELIVERED production order may still owe pieces of this product:
+     * a delivered order never blocks, an undelivered one blocks until every
+     * operation its razrada asks of this product is fully done. An undelivered
+     * order with no razrada for the product also blocks — with nothing agreed
+     * to measure against, "unknown" is not "finished". Sample orders do not
+     * block: work is never logged against them, so they owe nothing measurable.
      */
     @Transactional(readOnly = true)
     public List<String> getArchiveBlockers(Long productId) {
         requireProduct(productId);
-        List<String> blockers = new ArrayList<>();
+        List<String> blockers = new ArrayList<>(openRequestBlockers.forProduct(productId));
 
-        for (ProductProductionOrderRow order : productionOrderLineItemRepository
+        List<ProductProductionOrderRow> undelivered = productionOrderLineItemRepository
                 .findOrderRowsByProductId(productId, null,
-                        JpaSort.unsafe(Sort.Direction.DESC, "po.orderDate"))) {
-            if (order.status() != ProductionOrderStatus.DELIVERED) {
-                blockers.add("Nalog %s nije isporučen".formatted(order.code()));
-            }
+                        JpaSort.unsafe(Sort.Direction.DESC, "po.orderDate"))
+                .stream()
+                .filter(order -> order.status() != ProductionOrderStatus.DELIVERED)
+                .toList();
+        if (undelivered.isEmpty()) {
+            return blockers;
         }
 
-        for (ProductSampleOrderRow sample : sampleOrderLineItemRepository
-                .findOrderRowsByProductId(productId, null,
-                        JpaSort.unsafe(Sort.Direction.DESC, "so.creationDate"))) {
-            if (!CLOSED_SAMPLE_STATUS.equalsIgnoreCase(sample.status())) {
-                blockers.add("Nalog za uzorak „%s“ nije zatvoren".formatted(sample.name()));
+        Map<Long, OrderProgress> progressByOrder = orderProgressService.forOrders(
+                undelivered.stream().map(ProductProductionOrderRow::orderId).toList());
+
+        for (ProductProductionOrderRow order : undelivered) {
+            OrderProgress progress = progressByOrder.get(order.orderId());
+            ProductProgress mine = progress == null ? null
+                    : progress.products().stream()
+                            .filter(product -> productId.equals(product.productId()))
+                            .findFirst()
+                            .orElse(null);
+            if (mine == null) {
+                blockers.add("Nalog %s nije isporučen, a nema razradu za ovaj proizvod — završenost ne može da se utvrdi"
+                        .formatted(order.code()));
+            } else if (mine.wholeProductsDone() < mine.requiredProducts()) {
+                blockers.add("Nalog %s nije isporučen: završeno %d od %d komada"
+                        .formatted(order.code(), mine.wholeProductsDone(), mine.requiredProducts()));
             }
         }
 
         return blockers;
     }
-
-    /** The one sample-order status that means the work is over (see OperationDetailService). */
-    private static final String CLOSED_SAMPLE_STATUS = "closed";
 
     /**
      * Archives a product, with the caller's password as the signature under
@@ -330,7 +352,7 @@ public class ProductService {
         List<String> blockers = getArchiveBlockers(productId);
         if (!blockers.isEmpty()) {
             throw new ConflictException(
-                    "Proizvod se ne može arhivirati dok postoje otvoreni nalozi: "
+                    "Proizvod se ne može arhivirati dok postoje otvoreni zahtevi ili nezavršeni nalozi: "
                             + String.join("; ", blockers));
         }
 

@@ -17,6 +17,10 @@ public class OperationWithProductNameDto {
     private Integer unitsPerProduct;
     private Long productId;
     private String productName;
+    /** The product's display name, when it carries one — what its own page titles itself. */
+    private String productDisplayName;
+    /** The product's catalogue number ("kataloški broj"); null when it carries none. */
+    private String catalogNumber;
     private Long workCodeCategoryId;
     // The norm in force was entered without a date on purpose ("privremena").
     // Lets the edit form show the box already ticked.

@@ -1,5 +1,7 @@
 package com.aleksandarparipovic.marel_app.operation;
 
+import com.aleksandarparipovic.marel_app.common.LikePattern;
+import com.aleksandarparipovic.marel_app.product.OpenRequestBlockers;
 import com.aleksandarparipovic.marel_app.production_order_progress.OrderProgressService;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormActivationDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationNormVersionCreateRequest;
@@ -22,6 +24,8 @@ import com.aleksandarparipovic.marel_app.user.UserRepository;
 import com.aleksandarparipovic.marel_app.work_log.repository.WorkLogRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.JpaSort;
 import org.springframework.security.core.Authentication;
@@ -61,6 +65,7 @@ public class OperationDetailService {
     private final WorkLogRepository workLogRepository;
     private final UserRepository userRepository;
     private final OrderProgressService orderProgressService;
+    private final OpenRequestBlockers openRequestBlockers;
 
     // ── Norm history ────────────────────────────────────────────────────────
 
@@ -112,6 +117,7 @@ public class OperationDetailService {
                     version.getMinNorm(),
                     entry.getActivatedAt(),
                     until,
+                    entry.getActivatedBy() == null ? null : entry.getActivatedBy().getId(),
                     entry.getActivatedBy() == null ? null : entry.getActivatedBy().getFullName(),
                     entry.getReason(),
                     entry.getSource().name()
@@ -345,36 +351,96 @@ public class OperationDetailService {
     @Transactional(readOnly = true)
     public List<OperationOrderUsageRow> getProductionOrders(Long operationId) {
         Operation operation = requireOperation(operationId);
-        Integer unitsPerProduct = operation.getUnitsPerProduct();
-
-        Map<Long, Long> doneByOrder = new HashMap<>();
-        workLogRepository.sumOutputPerOrderForOperation(operationId)
-                .forEach(row -> doneByOrder.put(row.getOrderId(), row.getQuantity()));
-
-        Map<Long, Long> agreed = orderProgressService.agreedRequirementForOperation(operationId);
-
         return productionOrderLineItemRepository
                 .findOrderRowsByProductId(operation.getProduct().getId(), null,
                         JpaSort.unsafe(Sort.Direction.DESC, "po.orderDate")
                                 .and(JpaSort.unsafe(Sort.Direction.DESC, "po.id")))
                 .stream()
-                .map(row -> {
-                    Long fromScope = agreed.get(row.orderId());
-                    return new OperationOrderUsageRow(
-                            row.orderId(),
-                            row.code(),
-                            row.name(),
-                            row.status(),
-                            row.orderDate(),
-                            row.deliveryDeadline(),
-                            row.quantity(),
-                            fromScope != null
-                                    ? Math.toIntExact(fromScope)
-                                    : requiredPieces(row.quantity(), unitsPerProduct),
-                            Math.toIntExact(doneByOrder.getOrDefault(row.orderId(), 0L)),
-                            fromScope != null);
-                })
+                .map(usageMapper(operation))
                 .toList();
+    }
+
+    /**
+     * The sortable columns of the two order tables on the operation page, by
+     * the UI's field name. Whitelists, because the sort path goes into the
+     * query verbatim via {@link JpaSort#unsafe} — an unknown field must answer
+     * 400, not reach the database.
+     */
+    private static final Map<String, String> PRODUCTION_ORDER_SORTS = Map.of(
+            "code", "po.code",
+            "name", "po.name",
+            "status", "po.status",
+            "orderDate", "po.orderDate",
+            "deliveryDeadline", "po.deliveryDeadline",
+            "quantity", "li.quantity",
+            "customerName", "cust.name"
+    );
+
+    private static final Map<String, String> SAMPLE_ORDER_SORTS = Map.of(
+            "name", "so.name",
+            "status", "so.status",
+            "creationDate", "so.creationDate",
+            "deadlineDate", "so.deadlineDate",
+            "quantity", "li.quantity",
+            "catalogNo", "li.catalogNo",
+            "customerName", "cust.name"
+    );
+
+    /** The page shows this many orders at a time; the server caps what it is asked for. */
+    public static final int MAX_ORDER_PAGE_SIZE = 50;
+
+    /**
+     * One PAGE of the production orders this operation is worked for — searched,
+     * sorted and paged on the server, so an operation on a thousand orders costs
+     * the same as one on ten. Progress is summed only for the rows on the page.
+     */
+    @Transactional(readOnly = true)
+    public Page<OperationOrderUsageRow> getProductionOrders(
+            Long operationId, String query, String sortBy, String direction, int page, int size) {
+        Operation operation = requireOperation(operationId);
+        Page<com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow> rows =
+                productionOrderLineItemRepository.findOrderPageByProductId(
+                        operation.getProduct().getId(),
+                        toPattern(query),
+                        PageRequest.of(Math.max(0, page), clampSize(size),
+                                orderSort(PRODUCTION_ORDER_SORTS, sortBy, direction, "po.orderDate", "po.id")));
+        return rows.map(usageMapper(operation));
+    }
+
+    /**
+     * How each order stands against THIS operation: what the work logs already
+     * recorded, and what the order's razrada (or, failing that, the catalogue)
+     * says it needs. One function per read, so the two callers — the full list
+     * the archive check walks and the page the screen shows — count the same way.
+     */
+    private java.util.function.Function<
+            com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow,
+            OperationOrderUsageRow> usageMapper(Operation operation) {
+        Integer unitsPerProduct = operation.getUnitsPerProduct();
+
+        Map<Long, Long> doneByOrder = new HashMap<>();
+        workLogRepository.sumOutputPerOrderForOperation(operation.getId())
+                .forEach(row -> doneByOrder.put(row.getOrderId(), row.getQuantity()));
+
+        Map<Long, Long> agreed = orderProgressService.agreedRequirementForOperation(operation.getId());
+
+        return row -> {
+            Long fromScope = agreed.get(row.orderId());
+            return new OperationOrderUsageRow(
+                    row.orderId(),
+                    row.code(),
+                    row.name(),
+                    row.status(),
+                    row.orderDate(),
+                    row.deliveryDeadline(),
+                    row.quantity(),
+                    fromScope != null
+                            ? Math.toIntExact(fromScope)
+                            : requiredPieces(row.quantity(), unitsPerProduct),
+                    Math.toIntExact(doneByOrder.getOrDefault(row.orderId(), 0L)),
+                    fromScope != null,
+                    row.customerName());
+        };
     }
 
     /**
@@ -385,12 +451,53 @@ public class OperationDetailService {
      * has consumed. Showing a zero there would be a claim, not a measurement.
      */
     @Transactional(readOnly = true)
+    public Page<ProductSampleOrderRow> getSampleOrders(
+            Long operationId, String query, String sortBy, String direction, int page, int size) {
+        Operation operation = requireOperation(operationId);
+        return sampleOrderLineItemRepository.findOrderPageByProductId(
+                operation.getProduct().getId(),
+                toPattern(query),
+                PageRequest.of(Math.max(0, page), clampSize(size),
+                        orderSort(SAMPLE_ORDER_SORTS, sortBy, direction, "so.creationDate", "so.id")));
+    }
+
+    /** The full, unpaged list — what the archive check reads. */
+    @Transactional(readOnly = true)
     public List<ProductSampleOrderRow> getSampleOrders(Long operationId) {
         Operation operation = requireOperation(operationId);
         return sampleOrderLineItemRepository.findOrderRowsByProductId(
                 operation.getProduct().getId(), null,
                 JpaSort.unsafe(Sort.Direction.DESC, "so.creationDate")
                         .and(JpaSort.unsafe(Sort.Direction.DESC, "so.id")));
+    }
+
+    private static int clampSize(int size) {
+        return Math.max(1, Math.min(size, MAX_ORDER_PAGE_SIZE));
+    }
+
+    private static String toPattern(String query) {
+        return (query == null || query.isBlank()) ? null : LikePattern.contains(query.trim());
+    }
+
+    /**
+     * The caller's sort resolved against a whitelist, with the id as the
+     * tie-breaker so the order is stable. No sort asked for = newest first.
+     * (The same contract the product page speaks, so the two screens read alike.)
+     */
+    private static Sort orderSort(Map<String, String> whitelist, String sortBy,
+                                  String direction, String defaultPath, String idPath) {
+        Sort.Direction dir = "ASC".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        String path;
+        if (sortBy == null || sortBy.isBlank()) {
+            path = defaultPath;
+            dir = Sort.Direction.DESC;
+        } else {
+            path = whitelist.get(sortBy);
+            if (path == null) {
+                throw new IllegalArgumentException("Nepoznata kolona za sortiranje: " + sortBy);
+            }
+        }
+        return JpaSort.unsafe(dir, path).and(JpaSort.unsafe(Sort.Direction.DESC, idPath));
     }
 
     // ── What was actually worked ────────────────────────────────────────────
@@ -476,46 +583,39 @@ public class OperationDetailService {
      * What stands in the way of archiving this operation, in words the screen
      * can print. An empty list means it may be archived.
      *
-     * <p>The rule: no LIVE order may still owe pieces of this operation. For a
-     * production order that is measurable — required versus done. For a sample
-     * order it is not: work is logged against production orders only, so an
-     * open sample order blocks on its status alone. An active production order
-     * whose requirement cannot be computed (the operation does not say how many
-     * pieces one product needs) also blocks — "unknown" is not "finished".
+     * <p>Two rules stand in the way. An OPEN request — a razrada or a
+     * manufacturing-time request that is waiting or claimed — pins the
+     * operation's product and everything on it (see {@link OpenRequestBlockers}).
+     * And no UNDELIVERED production order may still owe pieces of this
+     * operation: delivered orders never block, an undelivered one blocks until
+     * the operation's part of it is fully done. An undelivered order whose
+     * requirement cannot be computed (no razrada and no quantity-per-product)
+     * also blocks — "unknown" is not "finished". Sample orders do not block:
+     * work is never logged against them, so they owe this operation nothing
+     * measurable.
      */
     @Transactional(readOnly = true)
     public List<String> getArchiveBlockers(Long operationId) {
-        List<String> blockers = new ArrayList<>();
+        Operation operation = requireOperation(operationId);
+        List<String> blockers = new ArrayList<>(
+                openRequestBlockers.forProduct(operation.getProduct().getId()));
 
         for (OperationOrderUsageRow order : getProductionOrders(operationId)) {
             if (order.status() == ProductionOrderStatus.DELIVERED) {
                 continue;
             }
             if (order.requiredPieces() == null) {
-                blockers.add("Nalog %s: nije poznato koliko komada je potrebno (operacija nema količinu u sklopu)"
+                blockers.add("Nalog %s nije isporučen, a nije poznato koliko komada ove operacije traži (nema razradu ni količinu u sklopu)"
                         .formatted(order.code()));
             } else if (order.donePieces() == null || order.donePieces() < order.requiredPieces()) {
                 int done = order.donePieces() == null ? 0 : order.donePieces();
-                blockers.add("Nalog %s: urađeno %d od %d komada"
+                blockers.add("Nalog %s nije isporučen: urađeno %d od %d komada"
                         .formatted(order.code(), done, order.requiredPieces()));
-            }
-        }
-
-        for (ProductSampleOrderRow sample : getSampleOrders(operationId)) {
-            if (!CLOSED_SAMPLE_STATUS.equalsIgnoreCase(sample.status())) {
-                blockers.add("Nalog za uzorak „%s“ nije zatvoren".formatted(sample.name()));
             }
         }
 
         return blockers;
     }
-
-    /**
-     * The one sample-order status that means the work is over. Sample-order
-     * status is a free-form column, so only the value the schema evidences
-     * (`closed`, alongside the `closed_by` actor) is treated as final.
-     */
-    private static final String CLOSED_SAMPLE_STATUS = "closed";
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -551,13 +651,17 @@ public class OperationDetailService {
                 version.getNormDate(),
                 version.getNote(),
                 version.getCreatedAt(),
+                version.getCreatedBy() == null ? null : version.getCreatedBy().getId(),
                 version.getCreatedBy() == null ? null : version.getCreatedBy().getFullName(),
                 version.getVerifiedAt(),
+                version.getVerifiedBy() == null ? null : version.getVerifiedBy().getId(),
                 version.getVerifiedBy() == null ? null : version.getVerifiedBy().getFullName(),
                 version.isCurrent(),
                 version.isTemporary(),
                 version.getArchivedAt(),
                 lastActivation == null ? null : lastActivation.getActivatedAt(),
+                lastActivation == null || lastActivation.getActivatedBy() == null
+                        ? null : lastActivation.getActivatedBy().getId(),
                 lastActivation == null || lastActivation.getActivatedBy() == null
                         ? null : lastActivation.getActivatedBy().getFullName()
         );

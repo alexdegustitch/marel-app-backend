@@ -9,11 +9,20 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface ManufacturingTimeRequestRepository
         extends JpaRepository<ManufacturingTimeRequest, Long> {
+
+    /**
+     * The product's requests in the given states — the archive check asks for
+     * the OPEN ones, because a request still being processed pins its product.
+     */
+    List<ManufacturingTimeRequest> findByProduct_IdAndStatusIn(
+            Long productId, Collection<ManufacturingTimeRequestStatus> statuses);
 
     @Query("""
             select r

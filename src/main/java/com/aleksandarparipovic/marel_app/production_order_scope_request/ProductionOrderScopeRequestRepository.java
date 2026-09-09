@@ -42,6 +42,23 @@ public interface ProductionOrderScopeRequestRepository
     Optional<ProductionOrderScopeRequest> findByIdForUpdate(@Param("id") Long id);
 
     /**
+     * The requests in the given states whose order includes the product — the
+     * archive check asks for the OPEN ones. Covers the product's operations
+     * too: a razrada decides which of them the order needs.
+     */
+    @Query("""
+            select distinct r
+            from ProductionOrderScopeRequest r
+            join fetch r.productionOrder
+            join r.items i
+            where i.lineItem.product.id = :productId
+              and r.status in :statuses
+            """)
+    List<ProductionOrderScopeRequest> findOpenForProduct(
+            @Param("productId") Long productId,
+            @Param("statuses") Collection<ProductionOrderScopeRequestStatus> statuses);
+
+    /**
      * The queue and the history list. Every filter is optional so one query backs
      * the whole screen; all are bound parameters, never concatenated.
      *

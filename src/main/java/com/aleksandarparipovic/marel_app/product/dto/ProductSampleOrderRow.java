@@ -15,6 +15,8 @@ public record ProductSampleOrderRow(
         LocalDate deadlineDate,
         Integer quantity,
         String catalogNo,
-        String lineNote
+        String lineNote,
+        /** The customer the samples are for; null when they are for none. */
+        String customerName
 ) {
 }

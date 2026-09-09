@@ -2,6 +2,8 @@ package com.aleksandarparipovic.marel_app.sample_order_line_item.repository;
 
 import com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow;
 import com.aleksandarparipovic.marel_app.sample_order_line_item.SampleOrderLineItem;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -40,9 +42,11 @@ public interface SampleOrderLineItemRepository extends JpaRepository<SampleOrder
      */
     @Query("""
             select new com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow(
-                so.id, so.name, so.status, so.creationDate, so.deadlineDate, li.quantity, li.catalogNo, li.note)
+                so.id, so.name, so.status, so.creationDate, so.deadlineDate, li.quantity, li.catalogNo, li.note,
+                cust.name)
             from SampleOrderLineItem li
             join li.sampleOrder so
+            left join so.customer cust
             where li.product.id = :productId
               and li.isActive = true
               and li.archivedAt is null
@@ -50,9 +54,51 @@ public interface SampleOrderLineItemRepository extends JpaRepository<SampleOrder
               and so.archivedAt is null
               and (:pattern is null
                    or lower(so.name) like :pattern
-                   or lower(li.catalogNo) like :pattern)
+                   or lower(li.catalogNo) like :pattern
+                   or lower(cust.name) like :pattern)
             """)
     List<ProductSampleOrderRow> findOrderRowsByProductId(@Param("productId") Long productId,
                                                          @Param("pattern") String pattern,
                                                          Sort sort);
+
+    /**
+     * The same rows as {@link #findOrderRowsByProductId}, one PAGE at a time —
+     * for the operation page, which shows ten sample orders and asks the server
+     * for the next ten rather than shipping them all.
+     */
+    @Query(value = """
+            select new com.aleksandarparipovic.marel_app.product.dto.ProductSampleOrderRow(
+                so.id, so.name, so.status, so.creationDate, so.deadlineDate, li.quantity, li.catalogNo, li.note,
+                cust.name)
+            from SampleOrderLineItem li
+            join li.sampleOrder so
+            left join so.customer cust
+            where li.product.id = :productId
+              and li.isActive = true
+              and li.archivedAt is null
+              and so.isActive = true
+              and so.archivedAt is null
+              and (:pattern is null
+                   or lower(so.name) like :pattern
+                   or lower(li.catalogNo) like :pattern
+                   or lower(cust.name) like :pattern)
+            """,
+            countQuery = """
+            select count(li)
+            from SampleOrderLineItem li
+            join li.sampleOrder so
+            left join so.customer cust
+            where li.product.id = :productId
+              and li.isActive = true
+              and li.archivedAt is null
+              and so.isActive = true
+              and so.archivedAt is null
+              and (:pattern is null
+                   or lower(so.name) like :pattern
+                   or lower(li.catalogNo) like :pattern
+                   or lower(cust.name) like :pattern)
+            """)
+    Page<ProductSampleOrderRow> findOrderPageByProductId(@Param("productId") Long productId,
+                                                         @Param("pattern") String pattern,
+                                                         Pageable pageable);
 }

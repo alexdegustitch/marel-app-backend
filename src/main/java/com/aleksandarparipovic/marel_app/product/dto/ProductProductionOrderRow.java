@@ -18,6 +18,8 @@ public record ProductProductionOrderRow(
         LocalDate orderDate,
         String deliveryDeadline,
         Integer quantity,
-        String lineNote
+        String lineNote,
+        /** The customer the order is for; null when it is for none. */
+        String customerName
 ) {
 }

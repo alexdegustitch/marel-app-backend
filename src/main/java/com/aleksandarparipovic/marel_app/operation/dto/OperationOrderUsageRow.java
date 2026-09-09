@@ -31,6 +31,8 @@ public record OperationOrderUsageRow(
         Integer requiredPieces,
         Integer donePieces,
         /** True when requiredPieces came from the order's razrada, not the catalogue. */
-        boolean requirementFromScope
+        boolean requirementFromScope,
+        /** The customer the order is for; null when it is for none. */
+        String customerName
 ) {
 }

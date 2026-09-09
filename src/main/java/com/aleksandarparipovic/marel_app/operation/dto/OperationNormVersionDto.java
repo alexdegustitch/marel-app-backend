@@ -12,8 +12,11 @@ public record OperationNormVersionDto(
         LocalDate normDate,
         String note,
         OffsetDateTime createdAt,
+        /** Who recorded the norm — the id so a screen can open their page. */
+        Long createdById,
         String createdByName,
         OffsetDateTime verifiedAt,
+        Long verifiedById,
         String verifiedByName,
         /** True for the norm in force — stated on the version, not inferred from the order. */
         boolean current,
@@ -23,6 +26,7 @@ public record OperationNormVersionDto(
         OffsetDateTime archivedAt,
         /** When this version was last put in force, and by whom. */
         OffsetDateTime activatedAt,
+        Long activatedById,
         String activatedByName
 ) {
 }

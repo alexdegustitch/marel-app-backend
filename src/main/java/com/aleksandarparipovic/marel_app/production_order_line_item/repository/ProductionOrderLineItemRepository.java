@@ -2,6 +2,8 @@ package com.aleksandarparipovic.marel_app.production_order_line_item.repository;
 
 import com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow;
 import com.aleksandarparipovic.marel_app.production_order_line_item.ProductionOrderLineItem;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -46,9 +48,11 @@ public interface ProductionOrderLineItemRepository extends JpaRepository<Product
      */
     @Query("""
             select new com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow(
-                po.id, po.code, po.name, po.status, po.orderDate, po.deliveryDeadline, li.quantity, li.note)
+                po.id, po.code, po.name, po.status, po.orderDate, po.deliveryDeadline, li.quantity, li.note,
+                cust.name)
             from ProductionOrderLineItem li
             join li.productionOrder po
+            left join po.customer cust
             where li.product.id = :productId
               and li.isActive = true
               and li.archivedAt is null
@@ -56,9 +60,54 @@ public interface ProductionOrderLineItemRepository extends JpaRepository<Product
               and po.archivedAt is null
               and (:pattern is null
                    or lower(po.code) like :pattern
-                   or lower(po.name) like :pattern)
+                   or lower(po.name) like :pattern
+                   or lower(cust.name) like :pattern
+                   or lower(po.deliveryDeadline) like :pattern)
             """)
     List<ProductProductionOrderRow> findOrderRowsByProductId(@Param("productId") Long productId,
                                                              @Param("pattern") String pattern,
                                                              Sort sort);
+
+    /**
+     * The same rows as {@link #findOrderRowsByProductId}, one PAGE at a time —
+     * the operation page shows ten orders and pages through the rest on the
+     * server, so an operation on a thousand orders never ships a thousand rows.
+     */
+    @Query(value = """
+            select new com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow(
+                po.id, po.code, po.name, po.status, po.orderDate, po.deliveryDeadline, li.quantity, li.note,
+                cust.name)
+            from ProductionOrderLineItem li
+            join li.productionOrder po
+            left join po.customer cust
+            where li.product.id = :productId
+              and li.isActive = true
+              and li.archivedAt is null
+              and po.isActive = true
+              and po.archivedAt is null
+              and (:pattern is null
+                   or lower(po.code) like :pattern
+                   or lower(po.name) like :pattern
+                   or lower(cust.name) like :pattern
+                   or lower(po.deliveryDeadline) like :pattern)
+            """,
+            countQuery = """
+            select count(li)
+            from ProductionOrderLineItem li
+            join li.productionOrder po
+            left join po.customer cust
+            where li.product.id = :productId
+              and li.isActive = true
+              and li.archivedAt is null
+              and po.isActive = true
+              and po.archivedAt is null
+              and (:pattern is null
+                   or lower(po.code) like :pattern
+                   or lower(po.name) like :pattern
+                   or lower(cust.name) like :pattern
+                   or lower(po.deliveryDeadline) like :pattern)
+            """)
+    Page<ProductProductionOrderRow> findOrderPageByProductId(@Param("productId") Long productId,
+                                                             @Param("pattern") String pattern,
+                                                             Pageable pageable);
 }

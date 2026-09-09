@@ -199,7 +199,7 @@ public class OperationService {
         List<String> blockers = operationDetailService.getArchiveBlockers(id);
         if (!blockers.isEmpty()) {
             throw new IllegalStateException(
-                    "Operacija se ne može arhivirati dok postoje nezavršeni nalozi: "
+                    "Operacija se ne može arhivirati dok postoje otvoreni zahtevi ili nezavršeni nalozi: "
                             + String.join("; ", blockers));
         }
 

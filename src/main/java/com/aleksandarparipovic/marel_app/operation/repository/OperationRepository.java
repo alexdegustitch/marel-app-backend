@@ -33,6 +33,8 @@ select new com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductN
     o.unitsPerProduct,
     p.id,
     p.productName,
+    p.displayName,
+    p.catalogNumber,
     wcc.id,
     o.temporary
 )

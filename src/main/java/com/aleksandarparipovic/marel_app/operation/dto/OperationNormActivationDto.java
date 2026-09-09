@@ -15,6 +15,8 @@ public record OperationNormActivationDto(
         Integer norm,
         OffsetDateTime activatedAt,
         OffsetDateTime until,
+        /** Who made the decision — the id so a screen can open their page. */
+        Long activatedById,
         String activatedByName,
         String reason,
         /** ADDED, EDITED, SUCCEEDED, ACTIVATED or MIGRATED. */

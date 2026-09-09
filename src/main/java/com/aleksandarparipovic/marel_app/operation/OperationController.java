@@ -195,14 +195,36 @@ public class OperationController {
         return ResponseEntity.ok(operationDetailService.verifyNorm(id, versionId, authentication));
     }
 
+    /**
+     * One PAGE of the production orders this operation is worked for. Search,
+     * sort and paging all resolve on the server — the screen never filters rows
+     * itself, so an operation on a thousand orders ships ten rows at a time.
+     */
     @GetMapping("/{id}/production-orders")
-    public ResponseEntity<List<OperationOrderUsageRow>> getProductionOrders(@PathVariable Long id) {
-        return ResponseEntity.ok(operationDetailService.getProductionOrders(id));
+    public ResponseEntity<Page<OperationOrderUsageRow>> getProductionOrders(
+            @PathVariable Long id,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String direction,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok(operationDetailService.getProductionOrders(
+                id, query, sortBy, direction, page, size));
     }
 
+    /** One PAGE of the sample orders the operation's product appears on. */
     @GetMapping("/{id}/sample-orders")
-    public ResponseEntity<List<ProductSampleOrderRow>> getSampleOrders(@PathVariable Long id) {
-        return ResponseEntity.ok(operationDetailService.getSampleOrders(id));
+    public ResponseEntity<Page<ProductSampleOrderRow>> getSampleOrders(
+            @PathVariable Long id,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String direction,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        return ResponseEntity.ok(operationDetailService.getSampleOrders(
+                id, query, sortBy, direction, page, size));
     }
 
     @GetMapping("/{id}/work-logs")
