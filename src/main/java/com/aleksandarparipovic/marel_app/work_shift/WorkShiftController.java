@@ -85,13 +85,22 @@ public class WorkShiftController {
         return ResponseEntity.ok(service.updateShift(workShiftId, request));
     }
 
+    /**
+     * The karton's shift list — period, text search and order all resolved on
+     * the server. {@code q} matches the operation, its product or the
+     * production order named on the shift's active work logs; {@code sort} is
+     * {@code desc} (newest first, the default) or {@code asc}.
+     */
     @GetMapping("/ids/{id}")
     public ResponseEntity<List<Long>> getShiftsForEmployeeRecord(
             @PathVariable Long id,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false, defaultValue = "desc") String sort
     ){
-        return ResponseEntity.ok(service.getShiftsForEmployeeRecord(id, fromDate, toDate));
+        boolean oldestFirst = "asc".equalsIgnoreCase(sort);
+        return ResponseEntity.ok(service.getShiftsForEmployeeRecord(id, fromDate, toDate, q, oldestFirst));
     }
 
 

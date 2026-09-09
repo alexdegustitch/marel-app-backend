@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.daily_report.dto.DailyReportCreateRespo
 import com.aleksandarparipovic.marel_app.daily_report.dto.DailyReportChartInfo;
 import com.aleksandarparipovic.marel_app.daily_report.dto.DailyReportDto;
 import com.aleksandarparipovic.marel_app.daily_report.dto.DailyReportEmployeeMonthlyInfo;
+import com.aleksandarparipovic.marel_app.daily_report.dto.MealAdjustmentRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -50,6 +51,15 @@ public class DailyReportController {
     @GetMapping("/work-shift/{workShiftId}")
     public ResponseEntity<DailyReportDto> findByWorkShiftId(@PathVariable Long workShiftId){
         return  ResponseEntity.ok(dailyReportService.findByWorkShiftId(workShiftId));
+    }
+
+    /** Hand-correct the day's meal count; delta 0 clears the correction. */
+    @PatchMapping("/work-shift/{workShiftId}/meal-adjustment")
+    public ResponseEntity<DailyReportDto> adjustMeals(
+            @PathVariable Long workShiftId,
+            @Valid @RequestBody MealAdjustmentRequest request
+    ) {
+        return ResponseEntity.ok(dailyReportService.adjustMeals(workShiftId, request));
     }
 
     @PostMapping({"", "/create"})

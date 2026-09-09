@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.work_log;
 
 import com.aleksandarparipovic.marel_app.common.jpa.EntityReferenceProvider;
 import com.aleksandarparipovic.marel_app.operation.Operation;
+import com.aleksandarparipovic.marel_app.product.ProductMapper;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.user.User;
@@ -35,6 +36,7 @@ public class WorkLogMapper {
     private final DateUtil dateUtil;
     private final WorkLogCompensationSnapshot compensationSnapshot;
     private final CurrentUserService currentUserService;
+    private final ProductMapper productMapper;
 
     public WorkLogDto toDto(WorkLog workLog) {
         Operation operation = workLog.getOperation();
@@ -44,7 +46,11 @@ public class WorkLogMapper {
         String productName = null;
         if (operation != null && operation.getProduct() != null) {
             productId = operation.getProduct().getId();
-            productName = operation.getProduct().getProductName();
+            // The EFFECTIVE display name, same as every product option list: the
+            // stored override when there is one, else name + subtype. The karton
+            // prints an operation beside its product, and two products differing
+            // only in subtype must not read as the same one there.
+            productName = productMapper.effectiveDisplayName(operation.getProduct());
         }
 
         return new WorkLogDtoImpl(

@@ -27,4 +27,9 @@ public class DailyReportDto {
     private Integer bonusEligibleMinutes;
     private Boolean isMealAllowed;
     private Integer mealsCount;
+    /** Hand correction added to {@code mealsCount}; 0 when never touched. */
+    private Integer mealsManualDelta;
+    private String mealsManualNote;
+    /** {@code max(0, mealsCount + mealsManualDelta)} — the figure the month pays. */
+    private Integer effectiveMealsCount;
 }

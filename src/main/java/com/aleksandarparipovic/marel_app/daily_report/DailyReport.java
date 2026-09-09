@@ -145,5 +145,37 @@ public class DailyReport {
     @Column(name = "meals_count", nullable = false)
     private Integer mealsCount = 0;
 
+    /**
+     * Hand correction added to the computed {@code mealsCount}. May be negative.
+     *
+     * <p>NEVER written by the recalculation — that is the whole point of storing
+     * a delta rather than an override: {@code mealsCount} stays recalc-owned and
+     * this survives every rebuild. See migration V38.
+     */
+    @Builder.Default
+    @Column(name = "meals_manual_delta", nullable = false)
+    private Integer mealsManualDelta = 0;
+
+    @Column(name = "meals_manual_note", length = 255)
+    private String mealsManualNote;
+
+    @Column(name = "meals_manual_at")
+    private OffsetDateTime mealsManualAt;
+
+    @Column(name = "meals_manual_by")
+    private Long mealsManualBy;
+
+    /**
+     * The meal count the month actually pays: computed plus the hand
+     * correction, never below zero. Derived on read so it can never drift
+     * from its inputs.
+     */
+    @Transient
+    public Integer getEffectiveMealsCount() {
+        int computed = mealsCount != null ? mealsCount : 0;
+        int delta = mealsManualDelta != null ? mealsManualDelta : 0;
+        return Math.max(0, computed + delta);
+    }
+
 }
 

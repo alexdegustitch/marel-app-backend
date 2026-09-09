@@ -315,7 +315,10 @@ public class MonthlyRecalcService {
 
         int totalQuantity = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalQuantity())).sum();
         int totalScrap = dailyReports.stream().mapToInt(dr -> safeInt(dr.getTotalScrap())).sum();
-        int mealAllowanceNum = dailyReports.stream().mapToInt(dr -> safeInt(dr.getMealsCount())).sum();
+        // EFFECTIVE, not computed: the hand correction (meals_manual_delta,
+        // V38) is part of what the month pays, and this sum is where the
+        // payroll's MealAllowanceCalculator reads.
+        int mealAllowanceNum = dailyReports.stream().mapToInt(dr -> safeInt(dr.getEffectiveMealsCount())).sum();
 
         // WORKED rows only, for the reason fillDailyTotals gives: an absence row
         // carries its minutes so the payslip can show them, and performance is

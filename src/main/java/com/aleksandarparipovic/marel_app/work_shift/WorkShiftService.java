@@ -178,18 +178,55 @@ public class WorkShiftService {
     }
 
     public List<Long> getShiftsForEmployeeRecord(Long employeeRecordId, LocalDate fromDate, LocalDate toDate) {
-        if (fromDate != null && toDate != null) {
-            LocalDate start = fromDate.isBefore(toDate) ? fromDate : toDate;
-            LocalDate end = fromDate.isBefore(toDate) ? toDate : fromDate;
-            return repository.getShiftsForEmployeeRecordInDateRange(employeeRecordId, start, end);
+        return getShiftsForEmployeeRecord(employeeRecordId, fromDate, toDate, null, false);
+    }
+
+    /**
+     * The karton's shift list, filtered, searched and ordered ON THE SERVER.
+     *
+     * <p>Every query below returns newest-first — the karton's default reading
+     * order — so "oldest first" is a reversal of a month-sized id list rather
+     * than a fourth copy of each query with the opposite ORDER BY.
+     */
+    public List<Long> getShiftsForEmployeeRecord(
+            Long employeeRecordId, LocalDate fromDate, LocalDate toDate, String q, boolean oldestFirst) {
+        LocalDate start = fromDate;
+        LocalDate end = toDate;
+        if (start != null && end != null && end.isBefore(start)) {
+            LocalDate swap = start;
+            start = end;
+            end = swap;
+        }
+        // One date means "exactly that day", the contract this endpoint has
+        // always had.
+        if (start == null && end != null) start = end;
+        if (end == null && start != null) end = start;
+
+        String query = q != null && !q.isBlank() ? q.trim() : null;
+
+        List<Long> ids;
+        if (query != null) {
+            String pattern = "%" + escapeLike(query) + "%";
+            ids = repository.searchShiftsForEmployeeRecord(employeeRecordId, start, end, pattern);
+        } else if (start != null) {
+            ids = start.equals(end)
+                    ? repository.getShiftsForEmployeeRecordOnDate(employeeRecordId, start)
+                    : repository.getShiftsForEmployeeRecordInDateRange(employeeRecordId, start, end);
+        } else {
+            ids = repository.getShiftsForEmployeeRecord(employeeRecordId);
         }
 
-        if (fromDate != null || toDate != null) {
-            LocalDate exactDate = fromDate != null ? fromDate : toDate;
-            return repository.getShiftsForEmployeeRecordOnDate(employeeRecordId, exactDate);
+        if (oldestFirst) {
+            List<Long> reversed = new ArrayList<>(ids);
+            java.util.Collections.reverse(reversed);
+            return reversed;
         }
+        return ids;
+    }
 
-        return repository.getShiftsForEmployeeRecord(employeeRecordId);
+    /** `%` and `_` typed by a person are literals, not wildcards. */
+    private static String escapeLike(String raw) {
+        return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     @Transactional

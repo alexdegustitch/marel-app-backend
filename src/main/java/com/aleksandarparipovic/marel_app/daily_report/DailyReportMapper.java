@@ -24,6 +24,9 @@ public class DailyReportMapper {
         reportDto.setBonusEligibleMinutes(report.getBonusEligibleMinutes());
         reportDto.setIsMealAllowed(report.getIsMealAllowed());
         reportDto.setMealsCount(report.getMealsCount());
+        reportDto.setMealsManualDelta(report.getMealsManualDelta());
+        reportDto.setMealsManualNote(report.getMealsManualNote());
+        reportDto.setEffectiveMealsCount(report.getEffectiveMealsCount());
         return reportDto;
     }
 }
