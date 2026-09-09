@@ -123,4 +123,53 @@ where o.id = :id
             @Param("dateTime") OffsetDateTime dateTime
     );
 
+    /**
+     * Operations whose name or description contains {@code q}, for the global
+     * command-palette search. Case-insensitive, live operations only; the
+     * product name rides along as the subtitle. The caller caps the page.
+     */
+    @Query("""
+            select o.id as id,
+                   o.opName as opName,
+                   p.productName as productName
+            from Operation o
+            join o.product p
+            where o.archivedAt is null
+              and (lower(o.opName) like lower(concat('%', :q, '%'))
+                or lower(coalesce(o.description, '')) like lower(concat('%', :q, '%')))
+            order by o.opName asc, o.id asc
+            """)
+    List<com.aleksandarparipovic.marel_app.search.dto.OperationSearchRow> searchTop(
+            @Param("q") String q, org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * Diacritic-folding, any-token match for Sparky's fuzzy resolver. Both sides
+     * are folded — the column with Postgres {@code translate(lower(...))} (core
+     * function, no extension), the query in Java — so a fuzzy "operacija 3" finds
+     * "Operacija 3". When {@code productId} is non-null the search is scoped to
+     * that product's operations (so "operacija 3" for a resolved product is that
+     * product's Operacija 3); pass null for a global search. Live operations
+     * only; capped at 25. The owning product rides along for ranking/scoping.
+     */
+    @Query(value = """
+            SELECT o.id           AS id,
+                   o.op_name      AS opName,
+                   o.product_id   AS productId,
+                   p.product_name AS productName
+            FROM operations o
+            JOIN products p ON p.id = o.product_id
+            WHERE o.archived_at IS NULL
+              AND (CAST(:productId AS bigint) IS NULL OR o.product_id = :productId)
+              AND EXISTS (
+                  SELECT 1
+                  FROM regexp_split_to_table(trim(:folded), '\\s+') AS tok
+                  WHERE tok <> ''
+                    AND translate(lower(o.op_name), 'čćđšžČĆĐŠŽ', 'ccdszccdsz') LIKE '%' || tok || '%'
+              )
+            ORDER BY o.op_name ASC, o.id ASC
+            LIMIT 25
+            """, nativeQuery = true)
+    List<com.aleksandarparipovic.marel_app.search.dto.OperationMatchRow> searchFolded(
+            @Param("folded") String folded, @Param("productId") Long productId);
+
 }

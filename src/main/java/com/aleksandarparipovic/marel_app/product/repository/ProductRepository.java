@@ -100,4 +100,51 @@ public interface ProductRepository
     boolean productCodeTakenByAnother(@Param("productCode") String productCode,
                                       @Param("excludeId") Long excludeId);
 
+    /**
+     * Products whose name or code contains {@code q}, for the global
+     * command-palette search. Case-insensitive, live products only, exact code
+     * matches first; the caller caps the page.
+     */
+    @Query("""
+            select p.id as id,
+                   p.productName as productName,
+                   p.productCode as productCode
+            from Product p
+            where p.archivedAt is null
+              and (lower(p.productName) like lower(concat('%', :q, '%'))
+                or lower(coalesce(p.productCode, '')) like lower(concat('%', :q, '%'))
+                or lower(coalesce(p.description, '')) like lower(concat('%', :q, '%')))
+            order by case when lower(coalesce(p.productCode, '')) = lower(:q) then 0 else 1 end,
+                     p.productName asc, p.id asc
+            """)
+    List<com.aleksandarparipovic.marel_app.search.dto.ProductSearchRow> searchTop(
+            @Param("q") String q, org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * Diacritic-folding, any-token match for Sparky's fuzzy resolver. Both sides
+     * are folded — the columns with Postgres {@code translate(lower(...))} (core
+     * function, no extension), the query in Java before it is passed in — so
+     * "kuciste pumpa" reaches "Kućište pumpe". A row matches when its folded name
+     * or code contains ANY whitespace token of {@code folded}; the caller ranks
+     * and caps. Live products only; capped at 25.
+     */
+    @Query(value = """
+            SELECT p.id           AS id,
+                   p.product_name AS productName,
+                   p.product_code AS productCode
+            FROM products p
+            WHERE p.archived_at IS NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM regexp_split_to_table(trim(:folded), '\\s+') AS tok
+                  WHERE tok <> ''
+                    AND (translate(lower(p.product_name), 'čćđšžČĆĐŠŽ', 'ccdszccdsz') LIKE '%' || tok || '%'
+                      OR translate(lower(coalesce(p.product_code, '')), 'čćđšžČĆĐŠŽ', 'ccdszccdsz') LIKE '%' || tok || '%')
+              )
+            ORDER BY p.product_name ASC, p.id ASC
+            LIMIT 25
+            """, nativeQuery = true)
+    List<com.aleksandarparipovic.marel_app.search.dto.ProductSearchRow> searchFolded(
+            @Param("folded") String folded);
+
 }

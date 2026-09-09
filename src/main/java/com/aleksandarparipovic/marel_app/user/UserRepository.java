@@ -94,4 +94,27 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
             """)
     java.util.List<User> findActiveByRoleNames(
             @org.springframework.data.repository.query.Param("roleNames") java.util.List<String> roleNames);
+
+    /**
+     * App users whose name, display name or username contains {@code q}, for the
+     * global command-palette search. Case-insensitive, live accounts only; the
+     * caller caps the page.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            select u.id as id,
+                   u.fullName as fullName,
+                   u.displayName as displayName,
+                   u.username as username,
+                   r.roleName as roleName
+            from User u
+            left join u.role r
+            where u.archivedAt is null
+              and (lower(u.fullName) like lower(concat('%', :q, '%'))
+                or lower(coalesce(u.displayName, '')) like lower(concat('%', :q, '%'))
+                or lower(u.username) like lower(concat('%', :q, '%'))
+                or lower(coalesce(u.emailAddress, '')) like lower(concat('%', :q, '%')))
+            order by u.fullName asc, u.id asc
+            """)
+    List<com.aleksandarparipovic.marel_app.search.dto.UserSearchRow> searchTop(
+            @org.springframework.data.repository.query.Param("q") String q, Pageable pageable);
 }

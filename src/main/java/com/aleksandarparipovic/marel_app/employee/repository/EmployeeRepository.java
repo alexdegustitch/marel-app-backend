@@ -140,4 +140,56 @@ public interface EmployeeRepository
     @Query("SELECT e FROM Employee e LEFT JOIN FETCH e.department LEFT JOIN FETCH e.employeeBonuses b LEFT JOIN FETCH b.bonusCategory LEFT JOIN FETCH e.defaultWorkCategory WHERE e.id = :id")
     Optional<Employee> findByIdWithDetails(@Param("id") Long id);
 
+    /**
+     * Employees whose full name or number contains {@code q}, for the global
+     * command-palette search. Case-insensitive, live employees only, exact
+     * number matches first; the caller caps the page.
+     */
+    @Query("""
+        select e.id as id,
+               e.fullName as fullName,
+               e.employeeNo as employeeNo,
+               d.name as departmentName
+        from Employee e
+        join e.department d
+        where e.archivedAt is null
+          and (lower(e.fullName)   like lower(concat('%', :q, '%'))
+            or lower(e.employeeNo) like lower(concat('%', :q, '%'))
+            or lower(coalesce(e.mobilePhone, '')) like lower(concat('%', :q, '%'))
+            or lower(coalesce(e.email, ''))       like lower(concat('%', :q, '%')))
+        order by case when lower(e.employeeNo) = lower(:q) then 0 else 1 end,
+                 e.fullName asc, e.id asc
+        """)
+    List<com.aleksandarparipovic.marel_app.search.dto.EmployeeSearchRow> searchTop(
+            @Param("q") String q, Pageable pageable);
+
+    /**
+     * Diacritic-folding, any-token match for Sparky's fuzzy resolver. Both sides
+     * are folded — the columns with Postgres {@code translate(lower(...))} (core
+     * function, no extension), the query in Java — so a name typed without
+     * diacritics still resolves. A row matches when its folded name or number
+     * contains ANY whitespace token of {@code folded}; the caller ranks and caps.
+     * Live employees only; capped at 25.
+     */
+    @Query(value = """
+            SELECT e.id          AS id,
+                   e.full_name   AS fullName,
+                   e.employee_no AS employeeNo,
+                   d.name        AS departmentName
+            FROM employees e
+            JOIN departments d ON d.id = e.department_id
+            WHERE e.archived_at IS NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM regexp_split_to_table(trim(:folded), '\\s+') AS tok
+                  WHERE tok <> ''
+                    AND (translate(lower(e.full_name), 'čćđšžČĆĐŠŽ', 'ccdszccdsz') LIKE '%' || tok || '%'
+                      OR translate(lower(coalesce(e.employee_no, '')), 'čćđšžČĆĐŠŽ', 'ccdszccdsz') LIKE '%' || tok || '%')
+              )
+            ORDER BY e.full_name ASC, e.id ASC
+            LIMIT 25
+            """, nativeQuery = true)
+    List<com.aleksandarparipovic.marel_app.search.dto.EmployeeSearchRow> searchFolded(
+            @Param("folded") String folded);
+
 }

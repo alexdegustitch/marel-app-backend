@@ -15,6 +15,8 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -909,6 +911,76 @@ public class AnalyticsQueryRepository {
                 rs.getLong("sum_duration_min"),
                 rs.getBigDecimal("avg_per_hour")
         ));
+    }
+
+    // ── Spiky's structured employee-month report ────────────────────────────
+    //
+    // Two small reads over work_log_facts for ONE employee in ONE month, keyed on
+    // the denormalized month_start. They reuse the same duration-weighted
+    // approved_performance_rate the five report pages above use — the per-log
+    // figure the recalc engine and the shared WorkLogPerformanceCalculator
+    // produce — so a "shift's performance" here means exactly what it means there.
+    // Read-only, fully parameterized, and bounded by employee+month.
+
+    /**
+     * Each of the employee's shifts this month reduced to ONE duration-weighted
+     * performance rate (%). One row per {@code work_shift_id} that has any logged
+     * work; a shift with no logged work is simply not represented (the facts table
+     * holds only active logs). The caller counts the good/weak shifts from these.
+     */
+    public List<BigDecimal> findShiftPerformanceRatesForEmployeeMonth(Long employeeId, LocalDate monthStart) {
+        String sql = """
+                SELECT SUM(f.approved_performance_rate * f.duration_min)
+                         / NULLIF(SUM(f.duration_min), 0) AS perf
+                FROM work_log_facts f
+                WHERE f.employee_id = :employeeId
+                  AND f.month_start = :monthStart
+                GROUP BY f.work_shift_id
+                """;
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("employeeId", employeeId)
+                .addValue("monthStart", monthStart);
+        return jdbc.query(sql, params, (rs, rowNum) -> rs.getBigDecimal("perf"));
+    }
+
+    /**
+     * Every operation this employee worked this month, each with its
+     * duration-weighted performance rate (%) and total quantity, best rate first.
+     * The caller slices the best/worst few off the ends.
+     */
+    public List<EmployeeOperationPerf> findOperationPerformanceForEmployeeMonth(Long employeeId, LocalDate monthStart) {
+        String sql = """
+                SELECT o.id AS operation_id, o.op_name AS operation_name,
+                       p.id AS product_id, p.product_name AS product_name, p.product_code AS product_code,
+                       SUM(f.quantity) AS quantity,
+                       SUM(f.approved_performance_rate * f.duration_min)
+                         / NULLIF(SUM(f.duration_min), 0) AS rate
+                FROM work_log_facts f
+                JOIN operations o ON o.id = f.operation_id
+                JOIN products p ON p.id = f.product_id
+                WHERE f.employee_id = :employeeId
+                  AND f.month_start = :monthStart
+                GROUP BY o.id, o.op_name, p.id, p.product_name, p.product_code
+                ORDER BY rate DESC NULLS LAST, o.op_name
+                """;
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("employeeId", employeeId)
+                .addValue("monthStart", monthStart);
+        return jdbc.query(sql, params, (rs, rowNum) -> new EmployeeOperationPerf(
+                rs.getLong("operation_id"),
+                rs.getString("operation_name"),
+                rs.getLong("product_id"),
+                rs.getString("product_name"),
+                rs.getString("product_code"),
+                rs.getBigDecimal("rate"),
+                rs.getLong("quantity")));
+    }
+
+    /** One operation's month for an employee — with its product, weighted rate (%), quantity. */
+    public record EmployeeOperationPerf(
+            long operationId, String operationName,
+            long productId, String productName, String productCode,
+            BigDecimal rate, long quantity) {
     }
 
     /** Page 2's aggregate — SELECT … GROUP BY … HAVING …, with no ordering or paging. */
