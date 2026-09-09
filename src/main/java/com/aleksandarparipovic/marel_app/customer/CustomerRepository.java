@@ -36,4 +36,26 @@ public interface CustomerRepository extends JpaRepository<Customer, Long>, JpaSp
           AND (:excludeId IS NULL OR c.id <> :excludeId)
         """)
     boolean taxIdTakenByAnother(@Param("taxId") String taxId, @Param("excludeId") Long excludeId);
+
+    /**
+     * Customers whose name, code or tax id (PIB) contains {@code q}, for the
+     * global command-palette search. Case-insensitive, non-archived customers
+     * only, exact code/PIB matches first; the caller caps the page.
+     */
+    @Query("""
+        select c.id as id,
+               c.name as name,
+               c.code as code,
+               c.taxId as taxId
+        from Customer c
+        where c.archivedAt is null
+          and (lower(c.name) like lower(concat('%', :q, '%'))
+            or lower(coalesce(c.code, '')) like lower(concat('%', :q, '%'))
+            or lower(coalesce(c.taxId, '')) like lower(concat('%', :q, '%')))
+        order by case when lower(coalesce(c.code, '')) = lower(:q)
+                       or lower(coalesce(c.taxId, '')) = lower(:q) then 0 else 1 end,
+                 c.name asc, c.id asc
+        """)
+    List<com.aleksandarparipovic.marel_app.search.dto.CustomerSearchRow> searchTop(
+            @Param("q") String q, org.springframework.data.domain.Pageable pageable);
 }

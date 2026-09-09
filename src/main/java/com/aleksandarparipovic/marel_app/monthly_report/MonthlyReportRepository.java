@@ -16,6 +16,23 @@ public interface MonthlyReportRepository extends JpaRepository<MonthlyReport, Lo
 
     Optional<MonthlyReport> findByEmployeeRecord_Id(Long employeeRecordId);
 
+    /**
+     * One month's report with its employee and department eagerly fetched.
+     *
+     * <p>Used by the AI assistant so the name, employee number and department
+     * are already loaded when the facts are read outside a transaction (the
+     * model call must not happen with a DB session open).
+     */
+    @Query("""
+            SELECT mr FROM MonthlyReport mr
+            JOIN FETCH mr.employeeRecord er
+            JOIN FETCH er.employee e
+            JOIN FETCH e.department
+            WHERE er.id = :employeeRecordId
+            """)
+    Optional<MonthlyReport> findByEmployeeRecordIdWithEmployeeAndDepartment(
+            @Param("employeeRecordId") Long employeeRecordId);
+
     @Query("""
             select mr
             from MonthlyReport mr

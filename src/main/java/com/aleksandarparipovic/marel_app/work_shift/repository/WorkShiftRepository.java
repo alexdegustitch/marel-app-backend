@@ -305,4 +305,34 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     List<WorkShift> findOverlapping(@Param("employeeId") Long employeeId,
                                     @Param("start") OffsetDateTime start,
                                     @Param("end") OffsetDateTime end);
+
+    /**
+     * How many shifts of each shift TYPE this employee worked in one month —
+     * counted from the live shifts (active, not withdrawn) joined to the shift
+     * definition for its display name. Half-open on {@code work_date}: the first
+     * of the month up to, but not including, the first of the next. Feeds Spiky's
+     * structured report; read-only.
+     */
+    @Query(value = """
+        SELECT COALESCE(s.name, s.shift_code) AS name,
+               COUNT(*) AS shift_count
+        FROM work_shifts ws
+        JOIN shifts s ON s.id = ws.shift_id
+        WHERE ws.employee_id = :employeeId
+          AND ws.work_date >= :monthStart
+          AND ws.work_date <  :monthEnd
+          AND ws.is_active = true
+          AND ws.archived_at IS NULL
+        GROUP BY COALESCE(s.name, s.shift_code)
+        ORDER BY shift_count DESC, name
+        """, nativeQuery = true)
+    List<ShiftTypeCountProjection> findShiftTypeCountsForEmployeeMonth(
+            @Param("employeeId") Long employeeId,
+            @Param("monthStart") LocalDate monthStart,
+            @Param("monthEnd") LocalDate monthEnd);
+
+    interface ShiftTypeCountProjection {
+        String getName();
+        int getShiftCount();
+    }
 }
