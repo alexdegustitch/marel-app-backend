@@ -255,6 +255,49 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     );
 
     /**
+     * The karton's server-side search: shift ids whose ACTIVE work logs name
+     * something matching the pattern — the operation, its product (name,
+     * display name or catalog number) or the production order (code or name).
+     *
+     * <p>The product hangs off the operation, not the log — a log names an
+     * operation and every operation belongs to exactly one product.
+     *
+     * <p>Dates are optional here (CAST keeps the null typed for Postgres), so
+     * one query serves "search the month" and "search the picked period" alike.
+     */
+    @Query(value = """
+    SELECT ws.id
+    FROM work_shifts ws
+    WHERE ws.employee_record_id = :employeeRecordId
+      AND ws.is_active = true
+      AND ws.archived_at IS NULL
+      AND (CAST(:fromDate AS date) IS NULL OR ws.work_date >= :fromDate)
+      AND (CAST(:toDate AS date) IS NULL OR ws.work_date <= :toDate)
+      AND EXISTS (
+          SELECT 1
+          FROM work_logs wl
+          JOIN operations o ON o.id = wl.operation_id
+          JOIN products p ON p.id = o.product_id
+          LEFT JOIN production_orders po ON po.id = wl.production_order_id
+          WHERE wl.work_shift_id = ws.id
+            AND wl.is_active = true
+            AND (o.op_name ILIKE :pattern
+              OR p.product_name ILIKE :pattern
+              OR p.display_name ILIKE :pattern
+              OR p.catalog_number ILIKE :pattern
+              OR po.code ILIKE :pattern
+              OR po.name ILIKE :pattern)
+      )
+    ORDER BY ws.start_at DESC
+    """, nativeQuery = true)
+    List<Long> searchShiftsForEmployeeRecord(
+            @Param("employeeRecordId") Long employeeRecordId,
+            @Param("fromDate") LocalDate fromDate,
+            @Param("toDate") LocalDate toDate,
+            @Param("pattern") String pattern
+    );
+
+    /**
      * Shifts on given dates — WITHDRAWN ONES EXCLUDED.
      *
      * <p>This feeds the weekend-bonus recheck. A shift taken back is not work
