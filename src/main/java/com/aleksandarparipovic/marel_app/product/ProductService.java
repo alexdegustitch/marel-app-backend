@@ -181,6 +181,22 @@ public class ProductService {
                 .toList();
     }
 
+    /**
+     * Options for a lazy dropdown: the best {@code limit} matches for what was
+     * typed, or the first {@code limit} products alphabetically when nothing was.
+     * The full-catalogue endpoint above stays for callers that still want it all.
+     */
+    @Transactional(readOnly = true)
+    public List<ProductOptionDto> searchOptions(String query, int limit) {
+        String q = query == null || query.isBlank()
+                ? null
+                : "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
+        return productRepository.searchOptions(q, org.springframework.data.domain.PageRequest.of(0, limit))
+                .stream()
+                .map(productMapper::toDtoOption)
+                .toList();
+    }
+
     /** One product, for the product detail page. Archived products are not served. */
     @Transactional(readOnly = true)
     public ProductBaseRow getProduct(Long productId) {

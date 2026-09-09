@@ -1,10 +1,16 @@
 package com.aleksandarparipovic.marel_app.product_manufacturing_time;
 
+import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.config.security.AppPermission;
+import com.aleksandarparipovic.marel_app.config.security.PermissionService;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeCreateRequest;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeDto;
+import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeStatsRow;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeUpdateRequest;
+import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -19,6 +25,8 @@ import java.util.List;
 public class ProductManufacturingTimeController {
 
     private final ProductManufacturingTimeService service;
+    private final CurrentUserService currentUserService;
+    private final PermissionService permissionService;
 
     @PostMapping
     public ResponseEntity<ProductManufacturingTimeDto> create(
@@ -51,6 +59,34 @@ public class ProductManufacturingTimeController {
     @GetMapping("/from-requests")
     public ResponseEntity<List<ProductManufacturingTimeDto>> getFromRequests() {
         return ResponseEntity.ok(service.getAnsweringRequests());
+    }
+
+    /**
+     * The `/my` list as one server-searched page — a READ carried by POST because
+     * it brings the paging, sorting and filter payload with it.
+     */
+    @PostMapping("/my/search")
+    public Page<ProductManufacturingTimeDto> searchMine(
+            @RequestBody SearchRequest request,
+            Authentication authentication) {
+        return service.searchMine(request, authentication);
+    }
+
+    /** The `/from-requests` list under the same server-side controls. */
+    @PostMapping("/from-requests/search")
+    public Page<ProductManufacturingTimeDto> searchFromRequests(@RequestBody SearchRequest request) {
+        return service.searchFromRequests(request);
+    }
+
+    /** The page's KPI figures — one request for the whole board. */
+    @GetMapping("/stats")
+    public ResponseEntity<ProductManufacturingTimeStatsRow> getStats() {
+        Long currentUserId = currentUserService.getCurrentUserId();
+        Long restrictTo =
+                permissionService.hasPermission(AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL)
+                        ? null
+                        : currentUserId;
+        return ResponseEntity.ok(service.getStats(currentUserId, restrictTo));
     }
 
     @GetMapping("/by-product/{productId}")

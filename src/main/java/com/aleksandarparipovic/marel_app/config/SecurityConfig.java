@@ -251,6 +251,12 @@ public class SecurityConfig {
                                 "/api/product-manufacturing-times/**",
                                 "/api/product-manufacturing-time-operations/**")
                             .authenticated()
+                        // Reads done with POST, because they carry the paging and
+                        // filter payload — same openness as the GETs above.
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/product-manufacturing-times/my/search",
+                                "/api/product-manufacturing-times/from-requests/search")
+                            .authenticated()
                         .requestMatchers(
                                 "/api/product-manufacturing-times/**",
                                 "/api/product-manufacturing-time-operations/**")

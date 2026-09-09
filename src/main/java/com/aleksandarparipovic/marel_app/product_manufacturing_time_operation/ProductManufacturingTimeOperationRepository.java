@@ -14,6 +14,13 @@ public interface ProductManufacturingTimeOperationRepository
 
     List<ProductManufacturingTimeOperation> findByProductManufacturingTime_IdAndActiveTrue(Long productManufacturingTimeId);
 
+    /**
+     * The active lines of a whole page of records in one query, ordered so each
+     * record's lines come back in the order they were written.
+     */
+    List<ProductManufacturingTimeOperation> findByProductManufacturingTime_IdInAndActiveTrueOrderByIdAsc(
+            java.util.Collection<Long> productManufacturingTimeIds);
+
     @Modifying
     @Query("UPDATE ProductManufacturingTimeOperation o SET o.active = false WHERE o.productManufacturingTime.id = :pmtId AND o.active = true")
     void deactivateAllByProductManufacturingTimeId(@Param("pmtId") Long pmtId);

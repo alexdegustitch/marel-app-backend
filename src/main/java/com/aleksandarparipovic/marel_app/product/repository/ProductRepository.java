@@ -19,6 +19,24 @@ public interface ProductRepository
 
     List<Product> findByArchivedAtIsNullOrderByProductNameAsc();
 
+    /**
+     * Options for a lazy product dropdown: the typed fragment matched against
+     * every part of the shown name (name, override, subtype) plus the product
+     * code, live products only, alphabetically. The caller caps the page — a
+     * dropdown never needs the whole catalogue at once.
+     */
+    @Query("""
+            select p from Product p
+            where p.archivedAt is null
+              and (:q is null
+                   or lower(p.productName) like :q
+                   or lower(coalesce(p.displayName, '')) like :q
+                   or lower(coalesce(p.subtype, '')) like :q
+                   or lower(coalesce(p.productCode, '')) like :q)
+            order by p.productName asc, p.id asc
+            """)
+    List<Product> searchOptions(@Param("q") String q, org.springframework.data.domain.Pageable pageable);
+
     long countByArchivedAtIsNull();
 
     long countByArchivedAtIsNullAndActiveTrue();

@@ -204,8 +204,8 @@ public interface ManufacturingTimeRequestRepository
     @Query("""
             select r
             from ManufacturingTimeRequest r
-            join fetch r.product
-            join fetch r.createdBy
+            join fetch r.product product
+            join fetch r.createdBy createdBy
             left join fetch r.assignedTo
             left join fetch r.targetManufacturingTime
             left join fetch r.productionOrderLineItem lineItem
@@ -215,13 +215,24 @@ public interface ManufacturingTimeRequestRepository
             where (r.status = :pending
                    or (r.status = :inReview and r.assignedTo.id = :actorId))
               and (:createdById is null or r.createdBy.id = :createdById)
+              and (:q is null
+                   or lower(r.description) like :q
+                   or lower(product.productName) like :q
+                   or lower(coalesce(product.displayName, '')) like :q
+                   or lower(coalesce(product.subtype, '')) like :q
+                   or lower(createdBy.fullName) like :q)
             order by r.createdAt desc
             """)
     java.util.List<ManufacturingTimeRequest> findPickable(
             @Param("pending") ManufacturingTimeRequestStatus pending,
             @Param("inReview") ManufacturingTimeRequestStatus inReview,
             @Param("actorId") Long actorId,
-            @Param("createdById") Long createdById);
+            @Param("createdById") Long createdById,
+            @Param("q") String q);
+
+    long countByStatusAndCreatedBy_Id(ManufacturingTimeRequestStatus status, Long createdById);
+
+    long countByStatusAndAssignedTo_Id(ManufacturingTimeRequestStatus status, Long assignedToId);
 
     /**
      * The same question for a sample order: what its lines have to say about

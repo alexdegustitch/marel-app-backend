@@ -33,6 +33,40 @@ public interface ProductManufacturingTimeRepository
 
     java.util.Optional<ProductManufacturingTime> findBySourceRequest_Id(Long sourceRequestId);
 
+    long countByUser_IdAndActiveTrue(Long userId);
+
+    /**
+     * Of the given records, the ones some request points at as its answer.
+     * One query for a whole page, so the flag never costs a query per row.
+     */
+    @Query("""
+            select distinct r.resultManufacturingTime.id
+            from ManufacturingTimeRequest r
+            where r.resultManufacturingTime.id in :ids
+            """)
+    java.util.Set<Long> findAnsweringIdsAmong(@Param("ids") java.util.Collection<Long> ids);
+
+    /** How many active records answer a request — the shared list's honest total. */
+    @Query("""
+            select count(distinct p.id)
+            from ProductManufacturingTime p
+            where p.active = true
+              and exists (
+                  select 1
+                  from ManufacturingTimeRequest r
+                  where r.resultManufacturingTime.id = p.id
+              )
+            """)
+    long countAnsweringRequests();
+
+    /** Whether THIS record is somebody's answer — asked before a delete goes through. */
+    @Query("""
+            select count(r.id) > 0
+            from ManufacturingTimeRequest r
+            where r.resultManufacturingTime.id = :id
+            """)
+    boolean answersAnyRequest(@Param("id") Long id);
+
     /**
      * Every active record that ANSWERS a request, whoever made it.
      *

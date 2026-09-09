@@ -483,13 +483,20 @@ public class ManufacturingTimeRequestService {
      */
     @Transactional(readOnly = true)
     public List<ManufacturingTimeRequestResponse> pickableRequests(
-            Long actorId, Long restrictToCreatedById
+            Long actorId, Long restrictToCreatedById, String query
     ) {
+        // The picker's search: one typed fragment matched, lowercased, against
+        // the description, the product's names and the requester. Blank means no
+        // narrowing at all, exactly as before the box existed.
+        String q = query == null || query.isBlank()
+                ? null
+                : "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
         return requestRepository.findPickable(
                         ManufacturingTimeRequestStatus.PENDING,
                         ManufacturingTimeRequestStatus.IN_REVIEW,
                         actorId,
-                        restrictToCreatedById)
+                        restrictToCreatedById,
+                        q)
                 .stream()
                 .map(this::toResponse)
                 .toList();

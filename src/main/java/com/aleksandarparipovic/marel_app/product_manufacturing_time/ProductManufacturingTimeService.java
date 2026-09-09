@@ -11,16 +11,33 @@ import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductM
 import com.aleksandarparipovic.marel_app.product_manufacturing_time_operation.ProductManufacturingTimeOperation;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time_operation.ProductManufacturingTimeOperationRepository;
 import com.aleksandarparipovic.marel_app.product_manufacturing_time_operation.dto.ProductManufacturingTimeOperationDto;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.manufacturing_time_request.ManufacturingTimeRequest;
+import com.aleksandarparipovic.marel_app.manufacturing_time_request.ManufacturingTimeRequestRepository;
+import com.aleksandarparipovic.marel_app.manufacturing_time_request.ManufacturingTimeRequestStatus;
+import com.aleksandarparipovic.marel_app.product_manufacturing_time.dto.ProductManufacturingTimeStatsRow;
+import com.aleksandarparipovic.marel_app.search.PageableBuilder;
+import com.aleksandarparipovic.marel_app.search.SearchRequest;
+import com.aleksandarparipovic.marel_app.search.SearchSpecification;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.user.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.criteria.Subquery;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +48,10 @@ public class ProductManufacturingTimeService {
     private final UserRepository userRepository;
     private final OperationRepository operationRepository;
     private final ProductManufacturingTimeOperationRepository pmtoRepository;
+    private final ManufacturingTimeRequestRepository requestRepository;
+
+    private static final ProductManufacturingTimeFieldMapper FIELD_MAPPER =
+            new ProductManufacturingTimeFieldMapper();
 
     @Transactional
     public ProductManufacturingTimeDto create(ProductManufacturingTimeCreateRequest req, Authentication authentication) {
@@ -144,6 +165,105 @@ public class ProductManufacturingTimeService {
                 .toList();
     }
 
+    // ─── The board: paged, filtered, sorted on the server ───────────────────
+
+    /** The caller's own list, as one page the server searched and ordered. */
+    @Transactional(readOnly = true)
+    public Page<ProductManufacturingTimeDto> searchMine(SearchRequest request, Authentication authentication) {
+        User user = userRepository.findByUsername(authentication.getName())
+                .orElseThrow(() -> new EntityNotFoundException("User not found"));
+        Specification<ProductManufacturingTime> spec = activeOnly()
+                .and(ownedBy(user.getId()))
+                .and(new SearchSpecification<>(request, FIELD_MAPPER));
+        return toDtoPage(repository.findAll(spec, pageableFor(request)));
+    }
+
+    /** The shared list — records that answer a request — under the same controls. */
+    @Transactional(readOnly = true)
+    public Page<ProductManufacturingTimeDto> searchFromRequests(SearchRequest request) {
+        Specification<ProductManufacturingTime> spec = activeOnly()
+                .and(answersSomeRequest())
+                .and(new SearchSpecification<>(request, FIELD_MAPPER));
+        return toDtoPage(repository.findAll(spec, pageableFor(request)));
+    }
+
+    /**
+     * The page's KPI figures. {@code restrictToCreatedById} carries the same
+     * narrowing the request picker applies: the caller's own id when they may not
+     * read everybody's requests, NULL when they may.
+     */
+    @Transactional(readOnly = true)
+    public ProductManufacturingTimeStatsRow getStats(Long currentUserId, Long restrictToCreatedById) {
+        long pending = restrictToCreatedById == null
+                ? requestRepository.countByStatus(ManufacturingTimeRequestStatus.PENDING)
+                : requestRepository.countByStatusAndCreatedBy_Id(
+                        ManufacturingTimeRequestStatus.PENDING, restrictToCreatedById);
+        return new ProductManufacturingTimeStatsRow(
+                repository.countByUser_IdAndActiveTrue(currentUserId),
+                repository.countAnsweringRequests(),
+                pending,
+                requestRepository.countByStatusAndAssignedTo_Id(
+                        ManufacturingTimeRequestStatus.IN_REVIEW, currentUserId)
+        );
+    }
+
+    private static Specification<ProductManufacturingTime> activeOnly() {
+        return (root, query, cb) -> cb.isTrue(root.get("active"));
+    }
+
+    private static Specification<ProductManufacturingTime> ownedBy(Long userId) {
+        return (root, query, cb) -> cb.equal(root.get("user").get("id"), userId);
+    }
+
+    /** The same fact {@code findAnsweringRequests} reads, as a composable predicate. */
+    private static Specification<ProductManufacturingTime> answersSomeRequest() {
+        return (root, query, cb) -> {
+            Subquery<Long> answering = query.subquery(Long.class);
+            var request = answering.from(ManufacturingTimeRequest.class);
+            answering.select(cb.literal(1L))
+                    .where(cb.equal(request.get("resultManufacturingTime").get("id"), root.get("id")));
+            return cb.exists(answering);
+        };
+    }
+
+    /**
+     * The requested page, with the list's own default order when none was asked
+     * for: newest first, id as the tiebreaker so same-day records hold still.
+     */
+    private static Pageable pageableFor(SearchRequest request) {
+        Pageable pageable = PageableBuilder.from(request);
+        if (pageable.getSort().isSorted()) {
+            return pageable;
+        }
+        return PageRequest.of(
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                Sort.by(Sort.Order.desc("dateOfIssue"), Sort.Order.desc("id")));
+    }
+
+    /**
+     * A page of records to a page of DTOs in three queries total — the lines of
+     * every record on the page at once, and the answering flag for all of them at
+     * once — instead of a query per row.
+     */
+    private Page<ProductManufacturingTimeDto> toDtoPage(Page<ProductManufacturingTime> page) {
+        List<Long> ids = page.getContent().stream().map(ProductManufacturingTime::getId).toList();
+        if (ids.isEmpty()) {
+            return page.map(e -> new ProductManufacturingTimeDto(e, List.of()));
+        }
+        Map<Long, List<ProductManufacturingTimeOperationDto>> operationsByRecord =
+                pmtoRepository.findByProductManufacturingTime_IdInAndActiveTrueOrderByIdAsc(ids)
+                        .stream()
+                        .collect(Collectors.groupingBy(
+                                op -> op.getProductManufacturingTime().getId(),
+                                Collectors.mapping(ProductManufacturingTimeOperationDto::new, Collectors.toList())));
+        Set<Long> answering = repository.findAnsweringIdsAmong(ids);
+        return page.map(e -> new ProductManufacturingTimeDto(
+                e,
+                operationsByRecord.getOrDefault(e.getId(), List.of()),
+                answering.contains(e.getId())));
+    }
+
     @Transactional(readOnly = true)
     public List<ProductManufacturingTimeDto> getByProductId(Long productId) {
         return repository.findByProduct_IdAndActiveTrue(productId)
@@ -163,6 +283,17 @@ public class ProductManufacturingTimeService {
     @Transactional
     public void delete(Long id) {
         ProductManufacturingTime entity = getActiveOrThrow(id);
+        /*
+         * A record some request points at is the company's answer to somebody's
+         * ask, not a private draft — removing it would leave the request pointing
+         * at nothing. Retiring one goes through a DEACTIVATE request, where the
+         * decision is recorded, so the delete refuses rather than obliges.
+         */
+        if (repository.answersAnyRequest(id)) {
+            throw new ConflictException(
+                    "Ovo vreme izrade je odgovor na zahtev i ne može da se obriše ovde. "
+                            + "Za povlačenje podnesite zahtev za deaktivaciju.");
+        }
         entity.setActive(false);
         pmtoRepository.deactivateAllByProductManufacturingTimeId(id);
     }

@@ -120,4 +120,18 @@ public class ProductController {
         return ResponseEntity.ok(products);
     }
 
+    /**
+     * Options for a lazy product dropdown: the best {@code limit} matches for the
+     * typed fragment. Deliberately uncached — the query is the cache key, and the
+     * search itself is one indexed-friendly LIKE over the live catalogue.
+     */
+    @GetMapping("/options")
+    public ResponseEntity<List<ProductOptionDto>> searchOptions(
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "100") int limit
+    ) {
+        int cappedLimit = Math.max(1, Math.min(limit, 200));
+        return ResponseEntity.ok(productService.searchOptions(q, cappedLimit));
+    }
+
 }

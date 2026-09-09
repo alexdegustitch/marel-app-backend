@@ -8,8 +8,13 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProductMapper {
 
+    /**
+     * The name a dropdown shows is the same one the rest of the UI shows —
+     * the stored override, or the product name with its subtype. Two products
+     * differing only in subtype used to render as identical options.
+     */
     public ProductOptionDto toDtoOption(Product p){
-        return new ProductOptionDto(p.getId(), p.getProductName());
+        return new ProductOptionDto(p.getId(), effectiveDisplayName(p));
     }
 
     public ProductBaseRow toBaseRow(Product p) {
@@ -42,7 +47,7 @@ public class ProductMapper {
      * the product name with the subtype appended when there is one — never a
      * trailing space when there is not.
      */
-    private String effectiveDisplayName(Product p) {
+    public String effectiveDisplayName(Product p) {
         if (p.getDisplayName() != null && !p.getDisplayName().isBlank()) {
             return p.getDisplayName();
         }

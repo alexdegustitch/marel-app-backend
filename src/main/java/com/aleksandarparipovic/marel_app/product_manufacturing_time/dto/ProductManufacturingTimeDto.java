@@ -6,6 +6,7 @@ import lombok.Getter;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Getter
@@ -21,15 +22,35 @@ public class ProductManufacturingTimeDto {
     private final String productName;
     private final LocalDate dateOfIssue;
 
+    /**
+     * The moment the record was written, clock time included. {@code dateOfIssue}
+     * keeps the day; the screen shows this one when it wants the hour too.
+     */
+    private final OffsetDateTime createdAt;
+
     private final BigDecimal manufacturingCoefficient;
     private final BigDecimal productsPerHour;
 
     // Manufacturing time as total seconds; format as mm:ss on the client
     private final Integer manufacturingTimeSeconds;
 
+    /**
+     * Whether some request points at this record as its answer. Such a record is
+     * shared evidence — the screen greys its delete out and says why.
+     */
+    private final boolean answersRequests;
+
     private final List<ProductManufacturingTimeOperationDto> operations;
 
     public ProductManufacturingTimeDto(ProductManufacturingTime e, List<ProductManufacturingTimeOperationDto> operations) {
+        this(e, operations, false);
+    }
+
+    public ProductManufacturingTimeDto(
+            ProductManufacturingTime e,
+            List<ProductManufacturingTimeOperationDto> operations,
+            boolean answersRequests
+    ) {
         this.id = e.getId();
         this.title = e.getTitle();
         this.note = e.getNote();
@@ -37,9 +58,11 @@ public class ProductManufacturingTimeDto {
         this.productId = e.getProduct().getId();
         this.productName = e.getProductName();
         this.dateOfIssue = e.getDateOfIssue();
+        this.createdAt = e.getCreatedAt();
         this.manufacturingCoefficient = e.getManufacturingCoefficient();
         this.productsPerHour = e.getProductsPerHour();
         this.manufacturingTimeSeconds = e.getManufacturingTimeSeconds();
+        this.answersRequests = answersRequests;
         this.operations = operations;
     }
 }

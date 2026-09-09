@@ -725,7 +725,7 @@ class ManufacturingTimeRequestIT extends AbstractIntegrationTest {
         Long theirs = createRequest(users.get(0).getId(), aProduct());
         requestService.assign(theirs, colleague.getId(), null);
 
-        var offered = requestService.pickableRequests(processor.getId(), null)
+        var offered = requestService.pickableRequests(processor.getId(), null, null)
                 .stream()
                 .map(ManufacturingTimeRequestResponse::id)
                 .toList();

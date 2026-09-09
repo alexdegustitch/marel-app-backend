@@ -31,15 +31,33 @@ public class UserPreferencesService {
     @Transactional
     public UserPreferences getOrCreateForUser(Long userId) {
         return preferencesRepository.findById(userId)
-                .orElseGet(() -> {
-                    User user = userRepository.findById(userId)
-                            .orElseThrow(() -> new EntityNotFoundException(
-                                    "Korisnik nije pronađen: " + userId));
-                    return preferencesRepository.save(UserPreferences.builder()
-                            .user(user)
-                            .uiSettings(JsonPayloads.emptyObject())
-                            .build());
-                });
+                .orElseGet(() -> createForUser(userId));
+    }
+
+    /**
+     * The same row, taken with a write lock, for the update path.
+     *
+     * <p>Two of a user's own preference writes firing close together (the theme
+     * sync and, say, the sidebar toggle) used to race the {@code @Version}
+     * column and fail the second request — a theme change that snapped back.
+     * Locking the row here makes those overlapping writes queue instead of race,
+     * so each reads the fresh version. A row that does not exist yet has nothing
+     * to lock; it is created, and the ordinary version check guards the rare
+     * first-write-ever collision.
+     */
+    private UserPreferences getOrCreateForUpdate(Long userId) {
+        return preferencesRepository.findByIdForUpdate(userId)
+                .orElseGet(() -> createForUser(userId));
+    }
+
+    private UserPreferences createForUser(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Korisnik nije pronađen: " + userId));
+        return preferencesRepository.save(UserPreferences.builder()
+                .user(user)
+                .uiSettings(JsonPayloads.emptyObject())
+                .build());
     }
 
     @Transactional
@@ -53,7 +71,7 @@ public class UserPreferencesService {
      */
     @Transactional
     public UserPreferencesResponse update(Long userId, UserPreferencesUpdateRequest request) {
-        UserPreferences preferences = getOrCreateForUser(userId);
+        UserPreferences preferences = getOrCreateForUpdate(userId);
 
         if (request.getTheme() != null) {
             preferences.setTheme(request.getTheme());

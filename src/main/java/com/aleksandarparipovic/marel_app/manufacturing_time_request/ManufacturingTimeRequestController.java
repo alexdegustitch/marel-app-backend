@@ -114,14 +114,16 @@ public class ManufacturingTimeRequestController {
      * as the list above.
      */
     @GetMapping("/open")
-    public ResponseEntity<java.util.List<ManufacturingTimeRequestResponse>> open() {
+    public ResponseEntity<java.util.List<ManufacturingTimeRequestResponse>> open(
+            @RequestParam(required = false) String q
+    ) {
         Long currentUserId = currentUserService.getCurrentUserId();
         Long restrictTo =
                 permissionService.hasPermission(AppPermission.MANUFACTURING_TIME_REQUEST_READ_ALL)
                         ? null
                         : currentUserId;
 
-        return ResponseEntity.ok(service.pickableRequests(currentUserId, restrictTo));
+        return ResponseEntity.ok(service.pickableRequests(currentUserId, restrictTo, q));
     }
 
     /**
