@@ -34,6 +34,7 @@ public final class OperationFieldMapper implements EntityFieldMapper<Operation> 
                     Map.entry("normDate", (root, cb,jm)->root.get("normDate")),
                     Map.entry("productId", (root, cb,jm)->productJoin(jm, cb).get("id")),
                     Map.entry("productName", (root, cb,jm)->productJoin(jm, cb).get("productName")),
+                    Map.entry("catalogNumber", (root, cb,jm)->productJoin(jm, cb).get("catalogNumber")),
                     /*
                      * Filtered through the RELATION, not the joined id: the join is
                      * LEFT, so IS_NULL on the joined id would also be true for a row
@@ -63,7 +64,7 @@ public final class OperationFieldMapper implements EntityFieldMapper<Operation> 
 
     @Override
     public List<String> getGlobalSearchFields(){
-        return List.of("productName", "operationName");
+        return List.of("productName", "operationName", "catalogNumber");
     }
 }
 

@@ -24,6 +24,10 @@ public class OperationCreateRequest {
 
     private Boolean normRequired;
 
+    // The norm is entered without a date on purpose ("privremena"). Only
+    // meaningful when a norm value is present; excludes normDate.
+    private Boolean temporary;
+
     private Integer unitsPerProduct;
 
     private Long workCodeCategoryId;

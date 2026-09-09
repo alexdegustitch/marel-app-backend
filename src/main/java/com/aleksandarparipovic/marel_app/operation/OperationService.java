@@ -138,11 +138,8 @@ public class OperationService {
         operation.setMaxNorm(request.getMaxNorm());
         validateNormRules(operation);
         operation.setUnitsPerProduct(request.getUnitsPerProduct());
-        // The norm is optional, and the date is the date a NORM applies from —
-        // so an operation without one is left without a date rather than with a
-        // date that dates nothing.
-        operation.setNormDate(hasNormValue(request.getMinNorm(), request.getMaxNorm())
-                ? request.getNormDate() : null);
+        applyNormDating(operation, request.getMinNorm(), request.getMaxNorm(),
+                request.getTemporary(), request.getNormDate());
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
 
         // The norm history follows the columns this form just wrote. Without it
@@ -162,7 +159,9 @@ public class OperationService {
                 operation.getUnitsPerProduct(),
                 operation.getNormDate(),
                 operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
-                count
+                count,
+                operation.getProduct().getCatalogNumber(),
+                operation.isTemporary()
         );
     }
 
@@ -238,11 +237,8 @@ public class OperationService {
         operation.setMaxNorm(request.getMaxNorm());
         validateNormRules(operation);
         operation.setUnitsPerProduct(request.getUnitsPerProduct());
-        // The norm is optional, and the date is the date a NORM applies from —
-        // so an operation without one is left without a date rather than with a
-        // date that dates nothing.
-        operation.setNormDate(hasNormValue(request.getMinNorm(), request.getMaxNorm())
-                ? request.getNormDate() : null);
+        applyNormDating(operation, request.getMinNorm(), request.getMaxNorm(),
+                request.getTemporary(), request.getNormDate());
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
         operation = operationRepository.save(operation);
 
@@ -262,7 +258,9 @@ public class OperationService {
                 operation.getUnitsPerProduct(),
                 operation.getNormDate(),
                 operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
-                count
+                count,
+                operation.getProduct().getCatalogNumber(),
+                operation.isTemporary()
         );
     }
 
@@ -409,6 +407,25 @@ public class OperationService {
 
     private static boolean hasNormValue(Integer minNorm, Integer maxNorm) {
         return minNorm != null || maxNorm != null;
+    }
+
+    /**
+     * Settles the norm's dating on the operation from what the form sent.
+     *
+     * <p>The date is the date a NORM applies from, so an operation without a
+     * norm value carries neither a date nor the temporary flag. When a norm IS
+     * present the two are mutually exclusive: "privremena" means the norm was
+     * entered without a date on purpose, so it clears the date; a norm with a
+     * date is never temporary. This mirrors the norm-version form and keeps the
+     * derived norm-version row inside its {@code NOT is_temporary OR norm_date
+     * IS NULL} check.
+     */
+    private static void applyNormDating(Operation operation, Integer minNorm, Integer maxNorm,
+                                        Boolean temporary, LocalDate normDate) {
+        boolean hasNorm = hasNormValue(minNorm, maxNorm);
+        boolean isTemporary = hasNorm && Boolean.TRUE.equals(temporary);
+        operation.setTemporary(isTemporary);
+        operation.setNormDate(hasNorm && !isTemporary ? normDate : null);
     }
 
     private void validateNormRules(Operation operation) {

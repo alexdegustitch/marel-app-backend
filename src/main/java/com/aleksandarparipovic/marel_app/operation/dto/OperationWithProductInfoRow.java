@@ -20,6 +20,12 @@ public class OperationWithProductInfoRow {
     private final LocalDate normDate;
     private final Long workCodeCategoryId;
     private final Long operationCount;
+    // The product's catalogue number — shown on the product band and searchable
+    // alongside the product and operation names.
+    private final String catalogNumber;
+    // The norm in force was entered without a date on purpose ("privremena").
+    // When true, normDate is null and the grid reads "Privremena" in its place.
+    private final boolean normTemporary;
 
 
 }

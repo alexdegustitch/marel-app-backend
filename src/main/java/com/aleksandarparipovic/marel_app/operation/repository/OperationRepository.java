@@ -33,7 +33,8 @@ select new com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductN
     o.unitsPerProduct,
     p.id,
     p.productName,
-    wcc.id
+    wcc.id,
+    o.temporary
 )
 from Operation o
 join o.product p

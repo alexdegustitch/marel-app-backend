@@ -18,4 +18,7 @@ public class OperationWithProductNameDto {
     private Long productId;
     private String productName;
     private Long workCodeCategoryId;
+    // The norm in force was entered without a date on purpose ("privremena").
+    // Lets the edit form show the box already ticked.
+    private Boolean normTemporary;
 }

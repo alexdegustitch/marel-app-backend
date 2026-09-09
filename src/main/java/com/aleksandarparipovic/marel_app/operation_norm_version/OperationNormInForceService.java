@@ -96,10 +96,11 @@ public class OperationNormInForceService {
         version.setMaxNorm(operation.getMaxNorm());
         version.setUnitsPerProduct(operation.getUnitsPerProduct());
         version.setNormDate(operation.getNormDate());
-        // A dated norm is not a temporary one, and the database says so too.
-        if (operation.getNormDate() != null) {
-            version.setTemporary(false);
-        }
+        // The operation's own flag is the source of truth: the create/edit form
+        // sets it. A dated norm is never temporary, and the version table's CHECK
+        // (NOT is_temporary OR norm_date IS NULL) is honoured by pairing the flag
+        // with an absent date.
+        version.setTemporary(operation.getNormDate() == null && operation.isTemporary());
         version = versionRepository.saveAndFlush(version);
 
         claim(operation, version, by, null, current != null
@@ -156,6 +157,10 @@ public class OperationNormInForceService {
             operation.setUnitsPerProduct(version.getUnitsPerProduct());
         }
         operation.setNormDate(version.getNormDate());
+        // Keep the operation's own flag in step with the version now in force, so
+        // the operations grid (which reads the operation column) shows the same
+        // "Privremena" the detail page reads from the version history.
+        operation.setTemporary(version.isTemporary());
     }
 
     private static boolean hasNorm(Operation operation) {
