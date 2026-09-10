@@ -129,14 +129,15 @@ public class DailyRecalcService {
 
         // Heavy reads are executed before the write transaction to reduce lock hold time.
         /*
-         * AN ABSENCE LOG IS NOT WORK, AND IS NOT MEASURED AS ANY.
+         * A FULL-DAY ABSENCE LOG IS NOT WORK, AND IS NOT MEASURED AS ANY.
          *
-         * Both NO and ND are written as work logs so a full day off shows on the
-         * shift beside everything else. Fed into the aggregation, though, either
-         * would be counted as time present with a coefficient of zero — and since
-         * the monthly efficiency is totalWeightedNormMinutes / totalShiftMinutes,
-         * one such day would drag a whole month's efficiency down. (On probation
-         * it is worse and the other way: the probation rule credits every row at
+         * Every full-day absence — NO, ND, godišnji odmor, any bolovanje — is
+         * written as a work log so the day off shows on the shift beside
+         * everything else. Fed into the aggregation, though, it would be counted
+         * as time present with a coefficient of zero — and since the monthly
+         * efficiency is totalWeightedNormMinutes / totalShiftMinutes, one such
+         * day would drag a whole month's efficiency down. (On probation it is
+         * worse and the other way: the probation rule credits every row at
          * 100 %, so the day would INFLATE the month instead.)
          *
          * It also keeps the overtime honest. Overtime is measured from the day's
@@ -147,14 +148,18 @@ public class DailyRecalcService {
          * would otherwise have to remember: the interval engine, the category
          * rows, the two coefficient denominators, and the analytics facts.
          *
-         * The minutes are not lost. They reach total_absence_unpaid_minutes
+         * Recognised by the category's is_full_day flag rather than by matching
+         * codes: godišnji odmor and bolovanje joined NO and ND here (V40), and a
+         * flag is the one place that decides it for all of them.
+         *
+         * The minutes are not lost. They reach the absence and sick-leave totals
          * through the absence record these logs mirror, which carries the same
          * span — see fillDailyTotals. Counting BOTH would report a full shift of
          * absence twice on a day that had one.
          */
         List<WorkLog> logs = workLogRepo.findActiveLogsWithRefsForShift(workShiftId).stream()
                 .filter(wl -> wl.getWorkCode() == null
-                        || !AbsenceCategoryCodes.isAbsenceLog(wl.getWorkCode().getCategoryNo()))
+                        || !Boolean.TRUE.equals(wl.getWorkCode().getIsFullDay()))
                 .toList();
 
         Boolean processed = transactionTemplate.execute(status -> processJobWritePhase(

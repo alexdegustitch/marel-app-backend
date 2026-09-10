@@ -661,6 +661,74 @@ public class WorkShiftService {
     }
 
     /**
+     * What a range archive would touch, so the screen can state it before
+     * asking for a password. Live shifts only — the same set the archive walks.
+     */
+    public com.aleksandarparipovic.marel_app.work_shift.dto.ArchiveRangeSummary previewArchiveRange(
+            Long employeeId, LocalDate fromDate, LocalDate toDate) {
+        List<WorkShift> shifts = rangeToArchive(employeeId, fromDate, toDate);
+        return new com.aleksandarparipovic.marel_app.work_shift.dto.ArchiveRangeSummary(
+                shifts.size(),
+                shifts.isEmpty() ? null : shifts.getFirst().getWorkDate(),
+                shifts.isEmpty() ? null : shifts.getLast().getWorkDate());
+    }
+
+    /**
+     * Withdraw every live shift of one employee in a date range.
+     *
+     * <p>The whole range or none of it: a month whose payroll is handed over
+     * refuses the entire request up front, rather than archiving half a period
+     * and stopping — half-done is the one outcome nobody asked for. Each shift
+     * then goes through {@link #archive}, so a range behaves exactly like that
+     * many single withdrawals: report dropped, month requeued, reason on the
+     * note. The password was already confirmed at the controller.
+     */
+    @Transactional
+    public com.aleksandarparipovic.marel_app.work_shift.dto.ArchiveRangeSummary archiveRange(
+            Long employeeId, LocalDate fromDate, LocalDate toDate, String reason) {
+        List<WorkShift> shifts = rangeToArchive(employeeId, fromDate, toDate);
+        if (shifts.isEmpty()) {
+            throw new ConflictException("U izabranom periodu nema smena za arhiviranje.");
+        }
+
+        java.util.Set<YearMonth> months = new java.util.LinkedHashSet<>();
+        for (WorkShift shift : shifts) {
+            months.add(YearMonth.from(shift.getWorkDate()));
+        }
+        for (YearMonth ym : months) {
+            long closed = payrollRunItemRepository.countClosedForEmployeeAndMonth(
+                    employeeId, ym.getYear(), ym.getMonthValue());
+            if (closed > 0) {
+                throw new ConflictException(
+                        "Obračun za " + ym.getMonthValue() + "/" + ym.getYear()
+                                + " je predat ili zaključan, pa se smene iz tog perioda ne mogu arhivirati."
+                                + " Vratite ga na doradu pa pokušajte ponovo.");
+            }
+        }
+
+        for (WorkShift shift : shifts) {
+            archive(shift.getId(), reason);
+        }
+        // The items learn their inputs moved; LOCKED months were refused above.
+        for (YearMonth ym : months) {
+            payrollRunItemRepository.markNeedsRecalculationByEmployeeAndMonth(
+                    employeeId, ym.getYear(), ym.getMonthValue());
+        }
+
+        log.info("Archived {} shifts for employee {} in {} – {} by user {}",
+                shifts.size(), employeeId, fromDate, toDate, currentUserService.getCurrentUserId());
+        return new com.aleksandarparipovic.marel_app.work_shift.dto.ArchiveRangeSummary(
+                shifts.size(), shifts.getFirst().getWorkDate(), shifts.getLast().getWorkDate());
+    }
+
+    private List<WorkShift> rangeToArchive(Long employeeId, LocalDate fromDate, LocalDate toDate) {
+        if (employeeId == null || fromDate == null || toDate == null || toDate.isBefore(fromDate)) {
+            throw new IllegalArgumentException("Period nije ispravan: datum od mora biti pre ili jednak datumu do.");
+        }
+        return repository.findActiveWithCategoryInRange(employeeId, fromDate, toDate);
+    }
+
+    /**
      * Put a withdrawn shift back.
      *
      * <p>The overlap and one-per-day rules count live shifts only, so restoring

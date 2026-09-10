@@ -164,8 +164,19 @@ public class EmployeeRecordService {
             created++;
         }
 
-        if (!employeeRecordIds.isEmpty()) {
-            publishInitEvent(year, month, employeeRecordIds);
+        /*
+         * The init event carries EVERY karton of the month, not only the ones
+         * this call created. A karton can exist before "Kreiraj kartone" runs —
+         * entering a shift (or a leave period) auto-creates it — and such a
+         * karton was skipped above, so listing only the new ids would leave it
+         * without a monthly report or payroll item forever. Every init phase
+         * skips what already exists, so re-listing the initialised ones costs a
+         * lookup and writes nothing.
+         */
+        List<Long> allRecordIds = employeeRecordRepository.findAllByStartDate(monthStart)
+                .stream().map(EmployeeRecord::getId).toList();
+        if (!allRecordIds.isEmpty()) {
+            publishInitEvent(year, month, allRecordIds);
         }
 
         return new EmployeeRecordCreateResponse(year, month, created, employeeRecordIds, employeeIds);

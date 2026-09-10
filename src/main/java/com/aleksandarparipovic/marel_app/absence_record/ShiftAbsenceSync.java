@@ -119,7 +119,7 @@ public class ShiftAbsenceSync {
     private void withdrawAbsencesCoveredByWork(WorkShift shift, List<WorkLog> logs) {
         List<WorkLog> workLogs = logs.stream()
                 .filter(wl -> wl.getWorkCode() == null
-                        || !AbsenceCategoryCodes.isAbsenceLog(wl.getWorkCode().getCategoryNo()))
+                        || !Boolean.TRUE.equals(wl.getWorkCode().getIsFullDay()))
                 .toList();
         if (workLogs.isEmpty()) {
             return;

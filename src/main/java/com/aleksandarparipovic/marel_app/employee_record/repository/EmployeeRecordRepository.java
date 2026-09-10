@@ -30,6 +30,9 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
 
     boolean existsByEmployeeIdAndStartDate(Long employeeId, LocalDate startDate);
 
+    /** Every karton of one month — start_date is always the month's first day. */
+    List<EmployeeRecord> findAllByStartDate(LocalDate startDate);
+
 
     @Query(value = """
         SELECT

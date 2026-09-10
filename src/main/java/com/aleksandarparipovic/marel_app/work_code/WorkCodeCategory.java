@@ -102,6 +102,25 @@ public class WorkCodeCategory {
     @Column(name = "allows_parallel_work", nullable = false)
     private Boolean allowsParallelWork = false;
 
+    /**
+     * STANDARD | INJURY | EXTENDED — the role this SICK_LEAVE category plays in
+     * the thirty-day rule, or null when it plays none. Declared data rather than
+     * a pattern-match on codes or names: the rule must survive a renamed
+     * category. See V39.
+     */
+    @Column(name = "sick_leave_kind")
+    private String sickLeaveKind;
+
+    /**
+     * TRUE when this category always means a whole shift nobody worked (GO,
+     * bolovanje, NO, ND). Such a day is drawn on the shift as one full-shift
+     * log, dropped from the recalc aggregation (its minutes come through the
+     * absence record), and shown on the calendar without times. See V40.
+     */
+    @Column(name = "is_full_day", nullable = false)
+    @Builder.Default
+    private Boolean isFullDay = false;
+
     // DB managed timestamps
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;

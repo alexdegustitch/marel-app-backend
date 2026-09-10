@@ -191,6 +191,11 @@ public class SecurityConfig {
                                 // Absences are recorded on a shift, by the same
                                 // people and through the same screen as the work is.
                                 "/api/absences/**",
+                                // A leave entered for a period writes shifts, and
+                                // the worker's calendar reads them — the same
+                                // area, the same door as the karton.
+                                "/api/employee-leaves/**",
+                                "/api/employee-calendar/**",
                                 "/api/shifts/**",
                                 "/api/reports/summary/**",
                                 "/api/work-code-categories/**",

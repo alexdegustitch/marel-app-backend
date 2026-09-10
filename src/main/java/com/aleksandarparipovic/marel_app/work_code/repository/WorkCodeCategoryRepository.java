@@ -53,4 +53,10 @@ public interface WorkCodeCategoryRepository extends JpaRepository<WorkCodeCatego
             """, nativeQuery = true)
     Optional<WorkCodeCategory> findInForceByCategoryNo(@Param("categoryNo") String categoryNo,
                                                        @Param("atDate") LocalDate atDate);
+
+    /**
+     * The category playing one role in the thirty-day sick-leave rule — in
+     * practice the EXTENDED one, which auto-upgraded days are written as.
+     */
+    Optional<WorkCodeCategory> findFirstBySickLeaveKindAndIsActiveTrueAndArchivedAtIsNull(String sickLeaveKind);
 }

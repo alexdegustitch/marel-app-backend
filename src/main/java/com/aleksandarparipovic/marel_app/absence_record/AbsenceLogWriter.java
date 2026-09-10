@@ -100,6 +100,21 @@ public class AbsenceLogWriter {
                         "Neplaćeno odsustvo — cela smena"));
     }
 
+    /**
+     * Ensures a full-day absence (godišnji odmor, bolovanje, …) shows on the
+     * shift as one operation spanning it — the same way NO and ND do.
+     *
+     * <p>Idempotent, keyed on the category's code. The recalculation drops this
+     * log the moment it sees the category is {@code is_full_day}, so the minutes
+     * are still priced once, through the absence record; the log is only what
+     * makes the karton say the shift is a day off rather than an empty one.
+     */
+    public WorkLog ensureFullDayLog(WorkShift shift, WorkCodeCategory category) {
+        return findLog(shift, category.getCategoryNo())
+                .orElseGet(() -> write(shift, category.getCategoryNo(),
+                        category.getCategoryName() + " — cela smena"));
+    }
+
     public Optional<WorkLog> findLog(WorkShift shift, String categoryNo) {
         return workLogRepository.findActiveLogsWithRefsForShift(shift.getId()).stream()
                 .filter(wl -> wl.getWorkCode() != null

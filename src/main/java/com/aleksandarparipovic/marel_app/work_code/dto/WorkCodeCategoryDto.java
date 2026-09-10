@@ -44,6 +44,18 @@ public record WorkCodeCategoryDto(
          * <p>Costs nothing: the column is already on the row being mapped, and
          * the list is fetched once and cached.
          */
-        String type
+        String type,
+        /**
+         * STANDARD | INJURY | EXTENDED for sick-leave categories taking part in
+         * the thirty-day rule; null otherwise. The period-entry screen uses it
+         * to warn when EXTENDED is chosen without thirty continuous days of
+         * STANDARD behind it.
+         */
+        String sickLeaveKind,
+        /**
+         * TRUE for a whole-day absence (GO, bolovanje, NO, ND). The calendar
+         * draws such a day as its category alone, without shift times.
+         */
+        Boolean isFullDay
 ) {
 }
