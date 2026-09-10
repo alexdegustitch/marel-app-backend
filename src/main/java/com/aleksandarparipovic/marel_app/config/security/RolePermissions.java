@@ -35,8 +35,12 @@ public final class RolePermissions {
              * Supervisors run the shop floor. They own the work records and the
              * payroll screens the floor's work feeds, the manufacturing-time
              * workflow, the analytics, the workers, and the settings behind all of
-             * it — but never user approval, never session revocation, and never
-             * the configuration of who may see which payroll line.
+             * it. Since 2026-09-10, at the owner's request, they also REVIEW
+             * self-registrations (see USER_REGISTRATION_* below) so the floor's own
+             * manager can let a new account in without waiting on an administrator
+             * — but still never session revocation, and never the configuration of
+             * who may see which payroll line. Approving an account is not
+             * administering one.
              *
              * On ORDERS they read and do not write. That is the split
              * PRODUCTION_ORDER_VIEW exists for: they have to know what the floor is
@@ -58,6 +62,18 @@ public final class RolePermissions {
                     AppPermission.MANUFACTURING_TIME_MANAGE,
                     AppPermission.ANALYTICS_VIEW,
                     AppPermission.EMPLOYEE_VIEW,
+                    /*
+                     * Review self-registrations: read the whole queue and decide
+                     * it (approve, decline, withdraw anyone's). This is the pair
+                     * the registration-request endpoints ask for — READ_ALL for
+                     * the list, the pending-count badge and a single request;
+                     * APPROVE for the decision, which is also what fans a
+                     * "new registration" notification out to whoever may act on it.
+                     * They still do NOT administer the account afterwards: no
+                     * USER_SESSION_REVOKE, no editing roles or passwords.
+                     */
+                    AppPermission.USER_REGISTRATION_READ_ALL,
+                    AppPermission.USER_REGISTRATION_APPROVE,
                     AppPermission.PRODUCT_MANAGE,
                     AppPermission.OPERATION_MANAGE,
                     AppPermission.PRODUCTION_ORDER_VIEW,
