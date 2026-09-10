@@ -8,6 +8,8 @@ import com.aleksandarparipovic.marel_app.employee.dto.EmployeeCreateRequest;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeePatchRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.aleksandarparipovic.marel_app.employee.dto.EmployeePatchRequest;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueCodes;
+import com.aleksandarparipovic.marel_app.employee_payroll_value.EmployeePayrollValueService;
 import com.aleksandarparipovic.marel_app.employee_record.EmployeeRecordService;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
 import com.aleksandarparipovic.marel_app.support.PayrollScenarioFixture;
@@ -17,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -40,6 +43,7 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
 
     @Autowired private EmployeeService employeeService;
     @Autowired private EmployeeRecordService employeeRecordService;
+    @Autowired private EmployeePayrollValueService valueService;
     @Autowired private DepartmentRepository departmentRepository;
     @Autowired private PayrollScenarioFixture fixture;
     @Autowired private EntityManager entityManager;
@@ -252,6 +256,28 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
     }
 
     /** Built from JSON, because the request carries getters and no setters. */
+    @Test
+    @DisplayName("a rate given at creation is recorded from the start date, so a mid-month hire is priced")
+    void aRateAtCreationStartsFromTheHireDate() {
+        // Hired on the 22nd. Before this, createEmployee wrote only
+        // employees.hourly_rate and no history period, so nothing was in force on
+        // the 1st that payroll prices the first month at. The rate now begins on
+        // the actual start date.
+        LocalDate start = LocalDate.of(2026, 5, 22);
+        EmployeeCreateRequest request = request(start);
+        request.setHourlyRate(new BigDecimal("480.00"));
+
+        var created = employeeService.createEmployee(request);
+        entityManager.flush();
+
+        assertThat(valueService.getHistory(created.getEmployeeId(), EmployeePayrollValueCodes.HOURLY_RATE))
+                .singleElement()
+                .satisfies(period -> {
+                    assertThat(period.getValidFrom()).isEqualTo(start);
+                    assertThat(period.getNumericValue()).isEqualByComparingTo("480.00");
+                });
+    }
+
     private EmployeePatchRequest patch(String json) {
         try {
             return objectMapper.readValue(json, EmployeePatchRequest.class);

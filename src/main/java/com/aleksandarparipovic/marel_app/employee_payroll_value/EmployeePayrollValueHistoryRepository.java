@@ -50,6 +50,33 @@ public interface EmployeePayrollValueHistoryRepository
                                                      @Param("code") String code,
                                                      @Param("on") LocalDate on);
 
+    /**
+     * The value periods for one employee and code that overlap a month, earliest
+     * first.
+     *
+     * <p>{@link #findInForce} asks a single date and so misses an employee whose
+     * first period begins AFTER that date — a starter hired mid-month, whose rate
+     * is not in force on the 1st that payroll prices the month at. This finds every
+     * period touching {@code [monthStart, monthEnd]} (both inclusive), ordered so
+     * the caller can take the first one that actually applied that month. The
+     * overlap test converts the inclusive {@code validUntil} the same way the
+     * exclusion constraint does.
+     */
+    @Query("""
+            SELECT h FROM EmployeePayrollValueHistory h
+            JOIN FETCH h.definition d
+            WHERE h.employee.id = :employeeId
+              AND d.code = :code
+              AND h.archivedAt IS NULL
+              AND h.validFrom <= :monthEnd
+              AND (h.validUntil IS NULL OR h.validUntil >= :monthStart)
+            ORDER BY h.validFrom ASC
+            """)
+    List<EmployeePayrollValueHistory> findOverlappingMonth(@Param("employeeId") Long employeeId,
+                                                           @Param("code") String code,
+                                                           @Param("monthStart") LocalDate monthStart,
+                                                           @Param("monthEnd") LocalDate monthEnd);
+
     /** Full history for one employee, newest first. */
     @Query("""
             SELECT h FROM EmployeePayrollValueHistory h

@@ -53,6 +53,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.List;
 import java.util.LinkedHashMap;
@@ -1088,13 +1089,21 @@ public class PayrollRunItemService {
                     || summary.getTotalNetEarnings() == null;
         }
 
+        // Worked minutes priced at zero because no rate is in force — a missing
+        // input, not a masked figure. A rate somebody deliberately typed as zero
+        // (an override) is a decision, not an omission, so it is excluded.
+        boolean missingHourlyRate = safe(item.getTotalWorkMinutes()) > 0
+                && !Boolean.TRUE.equals(item.getHourlyRateOverridden())
+                && item.effectiveHourlyRate().compareTo(BigDecimal.ZERO) == 0;
+
         return new PayrollRunItemDetailResponse(
                 summary,
                 categories,
                 adjustments,
                 permissions,
                 locale,
-                partialView
+                partialView,
+                missingHourlyRate
         );
     }
 
@@ -1184,7 +1193,10 @@ public class PayrollRunItemService {
                 // Nothing was withheld, so nothing to warn about. Taken from the
                 // response rather than written as false, so that if the document
                 // ever does come back partial the warning travels with it.
-                full.isPartialView());
+                full.isPartialView(),
+                // A missing rate is a fact about the payroll, not about who is
+                // reading it — it travels onto one's own payslip like any other.
+                full.isMissingHourlyRate());
     }
 
     /**
@@ -1206,6 +1218,22 @@ public class PayrollRunItemService {
                 employeeId, EmployeePayrollValueCodes.HOURLY_RATE, pricingDate);
         if (fromHistory.isPresent()) {
             return fromHistory.get();
+        }
+
+        // Nothing in force on the month's first day. An employee who STARTED
+        // mid-month has their first rate period beginning after the 1st, so the
+        // strict lookup above misses it and the month would fall through to the
+        // legacy column or zero — pricing worked days at nothing. Take the first
+        // rate in force at any point during the month instead: the rate they were
+        // actually on once they began. A raise mid-month is unaffected, because
+        // that path always has a rate in force on the 1st and never reaches here.
+        YearMonth month = YearMonth.from(pricingDate);
+        Optional<BigDecimal> firstInMonth = employeePayrollValueService.firstNumericValueInMonth(
+                employeeId, EmployeePayrollValueCodes.HOURLY_RATE, month.atDay(1), month.atEndOfMonth());
+        if (firstInMonth.isPresent()) {
+            log.debug("Employee {} has no HOURLY_RATE in force on {} but a period begins later "
+                    + "that month — pricing {} at the first in-month rate", employeeId, pricingDate, month);
+            return firstInMonth.get();
         }
 
         BigDecimal fromEmployee = item.getEmployee().getHourlyRate();
@@ -2610,6 +2638,17 @@ public class PayrollRunItemService {
         BigDecimal employeeRate = hourlyRateFor(item, pricingDate);
         if (employeeRate != null) {
             item.setHourlyRateSystem(employeeRate);
+        } else if (safe(mr.getTotalWorkMinutes()) > 0) {
+            // Worked minutes but no rate anywhere — no history period touching the
+            // month and no legacy column. The month will price those minutes at
+            // zero, which is a MISSING rate, not a decision to pay nothing. Said
+            // loudly here so it is a log line to act on rather than a silent zero
+            // on a payslip nobody questions. Enter a rate effective from the
+            // employee's start date to clear it.
+            log.warn("Employee {} has {} worked minute(s) in {} but no hourly rate in force — "
+                            + "the month prices at 0. Enter a rate effective from their start date.",
+                    item.getEmployee() != null ? item.getEmployee().getId() : null,
+                    safe(mr.getTotalWorkMinutes()), YearMonth.from(pricingDate));
         }
         /*
          * Derived, and re-derived here on every recalculation — which is the
