@@ -149,6 +149,16 @@ public class EmployeeService {
         // serves no new probation unless somebody says so.
         employmentPeriodService.openFirstPeriod(employee);
 
+        // Seed the rate history from the employee's FIRST DAY, not "this month".
+        // createEmployee only wrote employees.hourly_rate, so a new employee had no
+        // history period until an edit created one — and a starter hired mid-month
+        // (or backdated) then had no rate in force on the 1st that payroll prices
+        // their first month at, pricing worked days at zero. The employment start
+        // date is the honest effective date: it is when this rate first applied.
+        // The edit forms default to the current month instead, deliberately —
+        // there a change is a RAISE, which applies forward, not from the hire date.
+        recordHourlyRate(employee.getId(), employee.getHourlyRate(), employee.getEmploymentStartDate());
+
         // The bonus category is meaningful only under a scheme that earns a
         // performance bonus. Under one that does not, the form disables the field
         // and sends nothing — so require it here rather than with @NotNull, which

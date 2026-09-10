@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -68,6 +69,27 @@ public class EmployeePayrollValueService {
     public Optional<BigDecimal> numericValueOn(Long employeeId, String code, LocalDate on) {
         return historyRepository.findInForce(employeeId, code, on)
                 .map(EmployeePayrollValueHistory::getNumericValue);
+    }
+
+    /**
+     * The first numeric value in force at any point during {@code [monthStart,
+     * monthEnd]}.
+     *
+     * <p>{@link #numericValueOn} asks a single date and misses an employee whose
+     * first period begins after it — someone hired mid-month, whose rate is not in
+     * force on the 1st that payroll prices the month at. This answers "what were
+     * they on once they started that month", by taking the earliest period that
+     * overlaps the month. Empty when no value touches the month at all, which the
+     * caller must still treat as "not configured" rather than zero.
+     */
+    @Transactional(readOnly = true)
+    public Optional<BigDecimal> firstNumericValueInMonth(Long employeeId, String code,
+                                                         LocalDate monthStart, LocalDate monthEnd) {
+        return historyRepository.findOverlappingMonth(employeeId, code, monthStart, monthEnd)
+                .stream()
+                .map(EmployeePayrollValueHistory::getNumericValue)
+                .filter(Objects::nonNull)
+                .findFirst();
     }
 
     /**

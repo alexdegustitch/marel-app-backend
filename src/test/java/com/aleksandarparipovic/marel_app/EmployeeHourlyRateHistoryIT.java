@@ -241,6 +241,46 @@ class EmployeeHourlyRateHistoryIT extends AbstractIntegrationTest {
                         v -> assertThat(v).isEqualByComparingTo("777.00"));
     }
 
+    @Test
+    @DisplayName("a rate that begins mid-month prices that month instead of falling through to zero")
+    void aMidMonthStartRatePricesTheMonth() {
+        // The employee started on the 22nd, so their first — and only — rate period
+        // begins mid-month. Payroll prices a month at its FIRST day, where nothing
+        // is in force yet; before the fix the month fell through to the legacy
+        // column or zero. withoutEmployeeHourlyRate() removes the legacy column, so
+        // the only way this prices at 500 is the in-month fallback.
+        var scenario = fixture.scenario()
+                .period(YearMonth.of(2026, 9))
+                .withoutEmployeeHourlyRate()
+                .build();
+        Long employeeId = scenario.employee().getId();
+
+        valueService.changeValue(employeeId, EmployeePayrollValueCodes.HOURLY_RATE,
+                new BigDecimal("500.00"), LocalDate.of(2026, 9, 22), null, null);
+
+        // The gap that caused the bug: nothing is in force on the day payroll
+        // prices the month at.
+        assertThat(valueService.numericValueOn(employeeId, EmployeePayrollValueCodes.HOURLY_RATE,
+                LocalDate.of(2026, 9, 1))).isEmpty();
+
+        // The fix at the layer hourlyRateFor consumes: the first rate touching the month.
+        assertThat(valueService.firstNumericValueInMonth(employeeId,
+                EmployeePayrollValueCodes.HOURLY_RATE,
+                LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30)))
+                .hasValueSatisfying(v -> assertThat(v).isEqualByComparingTo("500.00"));
+
+        // And it reaches the payslip: recalculation resolves the item's system rate
+        // to the mid-month rate rather than leaving it untouched at zero/legacy.
+        PayrollRunItem stale = itemRepository.findById(scenario.item().getId()).orElseThrow();
+        stale.setNeedsRecalculation(true);
+        itemRepository.saveAndFlush(stale);
+        entityManager.clear();
+
+        PayrollRunItem recalculated =
+                payrollRunItemService.getForPayrollAccess(scenario.item().getId());
+        assertThat(recalculated.getHourlyRateSystem()).isEqualByComparingTo("500.00");
+    }
+
     /*
      * "Reset" must mean the employee's own rate, not zero.
      *

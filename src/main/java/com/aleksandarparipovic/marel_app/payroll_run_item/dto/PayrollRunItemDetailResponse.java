@@ -39,5 +39,17 @@ public class PayrollRunItemDetailResponse {
      * <p>False, not absent, for payroll's own roles: they see everything.
      */
     private final boolean partialView;
+
+    /**
+     * Whether the month has worked minutes but no hourly rate in force, so it
+     * prices those minutes at zero.
+     *
+     * <p>Not a masking flag like {@link #partialView}: this says the payroll is
+     * missing an INPUT, not that the reader is missing a figure. It is what turns
+     * a silent zero on the payslip into something the screen can point at — "no
+     * rate; enter one effective from the employee's start date" — rather than a
+     * plausible-looking total nobody questions.
+     */
+    private final boolean missingHourlyRate;
 }
 
