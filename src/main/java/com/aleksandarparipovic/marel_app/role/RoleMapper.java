@@ -8,6 +8,7 @@ public class RoleMapper {
         return RoleDto.builder()
                 .id(role.getId())
                 .roleName(role.getRoleName())
+                .displayName(role.getDisplayName())
                 .build();
     }
 }

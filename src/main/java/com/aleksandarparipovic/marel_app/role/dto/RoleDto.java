@@ -8,4 +8,6 @@ import lombok.Getter;
 public class RoleDto {
     private Long id;
     private String roleName;
+    /** The name to show people; null when the role has not been given one. */
+    private String displayName;
 }
