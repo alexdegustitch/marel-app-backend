@@ -169,6 +169,19 @@ public class SecurityConfig {
                             .authenticated()
 
                         /*
+                         * The shift-type DEFINITIONS the ShiftRing and every shift
+                         * picker read. The shell shows the ring to everybody signed
+                         * in, so this lookup must be open to them — refusing it here
+                         * 403'd `commercial` (and production_coordinator, accountant)
+                         * on the shared shell and could read as a lost session. The
+                         * same mistake, and the same exception, as
+                         * `active-work-code-categories` above; the WORK behind
+                         * `/api/shifts/**` stays WORK_RECORD_VIEW immediately below.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/shifts/active-shifts")
+                            .authenticated()
+
+                        /*
                          * THE WORK RECORDS — cards, months, shifts, hours, logs.
                          *
                          * `/api/me/**` is deliberately NOT in this list. A worker
