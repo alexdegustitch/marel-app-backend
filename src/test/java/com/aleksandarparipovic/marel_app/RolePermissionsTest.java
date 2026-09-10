@@ -81,13 +81,22 @@ class RolePermissionsTest {
         }
 
         @Test
+        @DisplayName("reviews self-registrations — reads the queue and decides it")
+        void reviewsRegistrations() {
+            assertThat(RolePermissions.forRole("supervisor")).contains(
+                    AppPermission.USER_REGISTRATION_READ_ALL,
+                    AppPermission.USER_REGISTRATION_APPROVE);
+        }
+
+        @Test
         @DisplayName("cannot reach the customers, the accounts, or who sees which payroll line")
         void staysOffCommercialAndAdministrativeGround() {
             assertThat(RolePermissions.forRole("supervisor")).doesNotContain(
                     AppPermission.CUSTOMER_VIEW,
                     AppPermission.PAYROLL_ACCESS_CONFIGURE,
                     AppPermission.PAYROLL_LOCK,
-                    AppPermission.USER_REGISTRATION_APPROVE,
+                    // Reviews registrations (above) but still does not administer
+                    // the account that results — no session revocation.
                     AppPermission.USER_SESSION_REVOKE);
         }
     }
