@@ -607,8 +607,12 @@ public class ProductionOrderScopeRequestService {
     public ProductionOrderScopeRequestDetailResponse getDetail(Long requestId, Long callerId) {
         ProductionOrderScopeRequest request = loadDetail(requestId);
 
+        // An internal self-request is the order's own razrada, not a private ask —
+        // anyone who can open the order may read it (so commercial can "Pregledaj"
+        // the razrada a supervisor did themselves).
         if (!permissionService.hasPermission(AppPermission.ORDER_SCOPE_REQUEST_READ_ALL)
-                && !request.getCreatedBy().getId().equals(callerId)) {
+                && !request.getCreatedBy().getId().equals(callerId)
+                && !request.isInternal()) {
             throw new AccessDeniedException("Nemate pristup ovom zahtevu.");
         }
 

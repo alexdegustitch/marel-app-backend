@@ -231,6 +231,13 @@ class ProductionOrderScopeRequestIT extends AbstractIntegrationTest {
 
         service.submit(self.id(), supervisor.getId(), payload);
 
+        // Visible on the order even to someone who may see only their OWN requests
+        // (commercial): the internal razrada is the order's, so it shows for
+        // everyone — "postaje vidljiva npr komercijali".
+        User commercial = newUser("commercial");
+        assertThat(service.forProductionOrder(order.getId(), commercial.getId()))
+                .anyMatch(r -> r.id().equals(self.id()));
+
         // The excluded operation is exactly what the vreme izrade screen pre-ticks.
         assertThat(service.agreedExcludedOperationIds(line.getId()))
                 .containsExactly(excludedOpId);

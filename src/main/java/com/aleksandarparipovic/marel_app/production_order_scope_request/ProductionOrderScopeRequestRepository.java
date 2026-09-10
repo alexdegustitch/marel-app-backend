@@ -165,7 +165,8 @@ public interface ProductionOrderScopeRequestRepository
             left join fetch r.processedBy
             where o.id = :productionOrderId
               and r.status in :statuses
-              and (:createdById is null or r.createdBy.id = :createdById)
+              and (:createdById is null or r.createdBy.id = :createdById
+                   or r.internal = true)
             order by r.createdAt desc
             """)
     List<ProductionOrderScopeRequest> findByProductionOrderAndStatusIn(

@@ -186,7 +186,8 @@ public interface ManufacturingTimeRequestRepository
             join fetch lineItem.productionOrder productionOrder
             where productionOrder.id = :productionOrderId
               and r.status in :statuses
-              and (:createdById is null or r.createdBy.id = :createdById)
+              and (:createdById is null or r.createdBy.id = :createdById
+                   or r.internal = true)
             """)
     java.util.List<ManufacturingTimeRequest> findByProductionOrderAndStatusIn(
             @Param("productionOrderId") Long productionOrderId,

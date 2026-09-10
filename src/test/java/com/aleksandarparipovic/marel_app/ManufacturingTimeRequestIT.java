@@ -468,6 +468,13 @@ class ManufacturingTimeRequestIT extends AbstractIntegrationTest {
         assertThat(requestService.forProductionOrder(orderId, null))
                 .anyMatch(r -> r.id().equals(self.id()));
         assertThat(requestService.getById(self.id()).id()).isEqualTo(self.id());
+
+        // And visible on the order even to someone who may see only their OWN
+        // requests (commercial): an internal request has no requester privacy, so
+        // its result shows on the order for everyone — "vidi kod komercijale".
+        User commercial = newUser("commercial");
+        assertThat(requestService.forProductionOrder(orderId, commercial.getId()))
+                .anyMatch(r -> r.id().equals(self.id()));
     }
 
     @Test
