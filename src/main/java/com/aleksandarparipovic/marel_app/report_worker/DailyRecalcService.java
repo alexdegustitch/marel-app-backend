@@ -282,7 +282,16 @@ public class DailyRecalcService {
         // the last word on which category the pay row lands on, which is why the
         // rule set has to cover the mapping TARGETS (JB, DB, GB, ZB, L3, LP3,
         // PLB) and not only the categories a user can select.
-        Set<String> applicableTypes = resolveApplicableMappingTypes(workShift, workDate, employeeId);
+        // Compensation scheme, resolved ONCE for this employee and work date (two
+        // queries for the whole shift). Resolved here, before the contextual
+        // mappings, because a scheme may withhold every shift bonus — but its rule
+        // on the mapping's RESULT is still applied later, in buildCategories, so the
+        // "contextual mapping first, scheme rule last" order is unchanged.
+        WorkCategoryResolutionService.ResolutionContext schemeContext =
+                resolutionService.contextFor(employeeId, workDate);
+
+        Set<String> applicableTypes = resolveApplicableMappingTypes(workShift, workDate, employeeId,
+                Boolean.TRUE.equals(schemeContext.scheme().getAllowsShiftBonuses()));
         List<WorkCodeCategoryMapping> mappings = applicableTypes.isEmpty()
                 ? List.of()
                 : mappingRepository.findActiveByTypesAndDate(applicableTypes, workDate);
@@ -311,12 +320,6 @@ public class DailyRecalcService {
             }
         }
 
-        // ── Compensation scheme, resolved ONCE for this employee and work date ──
-        // Two queries for the whole shift regardless of how many logs it has.
-        // Nothing in this class asks whether an employee is a foreigner.
-        WorkCategoryResolutionService.ResolutionContext schemeContext =
-                resolutionService.contextFor(employeeId, workDate);
-
         // The log's own snapshot stays keyed on the SOURCE category: it records
         // what the entered work was worth, and it is what ShiftIntervalResolver
         // weights verified minutes by — the same quantity the source multiplier
@@ -334,9 +337,16 @@ public class DailyRecalcService {
         // starting on the last day of probation would be split across the boundary.
         boolean onProbation = probationPolicy.isOnProbation(employeeId, workDate);
 
+        // Work is credited at 100 % either because the employee is on probation OR
+        // because their scheme credits full performance (šef sektora) — the same
+        // substitution, resolved once here and threaded down the rate path. The two
+        // are kept apart from setWasProbation below, which records only the former.
+        boolean creditFullPerformance = onProbation
+                || Boolean.TRUE.equals(schemeContext.scheme().getCreditsFullPerformance());
+
         List<DailyReportCategory> categories = new ArrayList<>(buildCategories(
                 logs, report, nightRemap, weekendRemap, plSourceIds, plbCategory,
-                schemeContext, resolutionByLogId, onProbation));
+                schemeContext, resolutionByLogId, creditFullPerformance));
 
         /*
          * THE ABSENCE IS A CATEGORY ROW TOO, or the payroll has nothing to show.
@@ -378,7 +388,7 @@ public class DailyRecalcService {
         // Sync the analytics fact table from the same already-loaded logs list. Runs inside
         // this same transaction, so a sync failure rolls back with the rest of the recalc and
         // inherits the existing recalc-queue retry semantics for free.
-        analyticsFactSyncService.upsertFactsForShift(workShift, logs);
+        analyticsFactSyncService.upsertFactsForShift(workShift, logs, creditFullPerformance);
 
         /*
          * THE DAY'S OVERTIME, once the report it is measured from exists.
@@ -508,7 +518,14 @@ public class DailyRecalcService {
     // Bonus mapping resolution
     // -------------------------------------------------------------------------
 
-    private Set<String> resolveApplicableMappingTypes(WorkShift workShift, LocalDate workDate, Long employeeId) {
+    private Set<String> resolveApplicableMappingTypes(WorkShift workShift, LocalDate workDate,
+                                                      Long employeeId, boolean allowShiftBonuses) {
+        // A scheme may withhold EVERY shift bonus — weekend, night and parallel
+        // machines alike (the šef sektora case, allows_shift_bonuses = false). None
+        // is resolved then, so no remap is even loaded.
+        if (!allowShiftBonuses) {
+            return Set.of();
+        }
         Set<String> types = new LinkedHashSet<>();
         // Always check: the overlap algorithm decides if PLB actually applies
         types.add(MAPPING_MULTIPLE_MACHINES_BONUS);
@@ -659,7 +676,7 @@ public class DailyRecalcService {
                                                        WorkCodeCategory plbCategory,
                                                        WorkCategoryResolutionService.ResolutionContext schemeContext,
                                                        Map<Long, WorkCategoryResolution> resolutionByLogId,
-                                                       boolean onProbation) {
+                                                       boolean creditFullPerformance) {
         List<WorkLog> filteredLogs = logs.stream()
                 .filter(wl -> wl.getWorkCode() != null)
                 .toList();
@@ -717,7 +734,7 @@ public class DailyRecalcService {
         for (Map.Entry<CategoryRowKey, List<WorkLog>> entry : byRow.entrySet()) {
             WorkCodeCategory category = finalCategoryByRow.get(entry.getKey());
             if (category != null) {
-                result.add(buildCategoryEntry(entry.getValue(), category, report, onProbation,
+                result.add(buildCategoryEntry(entry.getValue(), category, report, creditFullPerformance,
                         entry.getKey().coefficient(), defaultByRow.get(entry.getKey())));
             }
         }
@@ -758,7 +775,7 @@ public class DailyRecalcService {
                 int plMinutes = (int) Math.max(0, catMinutes - reduction);
 
                 result.add(buildPlCategoryEntry(catLogs, plFinalByRow.get(entry.getKey()), report,
-                        plMinutes, onProbation, entry.getKey().coefficient(),
+                        plMinutes, creditFullPerformance, entry.getKey().coefficient(),
                         plDefaultByRow.get(entry.getKey())));
             }
 
@@ -962,14 +979,14 @@ public class DailyRecalcService {
     }
 
     private DailyReportCategory buildCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category,
-                                                   DailyReport report, boolean onProbation,
+                                                   DailyReport report, boolean creditFullPerformance,
                                                    BigDecimal normMultiplier,
                                                    BigDecimal normMultiplierDefault) {
         int totalMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
         int totalQuantity = catLogs.stream().mapToInt(wl -> safeInt(wl.getQuantity())).sum();
         int totalScrap = catLogs.stream().mapToInt(wl -> safeInt(wl.getScrap())).sum();
 
-        BigDecimal[] rates = computeWeightedRates(catLogs, onProbation);
+        BigDecimal[] rates = computeWeightedRates(catLogs, creditFullPerformance);
         BigDecimal performanceCoefficient = totalMinutes > 0
                 ? rates[0].divide(BigDecimal.valueOf(totalMinutes), 6, RoundingMode.HALF_UP)
                         .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
@@ -1000,13 +1017,13 @@ public class DailyRecalcService {
 
     private DailyReportCategory buildPlCategoryEntry(List<WorkLog> catLogs, WorkCodeCategory category,
                                                       DailyReport report, int reducedMinutes,
-                                                     boolean onProbation, BigDecimal normMultiplier,
+                                                     boolean creditFullPerformance, BigDecimal normMultiplier,
                                                      BigDecimal normMultiplierDefault) {
         int totalQuantity = catLogs.stream().mapToInt(wl -> safeInt(wl.getQuantity())).sum();
         int totalScrap = catLogs.stream().mapToInt(wl -> safeInt(wl.getScrap())).sum();
         int originalMinutes = catLogs.stream().mapToInt(wl -> safeInt(wl.getDurationMin())).sum();
 
-        BigDecimal[] rates = computeWeightedRates(catLogs, onProbation);
+        BigDecimal[] rates = computeWeightedRates(catLogs, creditFullPerformance);
         BigDecimal performanceCoefficient = originalMinutes > 0
                 ? rates[0].divide(BigDecimal.valueOf(originalMinutes), 6, RoundingMode.HALF_UP)
                         .divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)
@@ -1060,8 +1077,9 @@ public class DailyRecalcService {
     }
 
     /**
-     * @param onProbation resolved ONCE for the shift by the caller. Work done on
-     *   probation is credited at 100 %, and the paid rate comes from
+     * @param creditFullPerformance resolved ONCE for the shift by the caller. When
+     *   true (on probation, or a scheme that credits full performance) work is
+     *   credited at 100 %, and the paid rate comes from
      *   {@link WorkLogPerformanceCalculator#calculateApprovedPerformanceRate}
      *   rather than being recomputed here.
      *
@@ -1069,17 +1087,17 @@ public class DailyRecalcService {
      *   made the payroll and the analytics two copies of one rule. They had not
      *   diverged yet only because nothing had changed the rule since.
      */
-    private BigDecimal[] computeWeightedRates(List<WorkLog> logs, boolean onProbation) {
+    private BigDecimal[] computeWeightedRates(List<WorkLog> logs, boolean creditFullPerformance) {
         BigDecimal weightedRate = BigDecimal.ZERO;
         BigDecimal weightedApprovedRate = BigDecimal.ZERO;
         for (WorkLog wl : logs) {
             int duration = safeInt(wl.getDurationMin());
             if (duration <= 0) continue;
-            // The MEASURED rate is unchanged by probation and is what the log,
-            // the report and the payslip all still show as the real figure.
+            // The MEASURED rate is unchanged by full-performance crediting and is
+            // what the log, the report and the payslip all still show as the real figure.
             BigDecimal perfRate = performanceCalculator.calculatePerformanceRate(wl);
             BigDecimal approvedRate =
-                    performanceCalculator.calculateApprovedPerformanceRate(wl, onProbation);
+                    performanceCalculator.calculateApprovedPerformanceRate(wl, creditFullPerformance);
             weightedRate = weightedRate.add(perfRate.multiply(BigDecimal.valueOf(duration)));
             weightedApprovedRate = weightedApprovedRate.add(approvedRate.multiply(BigDecimal.valueOf(duration)));
         }
