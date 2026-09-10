@@ -61,6 +61,37 @@ public class ProductionOrderScopeRequestController {
     }
 
     /**
+     * The supervisor does a line's razrada themselves: an internal self-request for
+     * the line, which the same decide-and-submit modal then answers. Gated on
+     * PROCESS — the permission the supervisor already holds — because it is the
+     * "answer" side of the workflow reaching onto the order, not a new way to raise
+     * ordinary requests.
+     *
+     * <p>Idempotent: called again for the same line it returns the request already
+     * open there rather than raising a second one.
+     */
+    @PostMapping("/self-for-line-item/{lineItemId}")
+    @PreAuthorize("@perm.has('ORDER_SCOPE_REQUEST_PROCESS')")
+    public ResponseEntity<ProductionOrderScopeRequestResponse> selfForLineItem(
+            @PathVariable Long lineItemId
+    ) {
+        return ResponseEntity.ok(
+                service.selfForLineItem(lineItemId, currentUserService.getCurrentUserId()));
+    }
+
+    /**
+     * The operations a line's agreed razrada marked not needed — what the
+     * manufacturing-time screen pre-ticks as "izbaci" when it answers that line.
+     * Gated on the manufacturing-time process permission because that is the screen
+     * that reads it.
+     */
+    @GetMapping("/agreed-excluded-operations/by-line-item/{lineItemId}")
+    @PreAuthorize("@perm.has('MANUFACTURING_TIME_REQUEST_PROCESS')")
+    public ResponseEntity<List<Long>> agreedExcludedOperations(@PathVariable Long lineItemId) {
+        return ResponseEntity.ok(service.agreedExcludedOperationIds(lineItemId));
+    }
+
+    /**
      * The order's lines with the notes a request about them would start from, so
      * the dialog can offer them for editing. Lines already covered by a live
      * request are left out — asking about them again would be refused on submit.

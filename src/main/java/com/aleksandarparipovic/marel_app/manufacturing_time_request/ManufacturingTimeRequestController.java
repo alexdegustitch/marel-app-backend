@@ -61,6 +61,25 @@ public class ManufacturingTimeRequestController {
     }
 
     /**
+     * The supervisor does a line's vreme izrade themselves: an internal
+     * self-request for the line, which the manufacturing-time screen then answers.
+     * Gated on PROCESS — the permission the supervisor already holds — because it
+     * is the "answer" side of the workflow reaching onto the order, not a new way
+     * to raise ordinary requests.
+     *
+     * <p>Idempotent: called again for the same line it returns the request already
+     * open there rather than raising a second one.
+     */
+    @PostMapping("/self-for-line-item/{lineItemId}")
+    @PreAuthorize("@perm.has('MANUFACTURING_TIME_REQUEST_PROCESS')")
+    public ResponseEntity<ManufacturingTimeRequestResponse> selfForLineItem(
+            @PathVariable Long lineItemId
+    ) {
+        return ResponseEntity.ok(
+                service.selfForLineItem(lineItemId, currentUserService.getCurrentUserId()));
+    }
+
+    /**
      * A caller without the read-all permission is silently narrowed to their own
      * requests rather than refused — the screen is the same, the scope is not.
      */

@@ -108,6 +108,56 @@ public class ManufacturingTimeRequestService {
     }
 
     /**
+     * The supervisor's own way in: a self-request for one order line, which they
+     * then answer on the manufacturing-time screen. Straight from the order, no
+     * colleague asked, and it never shows in the queues — but its COMPLETED result
+     * is an ordinary manufacturing time, visible to commercial and on the order.
+     *
+     * <p>Idempotent by design: leaving the calculator and coming back must land on
+     * the SAME request rather than pile up a new one each time. Any request still
+     * open on the line — this supervisor's earlier self-request, or a colleague's
+     * ordinary one — is returned as-is; only a line with nothing open gets a new
+     * internal request, raised already IN_REVIEW and owned by the caller so they
+     * can complete it in one motion.
+     */
+    @Transactional
+    public ManufacturingTimeRequestResponse selfForLineItem(Long lineItemId, Long actorId) {
+        User actor = loadUser(actorId);
+
+        List<Long> open = requestRepository.findOpenRequestIdsForLineItem(lineItemId, OPEN_STATUSES);
+        if (!open.isEmpty()) {
+            return toResponse(loadDetail(open.get(0)));
+        }
+
+        ProductionOrderLineItem lineItem = lineItemRepository.findById(lineItemId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Stavka proizvodnog naloga nije pronađena: " + lineItemId));
+        if (!Boolean.TRUE.equals(lineItem.getIsActive())) {
+            throw new ConflictException(
+                    "Stavka proizvodnog naloga više nije aktivna, pa vreme izrade ne može da se odradi za nju.");
+        }
+
+        ManufacturingTimeRequest saved = requestRepository.save(
+                ManufacturingTimeRequest.builder()
+                        .product(lineItem.getProduct())
+                        .createdBy(actor)
+                        .requestType(ManufacturingTimeRequestType.CREATE)
+                        .description("Vreme izrade — supervizor, sa naloga")
+                        .productionOrderLineItem(lineItem)
+                        .internal(true)
+                        // Raised already owned by the caller: a self-request is not
+                        // work anyone picks up, so it skips the PENDING queue.
+                        .status(ManufacturingTimeRequestStatus.IN_REVIEW)
+                        .assignedTo(actor)
+                        .build()
+        );
+
+        // No outbox event: a self-request is nobody else's business, so it opens
+        // no conversation and lands in no queue.
+        return toResponse(loadDetail(saved.getId()));
+    }
+
+    /**
      * Validates the target against the request type and the product it belongs to.
      * A target from a different product would let a request quietly rewrite an
      * unrelated record.
@@ -295,7 +345,11 @@ public class ManufacturingTimeRequestService {
         ManufacturingTimeRequest request = loadForUpdate(requestId);
         User processor = loadUser(processorId);
 
-        requireNotOwnRequest(request, processorId);
+        // A self-request is deliberately raised and answered by the same person;
+        // the "cannot process your own" rule is exactly what it opts out of.
+        if (!request.isInternal()) {
+            requireNotOwnRequest(request, processorId);
+        }
         claimIfUnowned(request, processor);
         requireAssigneeOrProcessor(request, processorId);
         // Refuse an illegal completion before anything is written.
@@ -304,12 +358,16 @@ public class ManufacturingTimeRequestService {
         ProductManufacturingTime result = resolveResult(request, processor, decision);
         request.complete(processor, decision == null ? null : decision.getDecisionNote(), result);
 
-        outboxEventPublisher.publish(
-                OutboxEventType.MANUFACTURING_TIME_REQUEST_COMPLETED,
-                OutboxAggregateType.MANUFACTURING_TIME_REQUEST,
-                request.getId(),
-                payloadFor(request)
-        );
+        // A self-request notifies no one — nobody asked for it, and its result is
+        // seen where every manufacturing time is: on the order and in the catalogue.
+        if (!request.isInternal()) {
+            outboxEventPublisher.publish(
+                    OutboxEventType.MANUFACTURING_TIME_REQUEST_COMPLETED,
+                    OutboxAggregateType.MANUFACTURING_TIME_REQUEST,
+                    request.getId(),
+                    payloadFor(request)
+            );
+        }
 
         return toResponse(request);
     }

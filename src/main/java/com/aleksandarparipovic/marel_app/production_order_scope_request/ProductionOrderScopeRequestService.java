@@ -75,6 +75,11 @@ public class ProductionOrderScopeRequestService {
                     ProductionOrderScopeRequestStatus.IN_REVIEW,
                     ProductionOrderScopeRequestStatus.COMPLETED);
 
+    /** Still being worked out — what a self-request reuses instead of raising anew. */
+    private static final List<ProductionOrderScopeRequestStatus> OPEN_STATUSES =
+            List.of(ProductionOrderScopeRequestStatus.PENDING,
+                    ProductionOrderScopeRequestStatus.IN_REVIEW);
+
     // ── Raising ──────────────────────────────────────────────────────────────
 
     @Transactional
@@ -144,6 +149,82 @@ public class ProductionOrderScopeRequestService {
         );
 
         return toResponse(persisted, persisted.getItems());
+    }
+
+    /**
+     * The supervisor's own way in: a self-request for one order line, which they
+     * then answer in the same decide-and-submit modal. Straight from the order, no
+     * colleague asked, and it never shows in the scope-request list — but once
+     * SUBMITTED its razrada is the order's agreed one, visible to commercial and
+     * the denominator progress is measured against, exactly like any other.
+     *
+     * <p>Idempotent: any request still open on the line — this supervisor's earlier
+     * self-request, or a colleague's ordinary one — is returned as-is; only a line
+     * with nothing open gets a new internal request, raised already IN_REVIEW and
+     * owned by the caller. A line that already has a SUBMITTED razrada is refused —
+     * revising an agreed scope is a deliberate new request, not a silent second one.
+     */
+    @Transactional
+    public ProductionOrderScopeRequestResponse selfForLineItem(Long lineItemId, Long actorId) {
+        User actor = loadUser(actorId);
+
+        List<Long> open = requestRepository.findOpenRequestIdsForLineItem(lineItemId, OPEN_STATUSES);
+        if (!open.isEmpty()) {
+            ProductionOrderScopeRequest existing = loadDetail(open.get(0));
+            return toResponse(existing, existing.getItems());
+        }
+
+        if (!requestRepository.findCoveredLineItemIds(
+                List.of(lineItemId),
+                List.of(ProductionOrderScopeRequestStatus.COMPLETED)).isEmpty()) {
+            throw new ConflictException(
+                    "Za ovu stavku već postoji razrada. Izmena razrade ide kroz novi zahtev.");
+        }
+
+        ProductionOrderLineItem line = lineItemRepository.findById(lineItemId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Stavka proizvodnog naloga nije pronađena: " + lineItemId));
+        if (!Boolean.TRUE.equals(line.getIsActive())) {
+            throw new ConflictException(
+                    "Stavka proizvodnog naloga više nije aktivna, pa razrada ne može da se odradi za nju.");
+        }
+
+        String note = defaultNotes(List.of(line)).get(line.getId());
+
+        ProductionOrderScopeRequest saved = ProductionOrderScopeRequest.builder()
+                .productionOrder(line.getProductionOrder())
+                .scope(ProductionOrderScopeRequestScope.LINE_ITEM)
+                .createdBy(actor)
+                .internal(true)
+                // Raised already owned by the caller: not work anyone picks up.
+                .status(ProductionOrderScopeRequestStatus.IN_REVIEW)
+                .assignedTo(actor)
+                .build();
+        saved.addItem(ProductionOrderScopeRequestItem.builder()
+                .lineItem(line)
+                .note(normalize(note))
+                .lineOrder(line.getLineOrder() == null ? 1 : line.getLineOrder())
+                .build());
+
+        ProductionOrderScopeRequest persisted = requestRepository.save(saved);
+
+        // No outbox event: a self-request is nobody else's business until its
+        // razrada is submitted, and then it is seen on the order like any razrada.
+        return toResponse(persisted, persisted.getItems());
+    }
+
+    /**
+     * The operations a line's agreed razrada marked not needed — what the
+     * manufacturing-time screen pre-ticks as "izbaci" when it answers that line
+     * (requirement: same operations izbačene u razradi). Empty when the line has
+     * no submitted razrada yet.
+     */
+    @Transactional(readOnly = true)
+    public List<Long> agreedExcludedOperationIds(Long lineItemId) {
+        return requestRepository.findExcludedOperationIdsForLineItem(
+                lineItemId,
+                ProductionOrderScopeRequestStatus.COMPLETED,
+                ProductionOrderScopeResultState.SUBMITTED);
     }
 
     /**
@@ -300,7 +381,10 @@ public class ProductionOrderScopeRequestService {
     ) {
         ProductionOrderScopeRequest request = loadForUpdate(requestId);
 
-        requireNotOwnRequest(request, processorId);
+        // A self-request is deliberately raised and answered by the same person.
+        if (!request.isInternal()) {
+            requireNotOwnRequest(request, processorId);
+        }
         claimIfUnowned(request, loadUser(processorId));
         requireAssignee(request, processorId);
 
@@ -323,19 +407,25 @@ public class ProductionOrderScopeRequestService {
         ProductionOrderScopeRequest request = loadForUpdate(requestId);
         User processor = loadUser(processorId);
 
-        requireNotOwnRequest(request, processorId);
+        // A self-request is deliberately raised and answered by the same person.
+        if (!request.isInternal()) {
+            requireNotOwnRequest(request, processorId);
+        }
         claimIfUnowned(request, processor);
         requireAssignee(request, processorId);
 
         writeResult(request, payload);
         request.submit(processor, payload.getDecisionNote());
 
-        outboxEventPublisher.publish(
-                OutboxEventType.ORDER_SCOPE_REQUEST_COMPLETED,
-                OutboxAggregateType.ORDER_SCOPE_REQUEST,
-                request.getId(),
-                payloadFor(request)
-        );
+        // A self-request notifies no one — its razrada is seen on the order.
+        if (!request.isInternal()) {
+            outboxEventPublisher.publish(
+                    OutboxEventType.ORDER_SCOPE_REQUEST_COMPLETED,
+                    OutboxAggregateType.ORDER_SCOPE_REQUEST,
+                    request.getId(),
+                    payloadFor(request)
+            );
+        }
 
         return detailOf(request, processorId);
     }

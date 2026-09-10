@@ -123,6 +123,21 @@ public class ManufacturingTimeRequest {
     @JoinColumn(name = "sample_order_line_item_id", updatable = false)
     private SampleOrderLineItem sampleOrderLineItem;
 
+    /**
+     * A self-request: raised by the supervisor who then answers it, straight from
+     * a production order, rather than by a colleague asking. It never appears in
+     * the pick queue or the requests list — nobody asked for it and it is already
+     * owned — but the order it was raised on and its own detail still see it, and
+     * its COMPLETED result is an ordinary manufacturing time like any other.
+     *
+     * <p>This is why a self-request is exempt from {@code requireNotOwnRequest}:
+     * the whole point is that one person both raises and answers it. Not updatable
+     * — how a request came to exist is a fact, like its occasion.
+     */
+    @Column(name = "internal", nullable = false, updatable = false)
+    @Builder.Default
+    private boolean internal = false;
+
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 

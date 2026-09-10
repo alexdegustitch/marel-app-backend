@@ -79,6 +79,7 @@ public interface ManufacturingTimeRequestRepository
               and (:mineUserId is null
                    or r.createdBy.id = :mineUserId
                    or r.assignedTo.id = :mineUserId)
+              and r.internal = false
               and r.createdAt >= :createdFrom
               and r.createdAt < :createdTo
             order by case r.status
@@ -120,6 +121,7 @@ public interface ManufacturingTimeRequestRepository
                       and (:mineUserId is null
                            or r.createdBy.id = :mineUserId
                            or r.assignedTo.id = :mineUserId)
+                      and r.internal = false
                       and r.createdAt >= :createdFrom
                       and r.createdAt < :createdTo
                     """)
@@ -214,6 +216,7 @@ public interface ManufacturingTimeRequestRepository
             left join fetch sampleLineItem.sampleOrder sampleOrder
             where (r.status = :pending
                    or (r.status = :inReview and r.assignedTo.id = :actorId))
+              and r.internal = false
               and (:createdById is null or r.createdBy.id = :createdById)
               and (:q is null
                    or lower(r.description) like :q
@@ -265,6 +268,26 @@ public interface ManufacturingTimeRequestRepository
 
     boolean existsByProductionOrderLineItem_IdAndStatusIn(
             Long lineItemId, java.util.Collection<ManufacturingTimeRequestStatus> statuses);
+
+    /**
+     * The ids of the requests still open on a line, newest first — what the
+     * supervisor's "odradi vreme izrade" reuses instead of raising a second
+     * request each time they leave the calculator and come back (requirement:
+     * "ne kreira se novi interni zahtev već taj isti").
+     *
+     * <p>Only the id: the caller re-reads it through the locking, fetch-joined
+     * path so the answer is built without lazy-loading surprises.
+     */
+    @Query("""
+            select r.id
+            from ManufacturingTimeRequest r
+            where r.productionOrderLineItem.id = :lineItemId
+              and r.status in :statuses
+            order by r.id desc
+            """)
+    java.util.List<Long> findOpenRequestIdsForLineItem(
+            @Param("lineItemId") Long lineItemId,
+            @Param("statuses") java.util.Collection<ManufacturingTimeRequestStatus> statuses);
 
     boolean existsByTargetManufacturingTime_IdAndStatusIn(
             Long targetId, java.util.Collection<ManufacturingTimeRequestStatus> statuses);

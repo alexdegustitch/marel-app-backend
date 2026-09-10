@@ -80,6 +80,7 @@ public interface ProductionOrderScopeRequestRepository
               and (:mineUserId is null
                    or r.createdBy.id = :mineUserId
                    or r.assignedTo.id = :mineUserId)
+              and r.internal = false
               and r.createdAt >= :createdFrom
               and r.createdAt < :createdTo
             order by case r.status
@@ -118,6 +119,7 @@ public interface ProductionOrderScopeRequestRepository
                       and (:mineUserId is null
                            or r.createdBy.id = :mineUserId
                            or r.assignedTo.id = :mineUserId)
+                      and r.internal = false
                       and r.createdAt >= :createdFrom
                       and r.createdAt < :createdTo
                     """)
@@ -224,6 +226,44 @@ public interface ProductionOrderScopeRequestRepository
     List<Long> findCoveredLineItemIds(
             @Param("lineItemIds") Collection<Long> lineItemIds,
             @Param("statuses") Collection<ProductionOrderScopeRequestStatus> statuses);
+
+    /**
+     * The ids of the requests still open on a line, newest first — what the
+     * supervisor's "dodaj razradu" reuses instead of raising a second request each
+     * time they reopen the dialog.
+     *
+     * <p>Only the id: the caller re-reads it through the locking, fetch-joined
+     * path.
+     */
+    @Query("""
+            select r.id
+            from ProductionOrderScopeRequest r
+            join r.items i
+            where i.lineItem.id = :lineItemId
+              and r.status in :statuses
+            order by r.id desc
+            """)
+    List<Long> findOpenRequestIdsForLineItem(
+            @Param("lineItemId") Long lineItemId,
+            @Param("statuses") Collection<ProductionOrderScopeRequestStatus> statuses);
+
+    /**
+     * The operations a line's AGREED razrada marked not needed — the ones the
+     * manufacturing-time screen pre-ticks as "izbaci" when it is answered for that
+     * line. Only a SUBMITTED answer counts: a draft is not yet the order's razrada.
+     */
+    @Query("""
+            select op.operation.id
+            from ProductionOrderScopeRequestOperation op
+            where op.item.lineItem.id = :lineItemId
+              and op.item.request.status = :completed
+              and op.item.request.resultState = :submitted
+              and op.needed = false
+            """)
+    List<Long> findExcludedOperationIdsForLineItem(
+            @Param("lineItemId") Long lineItemId,
+            @Param("completed") ProductionOrderScopeRequestStatus completed,
+            @Param("submitted") ProductionOrderScopeResultState submitted);
 
     long countByStatus(ProductionOrderScopeRequestStatus status);
 }
