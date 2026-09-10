@@ -326,6 +326,28 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
                                                  @Param("fromDate") LocalDate fromDate);
 
     /**
+     * One employee's live shifts in a date range, with the category and the
+     * shift template already fetched.
+     *
+     * <p>Feeds the leave-period planner and the worker's calendar, both of which
+     * read every shift's category (is it sick leave, which kind) — fetched here
+     * so a month of shifts is one query rather than one per row.
+     */
+    @Query("""
+        SELECT ws FROM WorkShift ws
+        JOIN FETCH ws.shift
+        LEFT JOIN FETCH ws.workCodeCategory
+        WHERE ws.employee.id = :employeeId
+          AND ws.archivedAt IS NULL
+          AND ws.workDate >= :from
+          AND ws.workDate <= :to
+        ORDER BY ws.workDate, ws.startAt
+        """)
+    List<WorkShift> findActiveWithCategoryInRange(@Param("employeeId") Long employeeId,
+                                                  @Param("from") LocalDate from,
+                                                  @Param("to") LocalDate to);
+
+    /**
      * Every active shift of this employee whose time overlaps [start, end).
      *
      * <p>Asked BEFORE the insert so the user gets a question instead of

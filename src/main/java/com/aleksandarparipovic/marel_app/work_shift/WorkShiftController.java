@@ -19,6 +19,7 @@ import java.util.List;
 public class WorkShiftController {
 
     private final WorkShiftService service;
+    private final com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService passwordConfirmationService;
 
     @GetMapping("/{id}")
     public ResponseEntity<WorkShiftBasicInfoDto> getShiftById(@PathVariable Long id){
@@ -119,6 +120,33 @@ public class WorkShiftController {
                                              @RequestParam(required = false) String reason) {
         service.archive(id, reason);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * What a range archive would touch — asked before the password dialog, so
+     * the person confirms a number rather than a guess.
+     */
+    @PreAuthorize("@perm.has('WORK_SHIFT_ARCHIVE')")
+    @GetMapping("/archive-range/preview")
+    public ResponseEntity<ArchiveRangeSummary> previewArchiveRange(
+            @RequestParam Long employeeId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate) {
+        return ResponseEntity.ok(service.previewArchiveRange(employeeId, fromDate, toDate));
+    }
+
+    /**
+     * Withdraw every live shift in a date range, signed with the caller's
+     * password. Refused whole when any touched month's payroll is handed over.
+     */
+    @PreAuthorize("@perm.has('WORK_SHIFT_ARCHIVE')")
+    @PostMapping("/archive-range")
+    public ResponseEntity<ArchiveRangeSummary> archiveRange(
+            @Valid @RequestBody ArchiveRangeRequest request,
+            org.springframework.security.core.Authentication authentication) {
+        passwordConfirmationService.confirm(authentication, request.password());
+        return ResponseEntity.ok(service.archiveRange(
+                request.employeeId(), request.fromDate(), request.toDate(), request.reason()));
     }
 
     @PreAuthorize("@perm.has('WORK_SHIFT_ARCHIVE')")

@@ -18,6 +18,7 @@ import java.util.List;
 public class EmployeeRecordController {
 
     private final EmployeeRecordService service;
+    private final com.aleksandarparipovic.marel_app.employee_leave.EmployeeLeaveService employeeLeaveService;
 
     @GetMapping("/last-activity")
     public ResponseEntity<List<EmployeeRecordDto>> getLastWorkShifts(@RequestParam Integer year,
@@ -107,10 +108,23 @@ public class EmployeeRecordController {
         return ResponseEntity.ok(service.getRecentByEmployeeId(employeeId, size));
     }
     
+    /**
+     * Create the month's kartoni, then materialise the leave days that open
+     * od–do periods owe the month — a sick leave entered in January continues
+     * into February the moment February exists.
+     *
+     * <p>Composed HERE rather than inside either service: the leave service
+     * already leans on the record service to reach a karton, so the record
+     * service calling back into it would be a circle. Conflicting shifts are
+     * only REPORTED in the response — archiving them needs a person's consent.
+     */
     @PostMapping("/create-records")
     public ResponseEntity<EmployeeRecordCreateResponse> createEmployeeRecordsForMonth(
             @Valid @RequestBody EmployeeRecordCreateRequest request
     ) {
-        return ResponseEntity.ok(service.createEmployeeRecordsForMonth(request.getYear(), request.getMonth()));
+        EmployeeRecordCreateResponse createdRecords =
+                service.createEmployeeRecordsForMonth(request.getYear(), request.getMonth());
+        var leave = employeeLeaveService.materializeForMonthAll(request.getYear(), request.getMonth());
+        return ResponseEntity.ok(createdRecords.withLeave(leave.createdShifts(), leave.conflicts()));
     }
 }
