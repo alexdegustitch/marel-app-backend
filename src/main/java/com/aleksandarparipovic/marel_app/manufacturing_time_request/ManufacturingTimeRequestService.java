@@ -126,7 +126,18 @@ public class ManufacturingTimeRequestService {
 
         List<Long> open = requestRepository.findOpenRequestIdsForLineItem(lineItemId, OPEN_STATUSES);
         if (!open.isEmpty()) {
-            return toResponse(loadDetail(open.get(0)));
+            ManufacturingTimeRequest existing = loadForUpdate(open.get(0));
+            // Any supervisor may continue an internal self-request, not only the one
+            // who opened it: hand it to whoever picks it up next, so they become the
+            // assignee who can complete it. A colleague's ORDINARY open request is
+            // left untouched — taking that over stays a deliberate reassignment.
+            if (existing.isInternal()
+                    && existing.getStatus() == ManufacturingTimeRequestStatus.IN_REVIEW
+                    && (existing.getAssignedTo() == null
+                        || !existing.getAssignedTo().getId().equals(actorId))) {
+                existing.reassignTo(actor);
+            }
+            return toResponse(existing);
         }
 
         ProductionOrderLineItem lineItem = lineItemRepository.findById(lineItemId)

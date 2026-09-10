@@ -508,6 +508,29 @@ class ManufacturingTimeRequestIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("any supervisor may continue an internal self-request another one left open")
+    void anotherSupervisorContinuesSelfRequest() {
+        User first = newUser("supervisorA");
+        User second = newUser("supervisorB");
+        Product product = aProduct();
+        ProductionOrderLineItem lineItem = aLineItem(product);
+
+        Long requestId = requestService.selfForLineItem(lineItem.getId(), first.getId()).id();
+
+        // The second supervisor reuses it — same request, now handed to them.
+        var reused = requestService.selfForLineItem(lineItem.getId(), second.getId());
+        assertThat(reused.id()).isEqualTo(requestId);
+        assertThat(reused.assignedToUserId()).isEqualTo(second.getId());
+
+        // ...and may complete it, even though the first supervisor opened it.
+        Long resultId = completeWithNewTime(requestId, second.getId(), product);
+        var done = requestService.getById(requestId);
+        assertThat(done.status()).isEqualTo(ManufacturingTimeRequestStatus.COMPLETED);
+        assertThat(done.processedByUserId()).isEqualTo(second.getId());
+        assertThat(resultId).isNotNull();
+    }
+
+    @Test
     @DisplayName("one manufacturing time can answer several requests")
     void oneRecordAnswersManyRequests() {
         List<User> users = twoUsers();

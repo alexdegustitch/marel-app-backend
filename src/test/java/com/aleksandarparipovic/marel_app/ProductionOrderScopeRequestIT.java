@@ -244,6 +244,46 @@ class ProductionOrderScopeRequestIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("any supervisor may continue an internal scope self-request another one left open")
+    void anotherSupervisorContinuesScopeSelfRequest() {
+        asSupervisor();
+        User first = newUser("supervisorA");
+        User second = newUser("supervisorB");
+        Product product = aProduct("Sečenje");
+        ProductionOrder order = anOrder(List.of(product));
+        ProductionOrderLineItem line = lineItemRepository
+                .findByProductionOrder_IdAndIsActiveIsTrueOrderByLineOrderAsc(order.getId())
+                .get(0);
+
+        Long id = service.selfForLineItem(line.getId(), first.getId()).id();
+
+        // The second supervisor reuses it — same request, now handed to them.
+        var reused = service.selfForLineItem(line.getId(), second.getId());
+        assertThat(reused.id()).isEqualTo(id);
+        assertThat(reused.assignedToUserId()).isEqualTo(second.getId());
+
+        // ...and may submit it, even though the first supervisor opened it.
+        var detail = service.getDetail(id, second.getId());
+        var item = detail.items().get(0);
+        var answer = new ProductionOrderScopeResultRequest.Item();
+        answer.setItemId(item.line().itemId());
+        answer.setOperations(item.operations().stream().map(op -> {
+            var decided = new ProductionOrderScopeResultRequest.Operation();
+            decided.setOperationId(op.operationId());
+            decided.setNeeded(true);
+            decided.setUnitsPerProduct(op.unitsPerProduct());
+            return decided;
+        }).toList());
+        var payload = new ProductionOrderScopeResultRequest();
+        payload.setItems(List.of(answer));
+
+        var submitted = service.submit(id, second.getId(), payload);
+        assertThat(submitted.request().status())
+                .isEqualTo(ProductionOrderScopeRequestStatus.COMPLETED);
+        assertThat(submitted.request().processedByUserId()).isEqualTo(second.getId());
+    }
+
+    @Test
     @DisplayName("a request for the whole order covers every line, with each line's own note")
     void orderRequestCoversEveryLine() {
         User requester = newUser("requester");
