@@ -181,6 +181,61 @@ class ProductionOrderScopeRequestIT extends AbstractIntegrationTest {
         return payload;
     }
 
+    // ── Supervisor self-requests, raised from an order ──────────────────────────
+
+    @Test
+    @DisplayName("a scope self-request is owned and hidden, and once submitted its excluded ops feed vreme izrade")
+    void scopeSelfRequestHidesAndFeedsExclusions() {
+        asSupervisor();
+        User supervisor = newUser("supervisor");
+        Product product = aProduct("Sečenje", "Varenje");
+        ProductionOrder order = anOrder(List.of(product));
+        ProductionOrderLineItem line = lineItemRepository
+                .findByProductionOrder_IdAndIsActiveIsTrueOrderByLineOrderAsc(order.getId())
+                .get(0);
+
+        var self = service.selfForLineItem(line.getId(), supervisor.getId());
+        assertThat(self.status()).isEqualTo(ProductionOrderScopeRequestStatus.IN_REVIEW);
+        assertThat(self.assignedToUserId()).isEqualTo(supervisor.getId());
+        assertThat(self.scope()).isEqualTo(ProductionOrderScopeRequestScope.LINE_ITEM);
+
+        // Idempotent: a second call for the same line returns the same request.
+        assertThat(service.selfForLineItem(line.getId(), supervisor.getId()).id())
+                .isEqualTo(self.id());
+
+        // Hidden from the scope-request list — nobody asked for it.
+        var pageable = org.springframework.data.domain.PageRequest.of(0, 50);
+        assertThat(service.search(null, order.getId(), null, null, null,
+                java.time.OffsetDateTime.parse("1900-01-01T00:00:00Z"),
+                java.time.OffsetDateTime.parse("9999-12-31T00:00:00Z"), pageable))
+                .isEmpty();
+
+        // Answer it, marking "Varenje" not needed, and submit.
+        var detail = service.getDetail(self.id(), supervisor.getId());
+        var item = detail.items().get(0);
+        Long excludedOpId = item.operations().stream()
+                .filter(op -> op.operationName().equals("Varenje"))
+                .findFirst().orElseThrow().operationId();
+
+        var answer = new ProductionOrderScopeResultRequest.Item();
+        answer.setItemId(item.line().itemId());
+        answer.setOperations(item.operations().stream().map(op -> {
+            var decided = new ProductionOrderScopeResultRequest.Operation();
+            decided.setOperationId(op.operationId());
+            decided.setNeeded(!op.operationName().equals("Varenje"));
+            decided.setUnitsPerProduct(op.unitsPerProduct());
+            return decided;
+        }).toList());
+        var payload = new ProductionOrderScopeResultRequest();
+        payload.setItems(List.of(answer));
+
+        service.submit(self.id(), supervisor.getId(), payload);
+
+        // The excluded operation is exactly what the vreme izrade screen pre-ticks.
+        assertThat(service.agreedExcludedOperationIds(line.getId()))
+                .containsExactly(excludedOpId);
+    }
+
     @Test
     @DisplayName("a request for the whole order covers every line, with each line's own note")
     void orderRequestCoversEveryLine() {

@@ -440,6 +440,66 @@ class ManufacturingTimeRequestIT extends AbstractIntegrationTest {
         return requestService.complete(requestId, processorId, decision);
     }
 
+    // ── Supervisor self-requests, raised from an order ──────────────────────────
+
+    @Test
+    @DisplayName("a self-request is raised IN_REVIEW, owned by its caller, and hidden from the queues")
+    void selfRequestIsOwnedAndHidden() {
+        User supervisor = newUser("supervisor");
+        Product product = aProduct();
+        ProductionOrderLineItem lineItem = aLineItem(product);
+        Long orderId = lineItem.getProductionOrder().getId();
+
+        var self = requestService.selfForLineItem(lineItem.getId(), supervisor.getId());
+
+        assertThat(self.status()).isEqualTo(ManufacturingTimeRequestStatus.IN_REVIEW);
+        assertThat(self.assignedToUserId()).isEqualTo(supervisor.getId());
+        assertThat(self.createdByUserId()).isEqualTo(supervisor.getId());
+        assertThat(self.productId()).isEqualTo(product.getId());
+
+        var pageable = PageRequest.of(0, 50, Sort.by(Sort.Direction.DESC, "createdAt"));
+        // Hidden from the requests list and the pick queue — nobody asked for it.
+        assertThat(requestService.search(
+                null, product.getId(), null, null, null, null, DAWN, DUSK, pageable))
+                .isEmpty();
+        assertThat(requestService.pickableRequests(supervisor.getId(), null, null))
+                .noneMatch(r -> r.id().equals(self.id()));
+        // But visible on the order it was raised on, and by its own id.
+        assertThat(requestService.forProductionOrder(orderId, null))
+                .anyMatch(r -> r.id().equals(self.id()));
+        assertThat(requestService.getById(self.id()).id()).isEqualTo(self.id());
+    }
+
+    @Test
+    @DisplayName("a second self-request for the same line reuses the first")
+    void selfRequestIsIdempotent() {
+        User supervisor = newUser("supervisor");
+        Product product = aProduct();
+        ProductionOrderLineItem lineItem = aLineItem(product);
+
+        Long first = requestService.selfForLineItem(lineItem.getId(), supervisor.getId()).id();
+        Long second = requestService.selfForLineItem(lineItem.getId(), supervisor.getId()).id();
+
+        assertThat(second).isEqualTo(first);
+    }
+
+    @Test
+    @DisplayName("the supervisor may complete their OWN self-request — the own-request rule is waived")
+    void selfRequestCanBeCompletedByItsOwnCreator() {
+        User supervisor = newUser("supervisor");
+        Product product = aProduct();
+        ProductionOrderLineItem lineItem = aLineItem(product);
+
+        Long requestId = requestService.selfForLineItem(lineItem.getId(), supervisor.getId()).id();
+        Long resultId = completeWithNewTime(requestId, supervisor.getId(), product);
+
+        assertThat(resultId).isNotNull();
+        var done = requestService.getById(requestId);
+        assertThat(done.status()).isEqualTo(ManufacturingTimeRequestStatus.COMPLETED);
+        assertThat(done.processedByUserId()).isEqualTo(supervisor.getId());
+        assertThat(done.resultManufacturingTimeId()).isEqualTo(resultId);
+    }
+
     @Test
     @DisplayName("one manufacturing time can answer several requests")
     void oneRecordAnswersManyRequests() {
