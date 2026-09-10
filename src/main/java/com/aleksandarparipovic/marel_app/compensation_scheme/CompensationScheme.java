@@ -62,6 +62,35 @@ public class CompensationScheme {
     @Builder.Default
     private Boolean allowsPerformanceBonus = true;
 
+    /**
+     * Whether worked time is credited at 100 % performance regardless of the norm.
+     *
+     * <p>{@code true} makes the paid performance coefficient 100 % — the same
+     * substitution {@code ProbationPolicy} makes for a probationer, but permanent
+     * and decided by the scheme. The MEASURED efficiency is still computed and
+     * shown; it simply does not price the month. Read by
+     * {@code WorkLogPerformanceCalculator} and threaded through {@code DailyRecalcService}.
+     *
+     * <p>Deliberately a flag, not a scheme code named in Java (§10): a "šef
+     * sektora" scheme and any future flat-rate scheme get the right answer with no
+     * code change.
+     */
+    @Column(name = "credits_full_performance", nullable = false)
+    @Builder.Default
+    private Boolean creditsFullPerformance = false;
+
+    /**
+     * Whether the contextual shift bonuses apply under this scheme.
+     *
+     * <p>{@code false} withholds the weekend, night and parallel-machine remaps —
+     * the same mechanism {@code work_code_category_mapping_types.applies_during_probation}
+     * uses on probation, but scheme-wide. Read by
+     * {@code DailyRecalcService.resolveApplicableMappingTypes}.
+     */
+    @Column(name = "allows_shift_bonuses", nullable = false)
+    @Builder.Default
+    private Boolean allowsShiftBonuses = true;
+
     @Column(name = "note", columnDefinition = "TEXT")
     private String note;
 

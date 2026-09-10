@@ -52,28 +52,31 @@ public class WorkLogPerformanceCalculator {
     /**
      * What is actually PAID for this log.
      *
-     * @param onProbation whether the employee was inside their probation period on
-     *   the SHIFT's work date. Resolved once per shift by the caller, not looked up
-     *   here: every log of a shift shares one employee and one work date, and a
-     *   query per log would be an N+1 inside the recalculation loop.
+     * @param creditFullPerformance whether this log is credited at 100 % however it
+     *   measured. TWO things cause it, both resolved once per shift by the caller,
+     *   not looked up here (a query per log would be an N+1 inside the recalc loop):
+     *   the employee was inside their probation period on the shift's work date, OR
+     *   their compensation scheme credits full performance
+     *   ({@code credits_full_performance} — the "šef sektora" case). The two are the
+     *   same substitution and share this one path.
      *
      *   <p>It must come from the shift's {@code work_date}, never from the log's
      *   own {@code start_at}: a night shift crosses midnight, so its after-midnight
      *   logs would fall on the next calendar day and a shift starting on the last
      *   day of probation would be credited half one way and half the other.
      *
-     * <p><b>On probation, 100 % is substituted for the measured rate and the
+     * <p><b>When credited full, 100 % is substituted for the measured rate and the
      * ordinary ceiling still applies.</b> So the result is
      * {@code min(100, max_efficiency_percent)} — if the ceiling is ever set below
-     * 100 the ceiling wins, which is the owner's rule. Probation replaces what was
-     * measured, not the limit on what may be paid.
+     * 100 the ceiling wins, which is the owner's rule. Crediting full replaces what
+     * was measured, not the limit on what may be paid.
      *
      * <p>Note this moves the figure in BOTH directions, which is why it cannot be
      * expressed as another ceiling: 35 against a norm of 40 is 87.5 % and becomes
      * 100, and 50 against the same norm is 125 % and also becomes 100.
      */
-    public BigDecimal calculateApprovedPerformanceRate(WorkLog log, boolean onProbation) {
-        BigDecimal rate = onProbation
+    public BigDecimal calculateApprovedPerformanceRate(WorkLog log, boolean creditFullPerformance) {
+        BigDecimal rate = creditFullPerformance
                 ? BigDecimal.valueOf(100)
                 : calculatePerformanceRate(log);
         return rate.min(appSettingService.getMaxEfficiencyPercentAt(log.getStartAt()));
