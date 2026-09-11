@@ -1,6 +1,8 @@
 package com.aleksandarparipovic.marel_app.account;
 
 import com.aleksandarparipovic.marel_app.auth.refresh.RefreshTokenRepository;
+import com.aleksandarparipovic.marel_app.user.User;
+import com.aleksandarparipovic.marel_app.user.UserRepository;
 import com.aleksandarparipovic.marel_app.user_session.UserSession;
 import com.aleksandarparipovic.marel_app.user_session.UserSessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +38,7 @@ public class AccountSessionRevoker {
 
     private final UserSessionRepository sessionRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final UserRepository userRepository;
 
     /**
      * @param keepSessionId the family id of the session doing this, which stays.
@@ -47,6 +50,10 @@ public class AccountSessionRevoker {
     public void endOtherSessions(Long userId, String keepSessionId, String reason) {
         OffsetDateTime now = OffsetDateTime.now();
         List<UserSession> live = sessionRepository.findLiveByUserId(userId);
+        // The owner whose credential changed is who ended these logins —
+        // chk_user_sessions_revocation insists revoked_at and revoked_by
+        // travel together, and a bare revoked_at was refused by the database.
+        User owner = userRepository.getReferenceById(userId);
 
         int ended = 0;
         for (UserSession session : live) {
@@ -55,6 +62,7 @@ public class AccountSessionRevoker {
             }
 
             session.setRevokedAt(now);
+            session.setRevokedBy(owner);
             refreshTokenRepository.revokeAllByFamilyId(session.getFamilyId(), now, reason);
             ended++;
         }
