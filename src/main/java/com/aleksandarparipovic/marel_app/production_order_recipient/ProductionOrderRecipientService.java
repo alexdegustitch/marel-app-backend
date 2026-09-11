@@ -231,13 +231,17 @@ public class ProductionOrderRecipientService {
     }
 
     /**
-     * DELIVERED is terminal: the order has been communicated, so its recipient
-     * history must stop moving.
+     * DELIVERED and CANCELLED are terminal: the order has been communicated
+     * (or called off), so its recipient history must stop moving.
      */
     private static void requireSnapshotEditable(ProductionOrder order) {
         if (order.getStatus() == ProductionOrderStatus.DELIVERED) {
             throw new ConflictException(
                     "Nalog je isporučen — lista primalaca više ne može da se menja.");
+        }
+        if (order.getStatus() == ProductionOrderStatus.CANCELLED) {
+            throw new ConflictException(
+                    "Nalog je otkazan — lista primalaca više ne može da se menja.");
         }
     }
 

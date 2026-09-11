@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.sample_order;
 
+import com.aleksandarparipovic.marel_app.common.ArchiveConfirmationRequest;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderCardRow;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderStatsDto;
 import com.aleksandarparipovic.marel_app.sample_order.dto.SampleOrderCopySourceRow;
@@ -13,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -106,5 +108,19 @@ public class SampleOrderController {
     @PatchMapping("/{id}/close")
     ResponseEntity<SampleOrderDetailDto> close(@PathVariable Long id) {
         return ResponseEntity.ok(sampleOrderService.close(id));
+    }
+
+    /**
+     * Calls the order off, signed with the caller's re-typed password — the
+     * same signature the catalogue archives ask for. Wrong password answers
+     * {@code WRONG_PASSWORD} before anything is touched.
+     */
+    @PostMapping("/{id}/cancel")
+    ResponseEntity<SampleOrderDetailDto> cancel(
+            @PathVariable Long id,
+            @Valid @RequestBody ArchiveConfirmationRequest request,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(sampleOrderService.cancel(id, request.getPassword(), authentication));
     }
 }

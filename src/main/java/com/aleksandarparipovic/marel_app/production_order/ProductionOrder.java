@@ -73,6 +73,15 @@ public class ProductionOrder {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
+    /** When the order was called off; null for an order that never was. */
+    @Column(name = "cancelled_at")
+    private OffsetDateTime cancelledAt;
+
+    /** Who called it off — the signature under the cancellation. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cancelled_by")
+    private User cancelledBy;
+
     // DB managed timestamps
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;

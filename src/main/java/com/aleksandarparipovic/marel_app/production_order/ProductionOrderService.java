@@ -1,6 +1,8 @@
 package com.aleksandarparipovic.marel_app.production_order;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
 import com.aleksandarparipovic.marel_app.production_order.dto.OrderCopySourceLineItemRow;
@@ -62,6 +64,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -116,6 +119,7 @@ public class ProductionOrderService {
     private final PermissionService permissionService;
     private final OutboxEventPublisher outboxEventPublisher;
     private final OrderProgressService orderProgressService;
+    private final PasswordConfirmationService passwordConfirmation;
 
     @Transactional
     public ProductionOrderDetailDto create(ProductionOrderCreateRequest req) {
@@ -423,6 +427,7 @@ public class ProductionOrderService {
     public ProductionOrderDetailDto update(Long id, ProductionOrderUpdateRequest req) {
         ProductionOrder order = productionOrderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Proizvodni nalog nije pronađen (id=" + id + ")"));
+        requireNotCancelled(order);
 
         // BEFORE the first setter. The scalars below are mutated on the managed
         // entity in place, so a snapshot taken any later would already be the new
@@ -528,6 +533,7 @@ public class ProductionOrderService {
     public ProductionOrderDetailDto markDelivered(Long id) {
         ProductionOrder order = productionOrderRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Proizvodni nalog nije pronađen (id=" + id + ")"));
+        requireNotCancelled(order);
 
         boolean alreadyDelivered = order.getStatus() == ProductionOrderStatus.DELIVERED;
 
@@ -554,6 +560,51 @@ public class ProductionOrderService {
         }
 
         return getDetail(order.getId());
+    }
+
+    /**
+     * Calls the order off. Terminal like {@link #markDelivered}, but signed:
+     * the caller re-types their password, exactly as the catalogue archives
+     * ask, because this removes an order from every open list at once.
+     *
+     * <p>A DELIVERED order cannot be called off — it happened. Re-cancelling a
+     * cancelled order is a no-op rather than an error, same as re-marking a
+     * delivered one, but the signature (who, when) is written only on the
+     * actual transition.
+     */
+    @Transactional
+    public ProductionOrderDetailDto cancel(Long id, String password, Authentication authentication) {
+        passwordConfirmation.confirm(authentication, password);
+
+        ProductionOrder order = productionOrderRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Proizvodni nalog nije pronađen (id=" + id + ")"));
+
+        if (order.getStatus() == ProductionOrderStatus.DELIVERED) {
+            throw new ConflictException("Nalog je isporučen i više ne može da se otkaže.");
+        }
+
+        if (order.getStatus() != ProductionOrderStatus.CANCELLED) {
+            order.setStatus(ProductionOrderStatus.CANCELLED);
+            order.setCancelledAt(OffsetDateTime.now());
+            // The identity whose password was just confirmed — the signature
+            // records the signer, not whatever the session happens to hold.
+            order.setCancelledBy(userRepository.findByUsername(authentication.getName()).orElse(null));
+            productionOrderRepository.save(order);
+        }
+
+        return getDetail(order.getId());
+    }
+
+    /**
+     * A cancelled order is a record, not a draft. Refused here rather than left
+     * to the database, which has nothing to say about it: an order whose lines
+     * could still change after it was called off would leave the record saying
+     * something nobody decided.
+     */
+    private static void requireNotCancelled(ProductionOrder order) {
+        if (order.getStatus() == ProductionOrderStatus.CANCELLED) {
+            throw new ConflictException("Nalog je otkazan i više ne može da se menja.");
+        }
     }
 
     List<ProductionOrderOptionDto> getAllActiveProductionOrders(){
@@ -651,7 +702,11 @@ public class ProductionOrderService {
         List<ProductionOrder> open = active.stream()
                 .filter(order -> order.getStatus() == ProductionOrderStatus.CREATED)
                 .toList();
-        long delivered = active.size() - open.size();
+        // Counted, not derived from the remainder: the remainder now also holds
+        // cancelled orders, which are neither open nor delivered.
+        long delivered = active.stream()
+                .filter(order -> order.getStatus() == ProductionOrderStatus.DELIVERED)
+                .count();
 
         DeadlineContext context = loadDeadlineContext(open);
         LocalDate today = LocalDate.now();

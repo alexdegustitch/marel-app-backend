@@ -59,14 +59,22 @@ public final class SampleOrderSpecifications {
     }
 
     /**
-     * Still open — anything but {@code closed}, read case-insensitively because
-     * the status column is free text (see {@link com.aleksandarparipovic.marel_app.sample_order.SampleOrderStatus}).
+     * Still open — anything but {@code closed} or {@code cancelled}, read
+     * case-insensitively because the status column is free text (see
+     * {@link com.aleksandarparipovic.marel_app.sample_order.SampleOrderStatus}).
      * A null status is the default {@code created}, so it counts as open.
      */
     public static Specification<SampleOrder> notClosed() {
         return (root, query, cb) -> cb.or(
                 cb.isNull(root.get("status")),
-                cb.notEqual(cb.lower(root.get("status")), SampleOrderStatus.CLOSED));
+                cb.and(
+                        cb.notEqual(cb.lower(root.get("status")), SampleOrderStatus.CLOSED),
+                        cb.notEqual(cb.lower(root.get("status")), SampleOrderStatus.CANCELLED)));
+    }
+
+    /** Finished and handed over — {@code closed} alone, not {@code cancelled}. */
+    public static Specification<SampleOrder> closed() {
+        return (root, query, cb) -> cb.equal(cb.lower(root.get("status")), SampleOrderStatus.CLOSED);
     }
 
     /** Open, and the rok is in the past. */
