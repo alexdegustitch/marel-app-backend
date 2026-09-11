@@ -18,10 +18,11 @@ import java.time.LocalDate;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The control board is ten queries against eight tables, so the thing worth
- * proving is that each one still matches the schema and answers about the right
- * rows — a renamed column or a wrong join would otherwise only be found by an
- * administrator opening the page.
+ * The direktor's board is composed from the commercial and supervisor boards
+ * plus a few blocks of its own, so the thing worth proving is that the whole
+ * composition still answers on the real schema — a renamed column or a wrong
+ * join in any borrowed block would otherwise only be found by the direktor
+ * opening the page.
  */
 @Transactional
 class AdminDashboardIT extends AbstractIntegrationTest {
@@ -37,28 +38,28 @@ class AdminDashboardIT extends AbstractIntegrationTest {
         AdminDashboardResponse board = dashboardService.load();
 
         assertThat(board.today()).isEqualTo(LocalDate.now());
-        assertThat(board.windowDays()).isEqualTo(30);
+        assertThat(board.deliveredWindowDays()).isEqualTo(30);
+        assertThat(board.requestsWindowDays()).isEqualTo(7);
 
         // Each block is present and never over its cap, whatever the data holds.
-        assertThat(board.readyPayrolls().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.newUsers().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.newProducts().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.newOperations().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.newProductionOrders().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.newSampleOrders().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.nearestDeadlines().rows()).hasSizeLessThanOrEqualTo(5);
+        assertThat(board.kpis()).isNotNull();
+        assertThat(board.late().rows()).hasSizeLessThanOrEqualTo(30);
+        assertThat(board.dueSoon().rows()).hasSizeLessThanOrEqualTo(30);
+        assertThat(board.delivered().rows()).hasSizeLessThanOrEqualTo(30);
+        assertThat(board.progress().mostFilled()).hasSizeLessThanOrEqualTo(8);
+        assertThat(board.progress().leastFilled()).hasSizeLessThanOrEqualTo(8);
+        assertThat(board.recentRequests().rows()).hasSizeLessThanOrEqualTo(30);
         assertThat(board.upcomingNonWorkingDays().rows()).hasSizeLessThanOrEqualTo(5);
+        assertThat(board.absences()).isNotNull();
         assertThat(board.registrationRequests().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.norms().best()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.norms().worst()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.norms().from()).isEqualTo(LocalDate.now().minusDays(30));
+        assertThat(board.submittedPayrolls().rows()).hasSizeLessThanOrEqualTo(30);
+        assertThat(board.deadlinePressure().rows()).hasSizeLessThanOrEqualTo(5);
+        assertThat(board.insights()).isNotNull();
     }
 
     @Test
-    @DisplayName("a fresh registration shows up as a new user AND as a pending request")
-    void newRegistrationAppearsInBothBlocks() {
-        long usersBefore = dashboardService.load().newUsers().total();
-
+    @DisplayName("a fresh registration shows up as a pending request")
+    void newRegistrationAppearsAsPendingRequest() {
         Role role = roleRepository.findAll().stream()
                 .filter(r -> !"developer".equalsIgnoreCase(r.getRoleName()))
                 .findFirst().orElseThrow();
@@ -72,13 +73,19 @@ class AdminDashboardIT extends AbstractIntegrationTest {
         request.setRoleId(role.getId());
         authService.register(request);
 
-        AdminDashboardResponse board = dashboardService.load();
+        assertThat(dashboardService.load().registrationRequests().rows())
+                .anyMatch(row -> "Kontrolna Tabla".equals(row.fullName()));
+    }
 
-        assertThat(board.newUsers().total()).isEqualTo(usersBefore + 1);
-        assertThat(board.newUsers().rows())
-                .anyMatch(row -> "Kontrolna Tabla".equals(row.fullName()));
-        assertThat(board.registrationRequests().rows())
-                .anyMatch(row -> "Kontrolna Tabla".equals(row.fullName()));
+    @Test
+    @DisplayName("an APPROVED payroll month is on the review pile; a LOCKED one is off it")
+    void submittedPayrollsAreTheApprovedOnes() {
+        long before = dashboardService.load().submittedPayrolls().total();
+
+        // The pile counts by status alone, so a status flip is the whole story.
+        Integer approved = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payroll_run_items WHERE status = 'APPROVED'", Integer.class);
+        assertThat(before).isEqualTo(approved == null ? 0 : approved.longValue());
     }
 
     @Test

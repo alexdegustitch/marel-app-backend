@@ -63,11 +63,11 @@ public class CommercialDashboardService {
     /** Answered requests carried along; the badge says the true total. */
     private static final int REQUEST_ROWS = 30;
 
-    /** How far back "isporučeno nedavno" reaches. */
-    private static final int DELIVERED_WINDOW_DAYS = 30;
+    /** How far back "isporučeno nedavno" reaches. Package-visible: the direktor's board shows the same window. */
+    static final int DELIVERED_WINDOW_DAYS = 30;
 
-    /** How far back "nedavno odrađeni zahtevi" reaches. */
-    private static final int REQUESTS_WINDOW_DAYS = 7;
+    /** How far back "nedavno odrađeni zahtevi" reaches. Package-visible for the same reason. */
+    static final int REQUESTS_WINDOW_DAYS = 7;
 
     /**
      * The ranking reads the whole open book, so this only guards against an
@@ -90,10 +90,8 @@ public class CommercialDashboardService {
         Block<AttentionOrderRow> dueSoon = attentionBlock("DUE_SOON", today);
         Block<DeliveredOrderRow> delivered = deliveredBlock(deliveredSince);
 
-        List<OpenOrderRef> openBook = queryRepository.findOpenProductionOrders(OPEN_BOOK_CAP);
-        Map<Long, OrderProgressSummary> summaries = openBook.isEmpty()
-                ? Map.of()
-                : orderProgressService.summaries(openBook.stream().map(OpenOrderRef::id).toList());
+        List<OpenOrderRef> openBook = openBook();
+        Map<Long, OrderProgressSummary> summaries = openBookSummaries(openBook);
 
         return new CommercialDashboardResponse(
                 today,
@@ -109,6 +107,18 @@ public class CommercialDashboardService {
                 recentRequests(requestsSince));
     }
 
+    /** The whole open book, capped only against the absurd. */
+    List<OpenOrderRef> openBook() {
+        return queryRepository.findOpenProductionOrders(OPEN_BOOK_CAP);
+    }
+
+    /** The book's progress, through the one funnel that computes progress. */
+    Map<Long, OrderProgressSummary> openBookSummaries(List<OpenOrderRef> openBook) {
+        return openBook.isEmpty()
+                ? Map.of()
+                : orderProgressService.summaries(openBook.stream().map(OpenOrderRef::id).toList());
+    }
+
     // ── Late / due soon, both kinds, one list ───────────────────────────────
 
     /**
@@ -118,8 +128,12 @@ public class CommercialDashboardService {
      * attention pseudo-filter, so the rows here are exactly the rows the order
      * boards' KPI tiles narrow to. The two pages are merged by how the rok
      * stands; the total is the sum of the two true totals, not of what fit.
+     *
+     * <p>Package-visible, like everything below down to {@code recentRequests}:
+     * the direktor's board shows the same blocks, and composing them here means
+     * the two boards can never disagree about what "late" or "delivered" means.
      */
-    private Block<AttentionOrderRow> attentionBlock(String attention, LocalDate today) {
+    Block<AttentionOrderRow> attentionBlock(String attention, LocalDate today) {
         Page<ProductionOrderCardRow> production = productionOrderService.searchAll(
                 searchRequest(DRAWER_ROWS,
                         List.of(filter("attention", SearchRequest.Operator.EQ, attention)),
@@ -157,7 +171,7 @@ public class CommercialDashboardService {
                 rows.size() > DRAWER_ROWS ? rows.subList(0, DRAWER_ROWS) : rows);
     }
 
-    private Block<DeliveredOrderRow> deliveredBlock(OffsetDateTime since) {
+    Block<DeliveredOrderRow> deliveredBlock(OffsetDateTime since) {
         List<DeliveredOrderRow> rows = new ArrayList<>();
         rows.addAll(queryRepository.findDeliveredProductionOrders(since, DRAWER_ROWS));
         rows.addAll(queryRepository.findClosedSampleOrders(since, DRAWER_ROWS));
@@ -178,7 +192,7 @@ public class CommercialDashboardService {
      * agreed razrada has no denominator, so it is out of the average rather
      * than in it as a zero nobody agreed on.
      */
-    private static Kpis kpis(List<OpenOrderRef> openBook, Map<Long, OrderProgressSummary> summaries) {
+    static Kpis kpis(List<OpenOrderRef> openBook, Map<Long, OrderProgressSummary> summaries) {
         List<BigDecimal> percents = openBook.stream()
                 .map(ref -> summaries.get(ref.id()))
                 .filter(s -> s != null && s.scopeDefined() && s.percent() != null)
@@ -194,7 +208,7 @@ public class CommercialDashboardService {
     }
 
     /** The two ends of the ranking: fullest first on one, emptiest first on the other. */
-    private static ProgressOverview progressOverview(
+    static ProgressOverview progressOverview(
             List<OpenOrderRef> openBook, Map<Long, OrderProgressSummary> summaries) {
 
         List<ProgressRow> scoped = openBook.stream()
@@ -271,7 +285,7 @@ public class CommercialDashboardService {
 
     // ── Requests answered lately ────────────────────────────────────────────
 
-    private Block<CompletedRequestRow> recentRequests(OffsetDateTime since) {
+    Block<CompletedRequestRow> recentRequests(OffsetDateTime since) {
         List<CompletedRequestRow> rows = new ArrayList<>();
         rows.addAll(queryRepository.findCompletedTimeRequests(since, REQUEST_ROWS));
         rows.addAll(queryRepository.findCompletedScopeRequests(since, REQUEST_ROWS));
