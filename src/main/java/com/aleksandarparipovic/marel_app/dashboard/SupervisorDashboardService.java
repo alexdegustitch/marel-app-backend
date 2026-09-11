@@ -18,7 +18,12 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Produ
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
+import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse.RegistrationRequestRow;
+import com.aleksandarparipovic.marel_app.user_registration_request.UserRegistrationRequestService;
+import com.aleksandarparipovic.marel_app.user_registration_request.UserRegistrationRequestStatus;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -74,6 +79,7 @@ public class SupervisorDashboardService {
     private final DashboardQueryRepository adminQueryRepository;
     private final DashboardInsightRepository insightRepository;
     private final DashboardInsightComputeService computeService;
+    private final UserRegistrationRequestService registrationRequestService;
 
     @Transactional(readOnly = true)
     public SupervisorDashboardResponse load(Long currentUserId) {
@@ -98,6 +104,7 @@ public class SupervisorDashboardService {
                 Block.of(
                         queryRepository.countMyClaimedRequests(currentUserId),
                         queryRepository.findMyClaimedRequests(currentUserId, CLAIMED_ROWS)),
+                registrationRequests(),
                 Block.of(
                         adminQueryRepository.countNonWorkingDaysBetween(
                                 today, today.plusDays(CALENDAR_HORIZON_DAYS)),
@@ -109,6 +116,27 @@ public class SupervisorDashboardService {
                         queryRepository.countEntryGaps(),
                         queryRepository.findEntryGaps(ENTRY_GAP_ROWS)),
                 insights(today));
+    }
+
+    /**
+     * The registrations queue, built exactly as the direktor's board builds it.
+     * Duplicated rather than borrowed: the composition already flows
+     * admin → supervisor through package-visible methods, and borrowing this
+     * one back would close a dependency cycle for ten lines.
+     */
+    private Block<RegistrationRequestRow> registrationRequests() {
+        List<RegistrationRequestRow> rows = registrationRequestService
+                .list(UserRegistrationRequestStatus.PENDING,
+                        PageRequest.of(0, ROWS_PER_BLOCK, Sort.by(Sort.Direction.DESC, "createdAt")))
+                .map(request -> new RegistrationRequestRow(
+                        request.id(),
+                        request.userId(),
+                        request.fullName(),
+                        request.roleName(),
+                        request.createdAt()))
+                .getContent();
+
+        return Block.of(registrationRequestService.countPending(), rows);
     }
 
     /**
