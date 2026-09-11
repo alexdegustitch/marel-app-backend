@@ -107,6 +107,10 @@ public class CommercialDashboardQueryRepository {
     /**
      * Every open production order, one slim row each.
      *
+     * <p>Open means "everything except delivered and cancelled" — spelled as
+     * the exclusion rather than a whitelist so a future in-between status is
+     * ranked by default instead of silently vanishing from the book.
+     *
      * <p>The whole open set, not a page: the ranking needs every candidate
      * before it can say which are the fullest and the emptiest. The limit only
      * guards against the absurd — an open book past it has bigger problems than
@@ -117,7 +121,8 @@ public class CommercialDashboardQueryRepository {
                 SELECT po.id, po.code, po.name, c.name AS customer_name
                 FROM production_orders po
                 LEFT JOIN customers c ON c.id = po.customer_id
-                WHERE po.status = 'CREATED' AND po.is_active = true AND po.archived_at IS NULL
+                WHERE po.status NOT IN ('DELIVERED', 'CANCELLED')
+                  AND po.is_active = true AND po.archived_at IS NULL
                 ORDER BY po.id DESC
                 LIMIT :limit
                 """,

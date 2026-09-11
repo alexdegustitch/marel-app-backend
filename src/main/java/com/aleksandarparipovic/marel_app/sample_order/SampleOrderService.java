@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.sample_order;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.config.security.PermissionService;
@@ -45,10 +46,12 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -95,6 +98,7 @@ public class SampleOrderService {
     private final SampleOrderRecipientService recipientService;
     private final PermissionService permissionService;
     private final OutboxEventPublisher outboxEventPublisher;
+    private final PasswordConfirmationService passwordConfirmation;
 
     // ── Writing ─────────────────────────────────────────────────────────────
 
@@ -216,6 +220,10 @@ public class SampleOrderService {
     public SampleOrderDetailDto close(Long id) {
         SampleOrder order = loadOrder(id);
 
+        if (SampleOrderStatus.isCancelled(order.getStatus())) {
+            throw new ConflictException("Nalog je otkazan i ne može da se zatvori.");
+        }
+
         boolean alreadyClosed = SampleOrderStatus.isClosed(order.getStatus());
 
         Long actorId = currentUserService.getCurrentUserId();
@@ -241,6 +249,38 @@ public class SampleOrderService {
                     order.getId(),
                     payload
             );
+        }
+
+        return getDetail(order.getId());
+    }
+
+    /**
+     * Calls the order off. Terminal like {@link #close}, but signed: the caller
+     * re-types their password, exactly as the catalogue archives ask, because
+     * this removes an order from every open list at once.
+     *
+     * <p>A closed order cannot be called off — it happened. Re-cancelling a
+     * cancelled order is a no-op rather than an error, same as re-closing a
+     * closed one, but the signature (who, when) is written only on the actual
+     * transition.
+     */
+    @Transactional
+    public SampleOrderDetailDto cancel(Long id, String password, Authentication authentication) {
+        passwordConfirmation.confirm(authentication, password);
+
+        SampleOrder order = loadOrder(id);
+
+        if (SampleOrderStatus.isClosed(order.getStatus())) {
+            throw new ConflictException("Nalog je zatvoren i više ne može da se otkaže.");
+        }
+
+        if (!SampleOrderStatus.isCancelled(order.getStatus())) {
+            order.setStatus(SampleOrderStatus.CANCELLED);
+            order.setCancelledAt(OffsetDateTime.now());
+            // The identity whose password was just confirmed — the signature
+            // records the signer, not whatever the session happens to hold.
+            order.setCancelledBy(userRepository.findByUsername(authentication.getName()).orElse(null));
+            sampleOrderRepository.save(order);
         }
 
         return getDetail(order.getId());
@@ -380,10 +420,12 @@ public class SampleOrderService {
 
         long total = sampleOrderRepository.count(base);
         long open = sampleOrderRepository.count(base.and(SampleOrderSpecifications.notClosed()));
+        long closed = sampleOrderRepository.count(base.and(SampleOrderSpecifications.closed()));
         long late = sampleOrderRepository.count(base.and(SampleOrderSpecifications.lateAsOf(today)));
         long dueSoon = sampleOrderRepository.count(base.and(SampleOrderSpecifications.dueWithin(today, 3)));
 
-        return new SampleOrderStatsDto(total, open, total - open, late, dueSoon);
+        // Counted, not total - open: a cancelled order is neither open nor closed.
+        return new SampleOrderStatsDto(total, open, closed, late, dueSoon);
     }
 
     /**
@@ -919,6 +961,9 @@ public class SampleOrderService {
     private static void requireOpen(SampleOrder order) {
         if (SampleOrderStatus.isClosed(order.getStatus())) {
             throw new ConflictException("Nalog je zatvoren i više ne može da se menja.");
+        }
+        if (SampleOrderStatus.isCancelled(order.getStatus())) {
+            throw new ConflictException("Nalog je otkazan i više ne može da se menja.");
         }
     }
 

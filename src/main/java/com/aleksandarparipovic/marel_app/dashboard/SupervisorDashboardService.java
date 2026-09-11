@@ -148,7 +148,7 @@ public class SupervisorDashboardService {
      * themselves (type SICK_LEAVE, plus GO) — the old code-list setting is gone
      * because V39 made the schema able to answer the question.
      */
-    private AbsenceBlock absences(LocalDate today) {
+    AbsenceBlock absences(LocalDate today) {
         return new AbsenceBlock(
                 queryRepository.countAbsentOn(today),
                 queryRepository.findAbsentOn(
@@ -187,8 +187,11 @@ public class SupervisorDashboardService {
      * <p>Every key is read on its own and the day is taken from the first one that
      * has an answer, so a snapshot half-written by a job that failed part way still
      * shows what it managed rather than nothing.
+     *
+     * <p>Package-visible, like {@link #absences}: the direktor's board shows the
+     * same snapshot and the same absences, read through the same code.
      */
-    private Insights insights(LocalDate today) {
+    Insights insights(LocalDate today) {
         LocalDate yesterday = today.minusDays(1);
         // The criteria as tuned right now. Changing one in Parametri recomputes
         // the snapshot, so what the hints SAY and what the rows MET stay one.

@@ -235,13 +235,17 @@ public class SampleOrderRecipientService {
     }
 
     /**
-     * Closed is terminal: the order has been communicated, so its recipient
-     * history must stop moving.
+     * Closed and cancelled are terminal: the order has been communicated (or
+     * called off), so its recipient history must stop moving.
      */
     private static void requireSnapshotEditable(SampleOrder order) {
         if (SampleOrderStatus.isClosed(order.getStatus())) {
             throw new ConflictException(
                     "Nalog je zatvoren — lista primalaca više ne može da se menja.");
+        }
+        if (SampleOrderStatus.isCancelled(order.getStatus())) {
+            throw new ConflictException(
+                    "Nalog je otkazan — lista primalaca više ne može da se menja.");
         }
     }
 

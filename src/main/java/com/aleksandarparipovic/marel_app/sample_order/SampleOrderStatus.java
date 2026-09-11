@@ -12,10 +12,10 @@ import java.util.Locale;
  * {@code 'created'} and quietly split one status into two — so the shape the
  * database actually holds is written down here instead of being converted.
  *
- * <p>Two states, because there are two things that have happened: somebody wrote
- * the order, and somebody finished it. There is no "in progress" — nothing in
- * this application observes a sample being made, so a third state would be a
- * value nobody could ever set truthfully.
+ * <p>Three states, because there are three things that can have happened:
+ * somebody wrote the order, somebody finished it, or somebody called it off.
+ * There is no "in progress" — nothing in this application observes a sample
+ * being made, so such a state would be a value nobody could ever set truthfully.
  */
 public final class SampleOrderStatus {
 
@@ -24,6 +24,13 @@ public final class SampleOrderStatus {
 
     /** Finished and handed over. Terminal, like a production order's DELIVERED. */
     public static final String CLOSED = "closed";
+
+    /**
+     * Called off before it was finished. Terminal, like a production order's
+     * CANCELLED — the order stays readable while every screen stops treating
+     * it as open. Set only via cancel(), signed with the caller's password.
+     */
+    public static final String CANCELLED = "cancelled";
 
     private SampleOrderStatus() {
     }
@@ -38,6 +45,11 @@ public final class SampleOrderStatus {
      */
     public static boolean isClosed(String status) {
         return status != null && CLOSED.equalsIgnoreCase(status.trim());
+    }
+
+    /** Whether the order was called off. Read as leniently as {@link #isClosed}. */
+    public static boolean isCancelled(String status) {
+        return status != null && CANCELLED.equalsIgnoreCase(status.trim());
     }
 
     /** The form the application writes, for a value that arrived from anywhere. */

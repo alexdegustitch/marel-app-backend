@@ -87,6 +87,15 @@ public class SampleOrder {
     @JoinColumn(name = "closed_by")
     private User closedBy;
 
+    /** When the order was called off; null for an order that never was. */
+    @Column(name = "cancelled_at")
+    private OffsetDateTime cancelledAt;
+
+    /** Who called it off — the signature under the cancellation. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cancelled_by")
+    private User cancelledBy;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
