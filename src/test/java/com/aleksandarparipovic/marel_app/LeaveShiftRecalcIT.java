@@ -90,7 +90,7 @@ class LeaveShiftRecalcIT extends AbstractIntegrationTest {
     private DailyReport enterAndRecalc(Setup s, Long categoryId, String date) {
         leaveService.apply(new LeaveRequest(
                 s.employeeId(), categoryId, LocalDate.parse(date), LocalDate.parse(date),
-                null, false, true));
+                null, false, true, false));
         entityManager.flush();
         WorkShift shift = workShiftRepository.findActiveWithCategoryInRange(
                 s.employeeId(), LocalDate.parse(date), LocalDate.parse(date)).get(0);

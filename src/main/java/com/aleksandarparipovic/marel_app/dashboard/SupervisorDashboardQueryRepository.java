@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.dashboard;
 
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.AbsenceRow;
+import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.MissingShiftRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RecentPayrollRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RecentRecordRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RequestRow;
@@ -235,6 +236,74 @@ public class SupervisorDashboardQueryRepository {
                   AND wcc.category_no IN (:categoryNos)
                 """,
                 new MapSqlParameterSource("day", day).addValue("categoryNos", categoryNos));
+    }
+
+    // ── Employees the day has no entry for ──────────────────────────────────
+
+    /**
+     * Who is employed on {@code day} and has no active shift on it.
+     *
+     * <p>An employee whose leave PERIOD covers the day is excluded even when the
+     * shift itself has not been materialised yet — the absence is already
+     * recorded, and offering to enter it again would create the very duplicate
+     * the karton sweep exists to avoid.
+     */
+    public List<MissingShiftRow> findEmployeesWithoutShift(LocalDate day, int limit) {
+        return jdbc.query("""
+                SELECT e.id          AS employee_id,
+                       e.full_name   AS full_name,
+                       e.employee_no AS employee_no,
+                       d.name        AS department_name,
+                       er.id         AS employee_record_id
+                FROM employees e
+                LEFT JOIN departments d ON d.id = e.department_id
+                LEFT JOIN employee_records er ON er.employee_id = e.id
+                       AND er.archived_at IS NULL
+                       AND :day BETWEEN er.start_date AND er.end_date
+                WHERE e.is_active = true
+                  AND e.archived_at IS NULL
+                  AND (e.employment_start_date IS NULL OR e.employment_start_date <= :day)
+                  AND (e.employment_end_date IS NULL OR e.employment_end_date >= :day)
+                  AND NOT EXISTS (SELECT 1 FROM work_shifts ws
+                                  WHERE ws.employee_id = e.id
+                                    AND ws.work_date = :day
+                                    AND ws.is_active = true
+                                    AND ws.archived_at IS NULL)
+                  AND NOT EXISTS (SELECT 1 FROM employee_leave_periods lp
+                                  WHERE lp.employee_id = e.id
+                                    AND lp.archived_at IS NULL
+                                    AND :day BETWEEN lp.date_from AND lp.date_to)
+                ORDER BY e.full_name ASC, e.id ASC
+                LIMIT :limit
+                """,
+                new MapSqlParameterSource("day", day).addValue("limit", limit),
+                (rs, i) -> new MissingShiftRow(
+                        rs.getLong("employee_id"),
+                        rs.getString("full_name"),
+                        rs.getString("employee_no"),
+                        rs.getString("department_name"),
+                        nullableLong(rs, "employee_record_id")));
+    }
+
+    public long countEmployeesWithoutShift(LocalDate day) {
+        return count("""
+                SELECT COUNT(*)
+                FROM employees e
+                WHERE e.is_active = true
+                  AND e.archived_at IS NULL
+                  AND (e.employment_start_date IS NULL OR e.employment_start_date <= :day)
+                  AND (e.employment_end_date IS NULL OR e.employment_end_date >= :day)
+                  AND NOT EXISTS (SELECT 1 FROM work_shifts ws
+                                  WHERE ws.employee_id = e.id
+                                    AND ws.work_date = :day
+                                    AND ws.is_active = true
+                                    AND ws.archived_at IS NULL)
+                  AND NOT EXISTS (SELECT 1 FROM employee_leave_periods lp
+                                  WHERE lp.employee_id = e.id
+                                    AND lp.archived_at IS NULL
+                                    AND :day BETWEEN lp.date_from AND lp.date_to)
+                """,
+                new MapSqlParameterSource("day", day));
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

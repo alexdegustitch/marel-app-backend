@@ -3,6 +3,7 @@ package com.aleksandarparipovic.marel_app.dashboard;
 import com.aleksandarparipovic.marel_app.app_settings.AppSetting;
 import com.aleksandarparipovic.marel_app.app_settings.AppSettingRepository;
 import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse.Block;
+import com.aleksandarparipovic.marel_app.dashboard.dto.MissingShiftsResponse;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.AbsenceBlock;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.Insights;
@@ -21,6 +22,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
@@ -55,6 +57,12 @@ public class SupervisorDashboardService {
     /** Which work codes mean sick leave. Seeded empty; the factory fills it in. */
     static final String SICK_LEAVE_SETTING_KEY = "sick_leave_work_code_category_nos";
 
+    /**
+     * The missing-shifts drawer lists the whole factory, so this is a guard
+     * against an absurd read rather than a page size.
+     */
+    private static final int MISSING_SHIFT_ROWS = 500;
+
     private final SupervisorDashboardQueryRepository queryRepository;
     private final DashboardQueryRepository adminQueryRepository;
     private final DashboardInsightRepository insightRepository;
@@ -85,7 +93,40 @@ public class SupervisorDashboardService {
                                 today, today.plusDays(CALENDAR_HORIZON_DAYS)),
                         adminQueryRepository.findUpcomingNonWorkingDays(today, ROWS_PER_BLOCK)),
                 absences(today),
+                missingShiftsBlock(today),
                 insights(today));
+    }
+
+    /**
+     * The card's count: who is employed today and has no shift entered. Sunday
+     * gets {@code applicable = false} instead of a factory-wide count — shifts
+     * are not required then, and a board that shouts "everyone is missing" every
+     * Sunday would teach people to ignore the card.
+     */
+    private SupervisorDashboardResponse.MissingShiftsBlock missingShiftsBlock(LocalDate day) {
+        if (day.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return new SupervisorDashboardResponse.MissingShiftsBlock(false, 0);
+        }
+        return new SupervisorDashboardResponse.MissingShiftsBlock(
+                true, queryRepository.countEmployeesWithoutShift(day));
+    }
+
+    /**
+     * The names behind the count, read at the moment the drawer opens. Live on
+     * purpose: this is a worklist somebody acts on row by row, and a colleague
+     * may have entered one of the shifts since the board loaded.
+     */
+    @Transactional(readOnly = true)
+    public MissingShiftsResponse missingShifts(LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now();
+        if (day.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return new MissingShiftsResponse(day, false, 0, List.of());
+        }
+        return new MissingShiftsResponse(
+                day,
+                true,
+                queryRepository.countEmployeesWithoutShift(day),
+                queryRepository.findEmployeesWithoutShift(day, MISSING_SHIFT_ROWS));
     }
 
     /**

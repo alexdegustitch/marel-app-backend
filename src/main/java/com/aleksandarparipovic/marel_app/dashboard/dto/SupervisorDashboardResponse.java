@@ -54,6 +54,14 @@ public record SupervisorDashboardResponse(
 
         AbsenceBlock absences,
 
+        /**
+         * How many employed people have no shift entered for today. The count only —
+         * the names come through {@code GET /api/dashboard/missing-shifts}, which the
+         * board's drawer asks the moment it opens, so the list is live at the moment
+         * of acting on it rather than as old as the board.
+         */
+        MissingShiftsBlock missingShifts,
+
         Insights insights
 ) {
 
@@ -131,6 +139,33 @@ public record SupervisorDashboardResponse(
             Integer absenceMinutes,
             /** Days inside the window this employee was absent on such a code. */
             Integer daysInWindow
+    ) {}
+
+    /**
+     * How many employed people the day has no entry for.
+     *
+     * @param applicable false on Sunday — shifts are not required then, so the
+     *                   card is disabled rather than reporting everybody missing
+     */
+    public record MissingShiftsBlock(
+            boolean applicable,
+            long total
+    ) {}
+
+    /**
+     * An employed person with no active shift on the asked-about day.
+     *
+     * @param employeeRecordId the karton holding the day's month, so the drawer
+     *                         can open it directly. Null when that month's karton
+     *                         has not been created yet — the row then leads to
+     *                         the worker's calendar instead of a dead address.
+     */
+    public record MissingShiftRow(
+            Long employeeId,
+            String fullName,
+            String employeeNo,
+            String departmentName,
+            Long employeeRecordId
     ) {}
 
     /**

@@ -134,6 +134,91 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         assertThat(insights.yesterday()).isEqualTo(today.minusDays(1));
     }
 
+    // ── Neunete smene ────────────────────────────────────────────────────────
+
+    private Long insertEmployee(String firstName, String lastName, String no) {
+        jdbc.update("""
+                INSERT INTO departments (name, is_active)
+                SELECT 'IT sektor', TRUE
+                WHERE NOT EXISTS (SELECT 1 FROM departments WHERE name = 'IT sektor')
+                """);
+        jdbc.update("""
+                INSERT INTO employees (department_id, employee_no, employment_start_date,
+                                       first_name, last_name, is_active)
+                SELECT d.id, ?, DATE '2026-01-01', ?, ?, TRUE
+                FROM departments d WHERE d.name = 'IT sektor'
+                """, no, firstName, lastName);
+        return jdbc.queryForObject(
+                "SELECT id FROM employees WHERE employee_no = ?", Long.class, no);
+    }
+
+    @Test
+    @DisplayName("an employed person with nothing entered is on the missing-shifts list; a shift or a leave period takes them off it")
+    void missingShiftsFollowWhatTheDayHolds() {
+        LocalDate monday = LocalDate.parse("2026-06-01");
+        Long employeeId = insertEmployee("Pera", "Perić", "IT-MS-1");
+
+        var missing = dashboardService.missingShifts(monday);
+        assertThat(missing.applicable()).isTrue();
+        assertThat(missing.rows())
+                .anySatisfy(row -> assertThat(row.employeeId()).isEqualTo(employeeId));
+
+        // A live shift on the day answers the question.
+        Long shiftTemplateId = jdbc.queryForObject("""
+                WITH ins AS (
+                    INSERT INTO shifts (shift_code, name, start_time, end_time, is_active)
+                    SELECT 'IT-S1', 'Prva smena', TIME '06:00', TIME '14:00', TRUE
+                    WHERE NOT EXISTS (SELECT 1 FROM shifts WHERE shift_code = 'IT-S1')
+                    RETURNING id)
+                SELECT id FROM ins UNION ALL SELECT id FROM shifts WHERE shift_code = 'IT-S1' LIMIT 1
+                """, Long.class);
+        jdbc.update("""
+                INSERT INTO work_shifts (employee_id, shift_id, start_at, end_at, work_date, is_active)
+                VALUES (?, ?, TIMESTAMPTZ '2026-06-01 06:00:00+02', TIMESTAMPTZ '2026-06-01 14:00:00+02',
+                        DATE '2026-06-01', TRUE)
+                """, employeeId, shiftTemplateId);
+        assertThat(dashboardService.missingShifts(monday).rows())
+                .noneSatisfy(row -> assertThat(row.employeeId()).isEqualTo(employeeId));
+
+        // A recorded leave period covers a day even before its shift exists —
+        // the absence is already entered, so the list must not ask for it again.
+        Long otherId = insertEmployee("Mika", "Mikić", "IT-MS-2");
+        Long categoryId = jdbc.queryForObject(
+                "SELECT id FROM work_code_categories ORDER BY id LIMIT 1", Long.class);
+        jdbc.update("""
+                INSERT INTO employee_leave_periods (employee_id, work_code_category_id, date_from, date_to)
+                VALUES (?, ?, DATE '2026-06-01', DATE '2026-06-05')
+                """, otherId, categoryId);
+        assertThat(dashboardService.missingShifts(monday).rows())
+                .noneSatisfy(row -> assertThat(row.employeeId()).isEqualTo(otherId));
+    }
+
+    @Test
+    @DisplayName("Sunday does not ask for shifts — the block says not-applicable instead of counting everybody")
+    void sundayIsNotApplicable() {
+        insertEmployee("Žika", "Žikić", "IT-MS-3");
+
+        var sunday = dashboardService.missingShifts(LocalDate.parse("2026-06-07"));
+
+        assertThat(sunday.applicable()).isFalse();
+        assertThat(sunday.total()).isZero();
+        assertThat(sunday.rows()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the board carries the count of missing shifts for its card")
+    void boardCarriesMissingShiftCount() {
+        SupervisorDashboardResponse board = dashboardService.load(1L);
+
+        assertThat(board.missingShifts()).isNotNull();
+        if (LocalDate.now().getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+            assertThat(board.missingShifts().applicable()).isFalse();
+        } else {
+            assertThat(board.missingShifts().applicable()).isTrue();
+            assertThat(board.missingShifts().total()).isGreaterThanOrEqualTo(0);
+        }
+    }
+
     @Test
     @DisplayName("a supervisor may see their own board and still not the administrator's")
     void supervisorSeesOnlyTheirOwnBoard() {
