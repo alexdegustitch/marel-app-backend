@@ -76,6 +76,7 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private com.aleksandarparipovic.marel_app.role.RoleRepository roleRepository;
+    @Autowired private com.aleksandarparipovic.marel_app.user_session.UserSessionRepository sessionRepository;
     @Autowired private MailSpy mail;
 
     private static final AtomicInteger COUNTER = new AtomicInteger();
@@ -311,6 +312,38 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
         assertThat(mail.notices).hasSize(1);
         assertThat(mail.notices.getFirst().oldAddress()).isEqualTo(oldEmail);
         assertThat(mail.notices.getFirst().newAddress()).isEqualTo(newEmail);
+    }
+
+    /**
+     * The regression that reached production: a live session existed when the
+     * address changed, and ending it wrote revoked_at WITHOUT revoked_by —
+     * which chk_user_sessions_revocation refuses, so the whole confirm failed
+     * with a raw constraint error. The earlier tests never saw it because none
+     * of them had a session row to revoke.
+     */
+    @Test
+    @DisplayName("ending other sessions records who ended them, and the constraint holds")
+    void endingOtherSessionsSatisfiesTheRevocationConstraint() {
+        User user = anAccount();
+        var keep = sessionRepository.saveAndFlush(
+                com.aleksandarparipovic.marel_app.user_session.UserSession.builder()
+                        .user(user).familyId("keep-me")
+                        .expiresAt(java.time.OffsetDateTime.now().plusDays(30)).build());
+        var other = sessionRepository.saveAndFlush(
+                com.aleksandarparipovic.marel_app.user_session.UserSession.builder()
+                        .user(user).familyId("other-device")
+                        .expiresAt(java.time.OffsetDateTime.now().plusDays(30)).build());
+
+        emailChangeService.start(user.getId(), "nova" + user.getId() + "@marel.rs", PASSWORD);
+        emailChangeService.confirm(user.getId(), mail.codes.getFirst().code(), "keep-me");
+        sessionRepository.flush();
+
+        var revoked = sessionRepository.findById(other.getId()).orElseThrow();
+        assertThat(revoked.getRevokedAt()).isNotNull();
+        assertThat(revoked.getRevokedBy()).isNotNull();
+        assertThat(revoked.getRevokedBy().getId()).isEqualTo(user.getId());
+        // The session doing the change stays signed in.
+        assertThat(sessionRepository.findById(keep.getId()).orElseThrow().getRevokedAt()).isNull();
     }
 
     /*
