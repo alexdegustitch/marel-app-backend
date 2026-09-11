@@ -62,6 +62,14 @@ public record SupervisorDashboardResponse(
          */
         MissingShiftsBlock missingShifts,
 
+        /**
+         * Live shifts with neither work nor an absence — ALL of history, read
+         * live. The snapshot's missingEntries stays the 30-day anomaly view;
+         * this is the worklist tile, and an empty shift from two months ago
+         * belongs on a worklist however old it is.
+         */
+        Block<MissingEntryRow> entryGaps,
+
         Insights insights
 ) {
 

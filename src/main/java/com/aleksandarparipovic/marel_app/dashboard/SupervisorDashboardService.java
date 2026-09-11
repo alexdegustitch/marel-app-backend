@@ -63,6 +63,9 @@ public class SupervisorDashboardService {
      */
     private static final int MISSING_SHIFT_ROWS = 500;
 
+    /** The entry-gaps worklist: enough to work through, not the whole history. */
+    private static final int ENTRY_GAP_ROWS = 12;
+
     private final SupervisorDashboardQueryRepository queryRepository;
     private final DashboardQueryRepository adminQueryRepository;
     private final DashboardInsightRepository insightRepository;
@@ -95,6 +98,9 @@ public class SupervisorDashboardService {
                         adminQueryRepository.findUpcomingNonWorkingDays(today, ROWS_PER_BLOCK)),
                 absences(today),
                 missingShiftsBlock(today),
+                Block.of(
+                        queryRepository.countEntryGaps(),
+                        queryRepository.findEntryGaps(ENTRY_GAP_ROWS)),
                 insights(today));
     }
 

@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.dashboard;
 
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.AbsenceRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.MissingShiftRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.MissingEntryRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RecentPayrollRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RecentRecordRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RequestRow;
@@ -145,6 +146,7 @@ public class SupervisorDashboardQueryRepository {
                 LEFT JOIN users requester ON requester.id = r.created_by
                 LEFT JOIN users assignee  ON assignee.id = r.assigned_to
                 WHERE r.status = :status
+                  AND r.internal = false
                 ORDER BY r.created_at ASC
                 LIMIT :limit
                 """,
@@ -167,7 +169,10 @@ public class SupervisorDashboardQueryRepository {
     }
 
     public long countOpenRequests(String status) {
-        return count("SELECT COUNT(*) FROM manufacturing_time_requests WHERE status = :status",
+        // `internal = false` exactly as the requests page filters (V42): a
+        // supervisor's self-request lives on its order, and a badge counting
+        // what the list will not show teaches people to distrust the badge.
+        return count("SELECT COUNT(*) FROM manufacturing_time_requests WHERE status = :status AND internal = false",
                 new MapSqlParameterSource("status", status));
     }
 
@@ -236,6 +241,57 @@ public class SupervisorDashboardQueryRepository {
                   AND wcc.category_no IN (:categoryNos)
                 """,
                 new MapSqlParameterSource("day", day).addValue("categoryNos", categoryNos));
+    }
+
+    // ── Shifts that exist but hold nothing ──────────────────────────────────
+
+    /**
+     * Every live shift with neither work nor an absence on it — ALL of history,
+     * not the snapshot's 30-day window. This is the karton-hygiene worklist the
+     * board's "Rupe u unosu" tile counts: an empty shift from two months ago
+     * still corrupts its month's payroll the day somebody recalculates it.
+     */
+    public List<MissingEntryRow> findEntryGaps(int limit) {
+        return jdbc.query("""
+                SELECT ws.id            AS work_shift_id,
+                       ws.employee_id   AS employee_id,
+                       e.full_name      AS employee_name,
+                       ws.work_date     AS work_date,
+                       s.shift_code     AS shift_code,
+                       ws.total_minutes AS shift_minutes
+                FROM work_shifts ws
+                JOIN employees e ON e.id = ws.employee_id
+                LEFT JOIN shifts s ON s.id = ws.shift_id
+                WHERE ws.is_active = true
+                  AND ws.archived_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM work_logs wl
+                                  WHERE wl.work_shift_id = ws.id AND wl.is_active = true)
+                  AND NOT EXISTS (SELECT 1 FROM absence_records ar
+                                  WHERE ar.work_shift_id = ws.id AND ar.is_active = true)
+                ORDER BY ws.work_date DESC, e.full_name ASC
+                LIMIT :limit
+                """,
+                new MapSqlParameterSource("limit", limit),
+                (rs, i) -> new MissingEntryRow(
+                        rs.getLong("work_shift_id"),
+                        rs.getLong("employee_id"),
+                        rs.getString("employee_name"),
+                        localDate(rs, "work_date"),
+                        rs.getString("shift_code"),
+                        nullableInt(rs, "shift_minutes")));
+    }
+
+    public long countEntryGaps() {
+        return count("""
+                SELECT COUNT(*)
+                FROM work_shifts ws
+                WHERE ws.is_active = true
+                  AND ws.archived_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM work_logs wl
+                                  WHERE wl.work_shift_id = ws.id AND wl.is_active = true)
+                  AND NOT EXISTS (SELECT 1 FROM absence_records ar
+                                  WHERE ar.work_shift_id = ws.id AND ar.is_active = true)
+                """, new MapSqlParameterSource());
     }
 
     // ── Employees the day has no entry for ──────────────────────────────────
