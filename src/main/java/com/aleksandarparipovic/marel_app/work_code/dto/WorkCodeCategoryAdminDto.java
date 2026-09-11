@@ -35,7 +35,7 @@ public record WorkCodeCategoryAdminDto(
         BigDecimal hourlyRate,
         Boolean fixedHourlyRate,
         Boolean affectsMealAllowance,
-        Boolean baseOperation,
+        Boolean basicWorkOperation,
         Boolean affectsWeekendBonus,
         Boolean affectsMonthlyBonus,
         Boolean isFullDay,

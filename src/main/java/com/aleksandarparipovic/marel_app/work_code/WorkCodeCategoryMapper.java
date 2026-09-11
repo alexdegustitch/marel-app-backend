@@ -34,7 +34,7 @@ public class WorkCodeCategoryMapper {
                 category.getAffectsMealAllowance(),
                 category.getDisplayOrder(),
                 category.getBaseCategory(),
-                category.getBaseOperation(),
+                category.getBasicWorkOperation(),
                 category.getAllowsParallelWork(),
                 category.getType(),
                 category.getSickLeaveKind(),

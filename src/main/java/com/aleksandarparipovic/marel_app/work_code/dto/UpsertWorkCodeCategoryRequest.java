@@ -35,7 +35,7 @@ public record UpsertWorkCodeCategoryRequest(
         Boolean fixedHourlyRate,
         BigDecimal hourlyRate,
         Boolean affectsMealAllowance,
-        Boolean baseOperation,
+        Boolean basicWorkOperation,
         Boolean affectsWeekendBonus,
         Boolean affectsMonthlyBonus,
         Boolean isFullDay,

@@ -77,7 +77,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         return new UpsertWorkCodeCategoryRequest(
                 r.categoryNo(), r.categoryName(), r.type(), r.normMultiplier(), r.validFrom(),
                 r.isPaid(), r.affectsNorm(), r.note(), r.fixedHourlyRate(), r.hourlyRate(),
-                r.affectsMealAllowance(), r.baseOperation(), r.affectsWeekendBonus(),
+                r.affectsMealAllowance(), r.basicWorkOperation(), r.affectsWeekendBonus(),
                 r.affectsMonthlyBonus(), r.isFullDay(), weekend, night, r.schemeRules());
     }
 
@@ -163,7 +163,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
                 base.categoryNo(), base.categoryName(), base.type(), base.normMultiplier(),
                 base.validFrom(), base.isPaid(), base.affectsNorm(), base.note(),
                 base.fixedHourlyRate(), base.hourlyRate(), base.affectsMealAllowance(),
-                base.baseOperation(), base.affectsWeekendBonus(), base.affectsMonthlyBonus(),
+                base.basicWorkOperation(), base.affectsWeekendBonus(), base.affectsMonthlyBonus(),
                 base.isFullDay(), true, false,
                 List.of(
                         new UpsertWorkCodeCategoryRequest.SchemeRuleInput(
@@ -342,11 +342,11 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("satnic");
 
-        UpsertWorkCodeCategoryRequest baseOperationAbsence = new UpsertWorkCodeCategoryRequest(
+        UpsertWorkCodeCategoryRequest basicWorkOperationAbsence = new UpsertWorkCodeCategoryRequest(
                 code, "X", "ABSENCE", 1.0, FROM, true, true, null,
                 false, null,
                 true, true, true, true, false, false, false, List.of());
-        assertThatThrownBy(() -> adminService.create(baseOperationAbsence))
+        assertThatThrownBy(() -> adminService.create(basicWorkOperationAbsence))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("na poslu");
 

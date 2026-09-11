@@ -28,7 +28,7 @@ public record WorkCodeCategoryDto(
         Integer displayOrder,
         Boolean baseCategory,
         /** May this be an employee's default work category. */
-        Boolean baseOperation,
+        Boolean basicWorkOperation,
         Boolean allowsParallelWork,
         /**
          * WORK, ABSENCE or SICK_LEAVE — what KIND of time the category stands

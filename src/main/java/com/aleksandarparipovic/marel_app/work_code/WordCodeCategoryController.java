@@ -29,9 +29,9 @@ public class WordCodeCategoryController {
     @GetMapping("/active-work-code-categories")
     public ResponseEntity<List<WorkCodeCategoryDto>> getAllActiveWorkCategories(
             @RequestParam(required = false) String locale,
-            @RequestParam(required = false, defaultValue = "false") boolean baseOperationsOnly
+            @RequestParam(required = false, defaultValue = "false") boolean basicWorkOperationsOnly
     ) {
-        return ResponseEntity.ok(service.getAllWorkCodeCategories(locale, baseOperationsOnly));
+        return ResponseEntity.ok(service.getAllWorkCodeCategories(locale, basicWorkOperationsOnly));
     }
 
     /**
