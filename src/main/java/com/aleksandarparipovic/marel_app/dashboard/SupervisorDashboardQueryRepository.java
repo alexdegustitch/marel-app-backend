@@ -260,7 +260,7 @@ public class SupervisorDashboardQueryRepository {
      * not punish them. Days outside the person's employment do not count.
      */
     public record RecordReadiness(Long employeeId, String fullName, Long employeeRecordId,
-                                  int requiredDays, int missingDays) {}
+                                  Long monthlyReportId, int requiredDays, int missingDays) {}
 
     public List<RecordReadiness> findRecordReadiness(LocalDate from, LocalDate to) {
         return jdbc.query("""
@@ -276,8 +276,9 @@ public class SupervisorDashboardQueryRepository {
                 SELECT e.id        AS employee_id,
                        e.full_name AS full_name,
                        er.id       AS employee_record_id,
-                       count(r.day)::int AS required_days,
-                       count(r.day) FILTER (WHERE NOT EXISTS (
+                       max(mr.id)  AS monthly_report_id,
+                       count(DISTINCT r.day)::int AS required_days,
+                       count(DISTINCT r.day) FILTER (WHERE NOT EXISTS (
                            SELECT 1 FROM work_shifts ws
                            WHERE ws.employee_id = e.id
                              AND ws.work_date = r.day
@@ -288,6 +289,7 @@ public class SupervisorDashboardQueryRepository {
                        AND er.archived_at IS NULL
                        AND er.start_date <= CAST(:to AS date)
                        AND er.end_date >= CAST(:from AS date)
+                LEFT JOIN monthly_reports mr ON mr.employee_record_id = er.id
                 JOIN required r ON r.day >= e.employment_start_date
                        AND (e.employment_end_date IS NULL OR r.day <= e.employment_end_date)
                 WHERE e.is_active = true
@@ -300,6 +302,7 @@ public class SupervisorDashboardQueryRepository {
                         rs.getLong("employee_id"),
                         rs.getString("full_name"),
                         nullableLong(rs, "employee_record_id"),
+                        nullableLong(rs, "monthly_report_id"),
                         rs.getInt("required_days"),
                         rs.getInt("missing_days")));
     }
@@ -314,12 +317,13 @@ public class SupervisorDashboardQueryRepository {
      */
     public List<MissingEntryRow> findEntryGaps(int limit) {
         return jdbc.query("""
-                SELECT ws.id            AS work_shift_id,
-                       ws.employee_id   AS employee_id,
-                       e.full_name      AS employee_name,
-                       ws.work_date     AS work_date,
-                       s.shift_code     AS shift_code,
-                       ws.total_minutes AS shift_minutes
+                SELECT ws.id                 AS work_shift_id,
+                       ws.employee_id        AS employee_id,
+                       ws.employee_record_id AS employee_record_id,
+                       e.full_name           AS employee_name,
+                       ws.work_date          AS work_date,
+                       s.shift_code          AS shift_code,
+                       ws.total_minutes      AS shift_minutes
                 FROM work_shifts ws
                 JOIN employees e ON e.id = ws.employee_id
                 LEFT JOIN shifts s ON s.id = ws.shift_id
@@ -336,6 +340,7 @@ public class SupervisorDashboardQueryRepository {
                 (rs, i) -> new MissingEntryRow(
                         rs.getLong("work_shift_id"),
                         rs.getLong("employee_id"),
+                        nullableLong(rs, "employee_record_id"),
                         rs.getString("employee_name"),
                         localDate(rs, "work_date"),
                         rs.getString("shift_code"),

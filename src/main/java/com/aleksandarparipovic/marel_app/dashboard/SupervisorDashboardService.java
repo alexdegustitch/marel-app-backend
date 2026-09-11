@@ -159,7 +159,7 @@ public class SupervisorDashboardService {
                         && r.missingDays() == 0
                         && r.employeeRecordId() != null)
                 .map(r -> new SupervisorDashboardResponse.ReadyRecordRow(
-                        r.employeeId(), r.fullName(), r.employeeRecordId()))
+                        r.employeeId(), r.fullName(), r.employeeRecordId(), r.monthlyReportId()))
                 .toList();
 
         return new SupervisorDashboardResponse.ReadyRecordsBlock(

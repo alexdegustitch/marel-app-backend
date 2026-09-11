@@ -482,12 +482,13 @@ public class DashboardInsightComputeService {
      */
     private List<MissingEntryRow> missingEntries(LocalDate from, LocalDate to) {
         String sql = """
-                SELECT ws.id                AS work_shift_id,
-                       ws.employee_id       AS employee_id,
-                       e.full_name          AS employee_name,
-                       ws.work_date         AS work_date,
-                       s.shift_code         AS shift_code,
-                       ws.total_minutes     AS shift_minutes
+                SELECT ws.id                 AS work_shift_id,
+                       ws.employee_id        AS employee_id,
+                       ws.employee_record_id AS employee_record_id,
+                       e.full_name           AS employee_name,
+                       ws.work_date          AS work_date,
+                       s.shift_code          AS shift_code,
+                       ws.total_minutes      AS shift_minutes
                 FROM work_shifts ws
                 JOIN employees e ON e.id = ws.employee_id
                 LEFT JOIN shifts s ON s.id = ws.shift_id
@@ -511,6 +512,7 @@ public class DashboardInsightComputeService {
                 (rs, i) -> new MissingEntryRow(
                         rs.getLong("work_shift_id"),
                         rs.getLong("employee_id"),
+                        rs.getObject("employee_record_id", Long.class),
                         rs.getString("employee_name"),
                         rs.getObject("work_date", LocalDate.class),
                         rs.getString("shift_code"),

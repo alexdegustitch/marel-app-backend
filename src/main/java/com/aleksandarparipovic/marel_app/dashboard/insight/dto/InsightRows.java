@@ -107,9 +107,18 @@ public final class InsightRows {
     ) {}
 
     /** A shift holding neither work nor an absence. */
+    /**
+     * A shift holding neither work nor an absence.
+     *
+     * @param employeeRecordId the karton the shift lives in, so a row can open
+     *                         the month WITH the shift in focus. Null in
+     *                         snapshots stored before the field existed — such
+     *                         a row degrades to the worker's calendar.
+     */
     public record MissingEntryRow(
             Long workShiftId,
             Long employeeId,
+            Long employeeRecordId,
             String employeeName,
             LocalDate workDate,
             String shiftCode,

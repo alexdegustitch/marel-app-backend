@@ -165,11 +165,18 @@ public record SupervisorDashboardResponse(
             List<ReadyRecordRow> rows
     ) {}
 
-    /** One employee whose month is fully entered. */
+    /**
+     * One employee whose month is fully entered.
+     *
+     * @param monthlyReportId what the payroll screen is addressed by; null while
+     *                        the month's report has not been produced yet — the
+     *                        row then leads to the payroll list instead.
+     */
     public record ReadyRecordRow(
             Long employeeId,
             String fullName,
-            Long employeeRecordId
+            Long employeeRecordId,
+            Long monthlyReportId
     ) {}
 
     /**
