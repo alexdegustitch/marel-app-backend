@@ -11,6 +11,7 @@ import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
 import com.aleksandarparipovic.marel_app.report_worker.DailyRecalcRequestedEvent;
 import com.aleksandarparipovic.marel_app.shift.Shift;
 import com.aleksandarparipovic.marel_app.shift.ShiftRepository;
+import com.aleksandarparipovic.marel_app.shift.ShiftTimeResolver;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_log.dto.WorkLogDto;
@@ -45,6 +46,7 @@ public class WorkShiftService {
     private final WorkLogRepository workLogRepository;
     private final WorkShiftMapper workShiftMapper;
     private final ShiftRepository shiftRepository;
+    private final ShiftTimeResolver shiftTimeResolver;
     private final EmployeeRecordService employeeRecordService;
     private final EntityReferenceProvider referenceProvider;
     private final RecalcQueueService recalcQueueService;
@@ -57,6 +59,19 @@ public class WorkShiftService {
     private jakarta.persistence.EntityManager entityManager;
 
     private static final ZoneId ZONE = ZoneId.of("Europe/Belgrade");
+
+    /** A shift's clock window on a date, already lifted over midnight if it wraps. */
+    private record Window(OffsetDateTime startAt, OffsetDateTime endAt) {}
+
+    private Window resolvedWindow(Long employeeId, Shift shift, LocalDate workDate) {
+        ShiftTimeResolver.ResolvedShiftTimes times = shiftTimeResolver.resolve(employeeId, shift, workDate);
+        OffsetDateTime startAt = LocalDateTime.of(workDate, times.startTime()).atZone(ZONE).toOffsetDateTime();
+        OffsetDateTime endAt = LocalDateTime.of(workDate, times.endTime()).atZone(ZONE).toOffsetDateTime();
+        if (!endAt.isAfter(startAt)) {
+            endAt = endAt.plusDays(1);
+        }
+        return new Window(startAt, endAt);
+    }
 
 
     public WorkShiftBasicInfoDto getWorkShiftById(Long id){
@@ -478,15 +493,11 @@ public class WorkShiftService {
         Shift shift = shiftRepository.findById(request.getShiftType())
                 .orElseThrow(() -> new EntityNotFoundException("Shift not found: " + request.getShiftType()));
 
-        OffsetDateTime startAt = LocalDateTime.of(workDate, shift.getStartTime())
-                .atZone(ZONE).toOffsetDateTime();
-        OffsetDateTime endAt = LocalDateTime.of(workDate, shift.getEndTime())
-                .atZone(ZONE).toOffsetDateTime();
-
-        // Handle overnight shifts
-        if (endAt.isBefore(startAt) || endAt.isEqual(startAt)) {
-            endAt = endAt.plusDays(1);
-        }
+        // The employee's own hours for the shift when they have them, the
+        // default otherwise — one seam for both, see ShiftTimeResolver.
+        Window window = resolvedWindow(request.getEmployeeId(), shift, workDate);
+        OffsetDateTime startAt = window.startAt();
+        OffsetDateTime endAt = window.endAt();
 
         // Ask before inserting. The exclusion constraint is the guarantee, but it
         // can only refuse — it cannot say which shift is in the way or offer a way
@@ -552,21 +563,11 @@ public class WorkShiftService {
         Shift shift = shiftRepository.findById(request.getShiftId())
                 .orElseThrow(() -> new EntityNotFoundException("Shift not found: " + request.getShiftId()));
 
-        OffsetDateTime startAt = LocalDateTime.of(workShift.getWorkDate(), shift.getStartTime())
-                .atZone(ZONE)
-                .toOffsetDateTime();
-        OffsetDateTime endAt = LocalDateTime.of(workShift.getWorkDate(), shift.getEndTime())
-                .atZone(ZONE)
-                .toOffsetDateTime();
-
-        // Keep overnight shifts spanning into the next day.
-        if (endAt.isBefore(startAt) || endAt.isEqual(startAt)) {
-            endAt = endAt.plusDays(1);
-        }
+        Window window = resolvedWindow(workShift.getEmployee().getId(), shift, workShift.getWorkDate());
 
         workShift.setShift(shift);
-        workShift.setStartAt(startAt);
-        workShift.setEndAt(endAt);
+        workShift.setStartAt(window.startAt());
+        workShift.setEndAt(window.endAt());
 
         WorkShift updated = repository.save(workShift);
 
@@ -590,15 +591,14 @@ public class WorkShiftService {
      */
     @Transactional
     public void recalculateShiftBoundaries(WorkShift workShift) {
-        Shift shiftTemplate = workShift.getShift();
-
-        OffsetDateTime templateStart = LocalDateTime.of(workShift.getWorkDate(), shiftTemplate.getStartTime())
-                .atZone(ZONE).toOffsetDateTime();
-        OffsetDateTime templateEnd = LocalDateTime.of(workShift.getWorkDate(), shiftTemplate.getEndTime())
-                .atZone(ZONE).toOffsetDateTime();
-        if (!templateEnd.isAfter(templateStart)) {
-            templateEnd = templateEnd.plusDays(1);
-        }
+        // The baseline is RESOLVED FOR THE SHIFT'S OWN DATE, not read live off
+        // the shifts row: the employee's dated hours and the versioned default
+        // both answer for that date, so a default moved TODAY no longer drags
+        // last month's boundaries with it the next time a log there is touched.
+        Window template = resolvedWindow(workShift.getEmployee().getId(),
+                workShift.getShift(), workShift.getWorkDate());
+        OffsetDateTime templateStart = template.startAt();
+        OffsetDateTime templateEnd = template.endAt();
 
         WorkLogRepository.ActiveLogBounds bounds = workLogRepository.findActiveBoundsForShift(workShift.getId());
 

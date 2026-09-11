@@ -102,6 +102,7 @@ public class DailyRecalcService {
     private final WorkCodeCategoryMappingRepository mappingRepository;
     private final WorkCodeCategoryMappingTypeRepository mappingTypeRepository;
     private final ShiftRepository shiftRepository;
+    private final com.aleksandarparipovic.marel_app.shift.ShiftTimeResolver shiftTimeResolver;
     private final TransactionTemplate transactionTemplate;
     private final ApplicationEventPublisher eventPublisher;
     private final WorkLogPerformanceCalculator performanceCalculator;
@@ -553,7 +554,12 @@ public class DailyRecalcService {
         Optional<Shift> thirdShift = shiftRepository.findFirstByShiftCodeAndIsActiveTrue("III");
         if (thirdShift.isEmpty()) return false;
         LocalTime shiftStart = workShift.getStartAt().toLocalTime();
-        return !shiftStart.isBefore(thirdShift.get().getStartTime());
+        // THIS employee's third-shift start on THAT date — a worker with their
+        // own hours (or a later-moved default) is judged against what the
+        // night shift meant for them then, not against today's global row.
+        LocalTime thirdShiftStart = shiftTimeResolver.resolve(
+                workShift.getEmployee().getId(), thirdShift.get(), workShift.getWorkDate()).startTime();
+        return !shiftStart.isBefore(thirdShiftStart);
     }
 
     /**
