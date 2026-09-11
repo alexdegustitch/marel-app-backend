@@ -181,6 +181,16 @@ public record SupervisorDashboardResponse(
             OffsetDateTime computedAt,
             boolean stale,
             int windowDays,
+            /** The norm cards' window — tunable in Parametri (V44). */
+            int normWindowDays,
+            /** How far above 100 % "norma je preniska" begins. */
+            int normRisePct,
+            /** How far below 100 % "norma je previsoka" begins. */
+            int normDropPct,
+            /** The "Šta se radilo" window — tunable in Parametri (V44). */
+            int activityWindowDays,
+            /** Hours of recorded normed work before a person is ranked in "Najbolji". */
+            int topPerformerMinHours,
             LocalDate yesterday,
             List<NormFitRow> normTooLow,
             List<NormFitRow> normTooHigh,
@@ -196,8 +206,14 @@ public record SupervisorDashboardResponse(
     ) {
 
         /** What the board shows before the job has ever run. */
-        public static Insights notComputedYet(int windowDays, LocalDate yesterday) {
-            return new Insights(null, null, true, windowDays, yesterday,
+        public static Insights notComputedYet(
+                int windowDays,
+                com.aleksandarparipovic.marel_app.dashboard.insight.DashboardInsightComputeService.Thresholds thresholds,
+                LocalDate yesterday) {
+            return new Insights(null, null, true, windowDays,
+                    thresholds.normWindowDays(), thresholds.normRisePct(), thresholds.normDropPct(),
+                    thresholds.activityWindowDays(), thresholds.topPerformerMinHours(),
+                    yesterday,
                     List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         }

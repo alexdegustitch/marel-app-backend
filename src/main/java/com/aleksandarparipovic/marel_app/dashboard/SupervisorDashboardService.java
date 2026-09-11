@@ -66,6 +66,7 @@ public class SupervisorDashboardService {
     private final SupervisorDashboardQueryRepository queryRepository;
     private final DashboardQueryRepository adminQueryRepository;
     private final DashboardInsightRepository insightRepository;
+    private final DashboardInsightComputeService computeService;
     private final AppSettingRepository appSettingRepository;
 
     @Transactional(readOnly = true)
@@ -172,6 +173,9 @@ public class SupervisorDashboardService {
      */
     private Insights insights(LocalDate today) {
         LocalDate yesterday = today.minusDays(1);
+        // The criteria as tuned right now. Changing one in Parametri recomputes
+        // the snapshot, so what the hints SAY and what the rows MET stay one.
+        DashboardInsightComputeService.Thresholds thresholds = computeService.currentThresholds();
 
         Optional<DashboardInsightRepository.Stored<NormFitRow>> normTooLow =
                 insightRepository.findLatest(DashboardInsightKey.NORM_TOO_LOW, NormFitRow.class);
@@ -180,7 +184,7 @@ public class SupervisorDashboardService {
         OffsetDateTime computedAt = normTooLow.map(DashboardInsightRepository.Stored::computedAt).orElse(null);
 
         if (computedFor == null) {
-            return Insights.notComputedYet(DashboardInsightComputeService.WINDOW_DAYS, yesterday);
+            return Insights.notComputedYet(DashboardInsightComputeService.WINDOW_DAYS, thresholds, yesterday);
         }
 
         return new Insights(
@@ -188,6 +192,11 @@ public class SupervisorDashboardService {
                 computedAt,
                 !today.equals(computedFor),
                 DashboardInsightComputeService.WINDOW_DAYS,
+                thresholds.normWindowDays(),
+                thresholds.normRisePct(),
+                thresholds.normDropPct(),
+                thresholds.activityWindowDays(),
+                thresholds.topPerformerMinHours(),
                 computedFor.minusDays(1),
                 normTooLow.map(DashboardInsightRepository.Stored::rows).orElseGet(List::of),
                 rows(DashboardInsightKey.NORM_TOO_HIGH, NormFitRow.class),

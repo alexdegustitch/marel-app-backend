@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.dashboard.insight;
 
+import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.MissingEntryRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
@@ -16,9 +17,11 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -33,10 +36,11 @@ import java.util.List;
  * <h2>On the thresholds</h2>
  * The numbers below decide what counts as "worth looking at". They are NOT
  * business rules — nothing is paid or calculated from them, they only choose
- * which rows reach a card. They are gathered here, named, and safe to change:
- * raising {@link #NORM_DEVIATION_PP} shortens the norm cards, it does not change
- * anybody's performance. Any of them can become a setting the day somebody wants
- * to tune it from the screen.
+ * which rows reach a card. The ones the owner asked to tune from Parametri —
+ * the norm deviation (rise and drop separately), the norm window, the activity
+ * window and the performer minimum — are app_settings now (V44), read fresh at
+ * compute time; the rest stay named constants here until somebody wants them
+ * on the screen too.
  */
 @Slf4j
 @Service
@@ -52,8 +56,30 @@ public class DashboardInsightComputeService {
     /** Rows kept for the data-gap card, which is a worklist rather than a highlight. */
     private static final int GAP_ROWS = 12;
 
-    /** How far a rate must sit from 100 % before the norm is called into question. */
-    private static final int NORM_DEVIATION_PP = 15;
+    // ── The tunable thresholds (V44): the setting keys and their fallbacks ──
+    // The fallbacks only matter if somebody deletes the seeded rows — they
+    // mirror the migration's values, not the old constants.
+
+    public static final String SETTING_NORM_RISE_PCT = "dashboard_norm_rise_pct";
+    public static final String SETTING_NORM_DROP_PCT = "dashboard_norm_drop_pct";
+    public static final String SETTING_NORM_WINDOW_DAYS = "dashboard_norm_window_days";
+    public static final String SETTING_ACTIVITY_WINDOW_DAYS = "dashboard_activity_window_days";
+    public static final String SETTING_TOP_PERFORMER_MIN_HOURS = "dashboard_top_performer_min_hours";
+
+    static final int DEFAULT_NORM_RISE_PCT = 10;
+    static final int DEFAULT_NORM_DROP_PCT = 10;
+    static final int DEFAULT_NORM_WINDOW_DAYS = 90;
+    static final int DEFAULT_ACTIVITY_WINDOW_DAYS = 30;
+    static final int DEFAULT_TOP_PERFORMER_MIN_HOURS = 20;
+
+    /** What the board is currently told to call worth looking at. */
+    public record Thresholds(
+            int normRisePct,
+            int normDropPct,
+            int normWindowDays,
+            int activityWindowDays,
+            int topPerformerMinHours
+    ) {}
 
     /** Below this much recorded work, a percentage says more about luck than about the norm. */
     private static final int NORM_MIN_MINUTES = 600;
@@ -61,9 +87,6 @@ public class DashboardInsightComputeService {
 
     /** What makes an un-normed operation worth naming. */
     private static final int NO_NORM_MIN_QUANTITY = 200;
-
-    /** A performer is ranked only once they have a month's worth of hours behind them. */
-    private static final int PERFORMER_MIN_MINUTES = 1_200;
 
     /** Spread needs several people, each with enough time on the operation to compare. */
     private static final int SPREAD_MIN_EMPLOYEES = 3;
@@ -81,6 +104,30 @@ public class DashboardInsightComputeService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final DashboardInsightRepository repository;
+    private final AppSettingService appSettingService;
+
+    /**
+     * The tunable thresholds as they stand right now. Public because the board
+     * shows them — a card's hint has to state the criterion its rows met.
+     */
+    public Thresholds currentThresholds() {
+        return new Thresholds(
+                intSetting(SETTING_NORM_RISE_PCT, DEFAULT_NORM_RISE_PCT),
+                intSetting(SETTING_NORM_DROP_PCT, DEFAULT_NORM_DROP_PCT),
+                intSetting(SETTING_NORM_WINDOW_DAYS, DEFAULT_NORM_WINDOW_DAYS),
+                intSetting(SETTING_ACTIVITY_WINDOW_DAYS, DEFAULT_ACTIVITY_WINDOW_DAYS),
+                intSetting(SETTING_TOP_PERFORMER_MIN_HOURS, DEFAULT_TOP_PERFORMER_MIN_HOURS));
+    }
+
+    /** A numeric setting as a positive int, or the fallback when absent or absurd. */
+    private int intSetting(String key, int fallback) {
+        BigDecimal value = appSettingService.getSettingAt(key, OffsetDateTime.now());
+        if (value == null) {
+            return fallback;
+        }
+        int asInt = value.intValue();
+        return asInt > 0 ? asInt : fallback;
+    }
 
     /**
      * Answers every question for one day and stores the results.
@@ -92,25 +139,28 @@ public class DashboardInsightComputeService {
      */
     @Transactional
     public void computeFor(LocalDate computedFor) {
+        Thresholds t = currentThresholds();
         LocalDate from = computedFor.minusDays(WINDOW_DAYS - 1L);
+        LocalDate normFrom = computedFor.minusDays(t.normWindowDays() - 1L);
+        LocalDate activityFrom = computedFor.minusDays(t.activityWindowDays() - 1L);
         LocalDate yesterday = computedFor.minusDays(1);
 
-        repository.save(DashboardInsightKey.NORM_TOO_LOW, computedFor, WINDOW_DAYS,
-                normFit(from, computedFor, true));
-        repository.save(DashboardInsightKey.NORM_TOO_HIGH, computedFor, WINDOW_DAYS,
-                normFit(from, computedFor, false));
+        repository.save(DashboardInsightKey.NORM_TOO_LOW, computedFor, t.normWindowDays(),
+                normFit(normFrom, computedFor, true, t.normRisePct()));
+        repository.save(DashboardInsightKey.NORM_TOO_HIGH, computedFor, t.normWindowDays(),
+                normFit(normFrom, computedFor, false, t.normDropPct()));
         repository.save(DashboardInsightKey.NO_NORM_HIGH_VOLUME, computedFor, WINDOW_DAYS,
                 noNormHighVolume(from, computedFor));
-        repository.save(DashboardInsightKey.MOST_WORKED_OPERATIONS, computedFor, WINDOW_DAYS,
-                operationVolume(from, computedFor, true));
-        repository.save(DashboardInsightKey.LEAST_WORKED_OPERATIONS, computedFor, WINDOW_DAYS,
-                operationVolume(from, computedFor, false));
+        repository.save(DashboardInsightKey.MOST_WORKED_OPERATIONS, computedFor, t.activityWindowDays(),
+                operationVolume(activityFrom, computedFor, true));
+        repository.save(DashboardInsightKey.LEAST_WORKED_OPERATIONS, computedFor, t.activityWindowDays(),
+                operationVolume(activityFrom, computedFor, false));
         repository.save(DashboardInsightKey.YESTERDAY_TOP_OPERATIONS, computedFor, 1,
                 operationVolume(yesterday, yesterday, true));
         repository.save(DashboardInsightKey.YESTERDAY_TOP_PRODUCTS, computedFor, 1,
                 productVolume(yesterday, yesterday));
-        repository.save(DashboardInsightKey.TOP_PERFORMERS, computedFor, WINDOW_DAYS,
-                topPerformers(from, computedFor));
+        repository.save(DashboardInsightKey.TOP_PERFORMERS, computedFor, t.activityWindowDays(),
+                topPerformers(activityFrom, computedFor, t.topPerformerMinHours() * 60));
         repository.save(DashboardInsightKey.MISSING_ENTRIES, computedFor, WINDOW_DAYS,
                 missingEntries(from, computedFor));
         repository.save(DashboardInsightKey.PERFORMANCE_SPREAD, computedFor, WINDOW_DAYS,
@@ -136,8 +186,10 @@ public class DashboardInsightComputeService {
      * card exists to find: a norm set so low that everybody sits on the ceiling.
      *
      * @param above true for norms that look too easy, false for too hard
+     * @param deviationPct how far from 100 % the rate must sit — the tuned
+     *                     rise or drop threshold, whichever side this call asks
      */
-    private List<NormFitRow> normFit(LocalDate from, LocalDate to, boolean above) {
+    private List<NormFitRow> normFit(LocalDate from, LocalDate to, boolean above, int deviationPct) {
         String sql = """
                 SELECT * FROM (
                     SELECT f.operation_id,
@@ -178,7 +230,7 @@ public class DashboardInsightComputeService {
                         .addValue("to", to)
                         .addValue("minMinutes", NORM_MIN_MINUTES)
                         .addValue("minLogs", NORM_MIN_LOGS)
-                        .addValue("threshold", above ? 100 + NORM_DEVIATION_PP : 100 - NORM_DEVIATION_PP)
+                        .addValue("threshold", above ? 100 + deviationPct : 100 - deviationPct)
                         .addValue("limit", ROWS),
                 (rs, i) -> new NormFitRow(
                         rs.getLong("operation_id"),
@@ -304,7 +356,7 @@ public class DashboardInsightComputeService {
      * definition, and letting those in would rank whoever happened to be assigned
      * to them.
      */
-    private List<PerformerRow> topPerformers(LocalDate from, LocalDate to) {
+    private List<PerformerRow> topPerformers(LocalDate from, LocalDate to, int minMinutes) {
         String sql = """
                 SELECT f.employee_id,
                        max(e.full_name)                     AS employee_name,
@@ -333,7 +385,7 @@ public class DashboardInsightComputeService {
         return jdbc.query(sql, new MapSqlParameterSource()
                         .addValue("from", from)
                         .addValue("to", to)
-                        .addValue("minMinutes", PERFORMER_MIN_MINUTES)
+                        .addValue("minMinutes", minMinutes)
                         .addValue("limit", ROWS),
                 (rs, i) -> new PerformerRow(
                         rs.getLong("employee_id"),

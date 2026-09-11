@@ -60,7 +60,9 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
 
         assertThat(stored).isPresent();
         assertThat(stored.get().computedFor()).isEqualTo(today);
-        assertThat(stored.get().windowDays()).isEqualTo(DashboardInsightComputeService.WINDOW_DAYS);
+        // The norm cards' window is a tuned setting (V44), not the general 30.
+        assertThat(stored.get().windowDays())
+                .isEqualTo(computeService.currentThresholds().normWindowDays());
         assertThat(stored.get().rows()).isNotNull();
     }
 
@@ -132,6 +134,33 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         assertThat(insights.computedFor()).isEqualTo(today);
         assertThat(insights.stale()).isFalse();
         assertThat(insights.yesterday()).isEqualTo(today.minusDays(1));
+    }
+
+    @Test
+    @DisplayName("a tuned threshold in app_settings is the one the next compute uses, and the board states it")
+    void thresholdsComeFromSettings() {
+        jdbc.update("""
+                UPDATE app_settings SET setting_value_numeric = 45
+                WHERE setting_key = 'dashboard_norm_window_days'
+                """);
+        jdbc.update("""
+                UPDATE app_settings SET setting_value_numeric = 5
+                WHERE setting_key = 'dashboard_norm_rise_pct'
+                """);
+
+        LocalDate today = LocalDate.now();
+        computeService.computeFor(today);
+
+        var stored = insightRepository.findLatest(DashboardInsightKey.NORM_TOO_LOW, NormFitRow.class);
+        assertThat(stored).isPresent();
+        assertThat(stored.get().windowDays()).isEqualTo(45);
+
+        var insights = dashboardService.load(1L).insights();
+        assertThat(insights.normWindowDays()).isEqualTo(45);
+        assertThat(insights.normRisePct()).isEqualTo(5);
+        assertThat(insights.normDropPct()).isEqualTo(10);
+        assertThat(insights.activityWindowDays()).isEqualTo(30);
+        assertThat(insights.topPerformerMinHours()).isEqualTo(20);
     }
 
     // ── Neunete smene ────────────────────────────────────────────────────────
