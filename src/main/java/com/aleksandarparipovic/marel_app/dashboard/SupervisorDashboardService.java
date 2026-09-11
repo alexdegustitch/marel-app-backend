@@ -62,6 +62,13 @@ public class SupervisorDashboardService {
     /** The entry-gaps worklist: enough to work through, not the whole history. */
     private static final int ENTRY_GAP_ROWS = 12;
 
+    /**
+     * One person's claimed queue, whole: it is their own desk, and a desk shown
+     * in part is a count the list beneath it contradicts. The cap only guards
+     * against the absurd.
+     */
+    private static final int CLAIMED_ROWS = 25;
+
     private final SupervisorDashboardQueryRepository queryRepository;
     private final DashboardQueryRepository adminQueryRepository;
     private final DashboardInsightRepository insightRepository;
@@ -84,9 +91,12 @@ public class SupervisorDashboardService {
                 Block.of(
                         queryRepository.countOpenRequests("PENDING"),
                         queryRepository.findOpenRequests("PENDING", currentUserId, ROWS_PER_BLOCK)),
+                // The claimed card is the CALLER's desk: what they took and have
+                // not finished. Colleagues' claimed requests live on the requests
+                // page — a tile counting them here said 11 over a list of 3.
                 Block.of(
-                        queryRepository.countOpenRequests("IN_REVIEW"),
-                        queryRepository.findOpenRequests("IN_REVIEW", currentUserId, ROWS_PER_BLOCK)),
+                        queryRepository.countMyClaimedRequests(currentUserId),
+                        queryRepository.findMyClaimedRequests(currentUserId, CLAIMED_ROWS)),
                 Block.of(
                         adminQueryRepository.countNonWorkingDaysBetween(
                                 today, today.plusDays(CALENDAR_HORIZON_DAYS)),

@@ -176,6 +176,59 @@ public class SupervisorDashboardQueryRepository {
                 new MapSqlParameterSource("status", status));
     }
 
+    /**
+     * The requests THIS user has taken and not finished.
+     *
+     * <p>Its own query rather than a flag on {@link #findOpenRequests}: the
+     * "Preuzeti, neodrađeni" card is about the reader's own desk — a colleague's
+     * claimed requests are that colleague's, and counting them on somebody
+     * else's tile is how the tile said 11 while the list said 3.
+     */
+    public List<RequestRow> findMyClaimedRequests(Long userId, int limit) {
+        return jdbc.query("""
+                SELECT r.id,
+                       p.id                AS product_id,
+                       p.product_name      AS product_name,
+                       r.request_type      AS request_type,
+                       r.status            AS status,
+                       requester.full_name AS requested_by_name,
+                       assignee.full_name  AS assigned_to_name,
+                       r.assigned_to       AS assigned_to,
+                       r.created_at        AS created_at
+                FROM manufacturing_time_requests r
+                JOIN products p       ON p.id = r.product_id
+                LEFT JOIN users requester ON requester.id = r.created_by
+                LEFT JOIN users assignee  ON assignee.id = r.assigned_to
+                WHERE r.status = 'IN_REVIEW'
+                  AND r.assigned_to = :userId
+                  AND r.internal = false
+                ORDER BY r.created_at ASC
+                LIMIT :limit
+                """,
+                new MapSqlParameterSource("userId", userId).addValue("limit", limit),
+                (rs, i) -> {
+                    OffsetDateTime createdAt = offsetDateTime(rs, "created_at");
+                    return new RequestRow(
+                            rs.getLong("id"),
+                            rs.getLong("product_id"),
+                            rs.getString("product_name"),
+                            rs.getString("request_type"),
+                            rs.getString("status"),
+                            rs.getString("requested_by_name"),
+                            rs.getString("assigned_to_name"),
+                            true,
+                            daysSince(createdAt),
+                            createdAt);
+                });
+    }
+
+    public long countMyClaimedRequests(Long userId) {
+        return count("""
+                SELECT COUNT(*) FROM manufacturing_time_requests
+                WHERE status = 'IN_REVIEW' AND assigned_to = :userId AND internal = false
+                """, new MapSqlParameterSource("userId", userId));
+    }
+
     // ── Who is on sick leave or vacation today ──────────────────────────────
 
     /**

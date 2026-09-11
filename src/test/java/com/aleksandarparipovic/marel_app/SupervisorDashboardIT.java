@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -77,7 +78,9 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         assertThat(board.myRecentRecords().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.myRecentPayrolls().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.pendingRequests().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.claimedRequests().rows()).hasSizeLessThanOrEqualTo(5);
+        // The claimed card is the caller's whole desk, so its cap is the guard
+        // against the absurd rather than a page size.
+        assertThat(board.claimedRequests().rows()).hasSizeLessThanOrEqualTo(25);
         assertThat(board.upcomingNonWorkingDays().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
     }
@@ -139,6 +142,40 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         assertThat(insights.computedFor()).isEqualTo(today);
         assertThat(insights.stale()).isFalse();
         assertThat(insights.yesterday()).isEqualTo(today.minusDays(1));
+    }
+
+    @Test
+    @DisplayName("the claimed card counts only what THIS user took — a colleague's desk is not on it")
+    void claimedCardIsTheCallersOwnDesk() {
+        Long product = jdbc.queryForObject("""
+                WITH ins AS (
+                    INSERT INTO products (product_name, product_code, description)
+                    SELECT 'IT proizvod za preuzete', 'IT-CLAIM', 'IT'
+                    WHERE NOT EXISTS (SELECT 1 FROM products WHERE product_code = 'IT-CLAIM')
+                    RETURNING id)
+                SELECT id FROM ins UNION ALL SELECT id FROM products WHERE product_code = 'IT-CLAIM' LIMIT 1
+                """, Long.class);
+        List<Long> users = jdbc.queryForList("SELECT id FROM users ORDER BY id LIMIT 2", Long.class);
+        assertThat(users).hasSizeGreaterThanOrEqualTo(1);
+        Long me = users.get(0);
+        Long colleague = users.size() > 1 ? users.get(1) : null;
+
+        jdbc.update("""
+                INSERT INTO manufacturing_time_requests (product_id, request_type, description, status, assigned_to, created_by, internal)
+                VALUES (?, 'CREATE', 'IT zahtev', 'IN_REVIEW', ?, ?, false)
+                """, product, me, me);
+        if (colleague != null) {
+            jdbc.update("""
+                    INSERT INTO manufacturing_time_requests (product_id, request_type, description, status, assigned_to, created_by, internal)
+                    VALUES (?, 'CREATE', 'IT zahtev', 'IN_REVIEW', ?, ?, false)
+                    """, product, colleague, colleague);
+        }
+
+        SupervisorDashboardResponse board = dashboardService.load(me);
+
+        assertThat(board.claimedRequests().total()).isEqualTo(1);
+        assertThat(board.claimedRequests().rows())
+                .allSatisfy(row -> assertThat(row.assignedToMe()).isTrue());
     }
 
     @Test

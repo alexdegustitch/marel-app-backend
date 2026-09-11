@@ -48,7 +48,11 @@ public record SupervisorDashboardResponse(
         /** Manufacturing-time requests nobody has taken yet. */
         Block<RequestRow> pendingRequests,
 
-        /** Requests somebody took and has not finished. */
+        /**
+         * Requests THIS USER took and has not finished — their own desk, whole
+         * (capped only against the absurd). Colleagues' claimed requests live
+         * on the requests page.
+         */
         Block<RequestRow> claimedRequests,
 
         Block<NonWorkingDayRow> upcomingNonWorkingDays,
