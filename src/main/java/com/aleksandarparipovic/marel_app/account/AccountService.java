@@ -10,6 +10,7 @@ import com.aleksandarparipovic.marel_app.user.dto.UserDto;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +38,7 @@ public class AccountService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthAttemptLimiter attemptLimiter;
+    private final ApplicationEventPublisher events;
 
     /**
      * Update one's own contact details.
@@ -95,23 +97,25 @@ public class AccountService {
     public void changeOwnPassword(Long userId, PasswordChangeRequest request) {
         User user = load(userId);
 
-        if (user.getPasswordHash() == null) {
-            /*
-             * A Google-provisioned account has no local password to change, and
-             * setting one here would quietly open a SECOND way into an account
-             * whose owner believes it is reachable only through Google.
-             */
-            throw new IllegalArgumentException(
-                    "Vaš nalog koristi prijavu preko Google-a i nema lozinku u ovoj aplikaciji.");
-        }
+        /*
+         * A Google-provisioned account starts with no local password — and every
+         * signed action in the application (archiving, approving, freezing a
+         * payroll) is confirmed with the local password, so such an account must
+         * be able to ESTABLISH one. There is no current password to prove then;
+         * the letter sent after commit is what warns the rightful owner if this
+         * was somebody else at an unlocked session.
+         */
+        boolean establishing = user.getPasswordHash() == null;
 
-        requireCurrentPassword(user, request.getCurrentPassword());
+        if (!establishing) {
+            requireCurrentPassword(user, request.getCurrentPassword());
+        }
 
         if (!request.getNewPassword().equals(request.getConfirmPassword())) {
             throw new IllegalArgumentException("Nova lozinka i njena potvrda se ne poklapaju.");
         }
 
-        if (passwordEncoder.matches(request.getNewPassword(), user.getPasswordHash())) {
+        if (!establishing && passwordEncoder.matches(request.getNewPassword(), user.getPasswordHash())) {
             throw new IllegalArgumentException("Nova lozinka mora biti različita od trenutne.");
         }
 
@@ -124,8 +128,14 @@ public class AccountService {
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
 
+        if (establishing) {
+            events.publishEvent(new AccountMailer.PasswordEstablished(
+                    user.getEmailAddress(),
+                    (user.getFirstName() + " " + user.getLastName()).trim()));
+        }
+
         // Deliberately no hash, no password, and no length in the log line.
-        log.info("Password changed by user {}", userId);
+        log.info("Password {} by user {}", establishing ? "established" : "changed", userId);
     }
 
     /**

@@ -16,4 +16,19 @@ public class GoogleCompleteRegistrationRequest {
     private Long roleId;
 
     private String mobilePhone;
+
+    /**
+     * The account's local password, chosen at registration.
+     *
+     * <p>Required even though the identity came from Google: every signed
+     * action in the application (archiving, approving, freezing a payroll) is
+     * confirmed with the LOCAL password, and an account without one would be
+     * permanently unable to sign anything. Google remains the convenient way
+     * in; the password is the signature.
+     */
+    @NotBlank(message = "Lozinka je obavezna.")
+    private String password;
+
+    @NotBlank(message = "Potvrdite lozinku.")
+    private String confirmPassword;
 }

@@ -16,7 +16,12 @@ import lombok.Setter;
 @Setter
 public class PasswordChangeRequest {
 
-    @NotBlank(message = "Unesite trenutnu lozinku.")
+    /**
+     * Not annotated {@code @NotBlank} on purpose: an account established through
+     * Google has no current password to type when SETTING its first one. The
+     * service is what decides — it demands this field whenever a password
+     * already exists, and only then.
+     */
     private String currentPassword;
 
     @NotBlank(message = "Unesite novu lozinku.")

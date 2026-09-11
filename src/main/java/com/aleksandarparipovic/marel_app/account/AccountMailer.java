@@ -39,6 +39,14 @@ public class AccountMailer {
     public record ChangeCompleted(String oldAddress, String recipientName, String newAddress) {
     }
 
+    /**
+     * A Google-established account just SET its first local password. The letter
+     * is the owner's only warning if somebody else did it at an unlocked session
+     * — the same reason the address-change notice goes to the old address.
+     */
+    public record PasswordEstablished(String toAddress, String recipientName) {
+    }
+
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onCodeIssued(CodeIssued event) {
         send(EmailMessage.to(
@@ -60,6 +68,16 @@ public class AccountMailer {
                 event.oldAddress(),
                 "Vaša e-adresa je promenjena",
                 completedBody(event),
+                appName,
+                null));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPasswordEstablished(PasswordEstablished event) {
+        send(EmailMessage.to(
+                event.toAddress(),
+                "Na vašem nalogu je postavljena lozinka",
+                passwordEstablishedBody(event),
                 appName,
                 null));
     }
@@ -96,6 +114,17 @@ public class AccountMailer {
                         + "<p style=\"margin:0 0 16px\">Od sada se prijavljujete tom adresom, i obaveštenja "
                         + "stižu na nju.</p>"
                         + "<p style=\"margin:0;color:#b02a37\">Ako ovu promenu niste napravili vi, odmah se "
+                        + "javite administratoru — neko drugi ima pristup vašem nalogu.</p>");
+    }
+
+    private String passwordEstablishedBody(PasswordEstablished event) {
+        return wrap(
+                "<p style=\"margin:0 0 16px\">" + escape(greeting(event.recipientName())) + "</p>"
+                        + "<p style=\"margin:0 0 12px\">Na vašem nalogu, koji je do sada koristio samo "
+                        + "prijavu preko Google-a, upravo je postavljena lozinka.</p>"
+                        + "<p style=\"margin:0 0 16px\">Od sada je prijava moguća i lozinkom i preko "
+                        + "Google-a, a lozinkom se potvrđuju radnje u aplikaciji.</p>"
+                        + "<p style=\"margin:0;color:#b02a37\">Ako lozinku niste postavili vi, odmah se "
                         + "javite administratoru — neko drugi ima pristup vašem nalogu.</p>");
     }
 

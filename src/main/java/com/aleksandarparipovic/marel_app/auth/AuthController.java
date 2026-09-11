@@ -196,7 +196,8 @@ public class AuthController {
 
         RegisterResponse response = authService.completeGoogleRegistration(
                 profile.email(), profile.firstName(), profile.lastName(),
-                request.getRoleId(), request.getMobilePhone()
+                request.getRoleId(), request.getMobilePhone(),
+                request.getPassword(), request.getConfirmPassword()
         );
         return ResponseEntity.ok(response);
     }
