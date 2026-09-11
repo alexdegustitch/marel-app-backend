@@ -40,6 +40,13 @@ public final class ProductionOrderFieldMapper implements EntityFieldMapper<Produ
                      */
                     Map.entry("customerId", (root, cb, jm) -> root.get("customer").get("id")),
                     /*
+                     * Who WROTE the order — same no-join reasoning as customerId:
+                     * user_id is a column on this table. This is what the boards'
+                     * "odgovorno lice" filter and the profile's "Prikaži sve"
+                     * deep-link narrow by.
+                     */
+                    Map.entry("userId", (root, cb, jm) -> root.get("user").get("id")),
+                    /*
                      * LEFT, and it matters. Most orders are for nobody outside, and
                      * an inner join would drop every one of them from the list the
                      * moment somebody sorted or filtered by customer — as a silent

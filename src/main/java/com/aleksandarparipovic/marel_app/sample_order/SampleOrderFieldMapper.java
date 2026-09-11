@@ -42,6 +42,8 @@ public final class SampleOrderFieldMapper implements EntityFieldMapper<SampleOrd
                      * to answer a question the row already answers.
                      */
                     Map.entry("customerId", (root, cb, jm) -> root.get("customer").get("id")),
+                    /* Who WROTE the order — user_id is a column on this table, no join. */
+                    Map.entry("userId", (root, cb, jm) -> root.get("user").get("id")),
                     /*
                      * LEFT, and it matters. Samples made for an internal trial have
                      * no customer, and an inner join would drop every one of them

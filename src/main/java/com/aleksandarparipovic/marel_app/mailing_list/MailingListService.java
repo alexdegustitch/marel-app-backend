@@ -358,21 +358,63 @@ public class MailingListService {
      * permission.
      */
     public void requireCanRead(MailingList list, Long actorId) {
-        if (isOwner(list, actorId)) {
-            return;
-        }
-
-        boolean allowed = switch (list.getVisibility()) {
-            case PRIVATE -> false;
-            case SHARED -> accessRepository.existsByMailingList_IdAndUser_Id(list.getId(), actorId);
-            case GLOBAL -> permissionService.hasPermission(AppPermission.MAILING_LIST_GLOBAL_MANAGE);
-        };
-
-        if (!allowed) {
+        if (!canRead(list, actorId)) {
             // Deliberately the same message whether the list is private or missing,
             // so ids cannot be probed for existence.
             throw new AccessDeniedException("Nemate pristup ovoj mailing listi.");
         }
+    }
+
+    /**
+     * Whether {@code actorId} may READ this list — the same rule as
+     * {@link #requireCanRead}, as a boolean the profile lookup filters with instead
+     * of catching an exception per list.
+     */
+    private boolean canRead(MailingList list, Long actorId) {
+        if (isOwner(list, actorId)) {
+            return true;
+        }
+        return switch (list.getVisibility()) {
+            case PRIVATE -> false;
+            case SHARED -> accessRepository.existsByMailingList_IdAndUser_Id(list.getId(), actorId);
+            case GLOBAL -> permissionService.hasPermission(AppPermission.MAILING_LIST_GLOBAL_MANAGE);
+        };
+    }
+
+    /**
+     * The mailing lists a colleague is on, as their profile shows them — but only
+     * the ones the VIEWER may also see.
+     *
+     * <p>A profile must not turn into a way to enumerate somebody's PRIVATE lists,
+     * so each list the person is a member of is passed through {@link #visibleOnProfile}:
+     * a GLOBAL list is company-wide and shown to everyone, a SHARED list only to the
+     * owner and those granted it, a PRIVATE list only to its owner. Archived lists are
+     * dropped. This is deliberately more open for GLOBAL than the list's own screen
+     * ({@link #canRead}) — a global list is a fact about where a colleague can be
+     * reached, not a secret — which is why it is a separate predicate.
+     */
+    @Transactional(readOnly = true)
+    public List<UserMailingListDto> listsUserBelongsTo(Long profiledUserId, Long viewerId) {
+        return memberRepository.findActiveListsByUserId(profiledUserId).stream()
+                .filter(list -> !list.isArchived())
+                .filter(list -> visibleOnProfile(list, viewerId))
+                .map(list -> new UserMailingListDto(list.getId(), list.getName(), list.getVisibility()))
+                .toList();
+    }
+
+    /**
+     * Whether a list the profiled colleague is on may be NAMED on their profile.
+     * GLOBAL is shown to everyone (company-wide reach, not a secret); SHARED and
+     * PRIVATE keep the access rules the list's own screen uses. Kept apart from
+     * {@link #canRead} so widening the profile never widens the mailing screens.
+     */
+    private boolean visibleOnProfile(MailingList list, Long viewerId) {
+        return switch (list.getVisibility()) {
+            case GLOBAL -> true;
+            case PRIVATE -> isOwner(list, viewerId);
+            case SHARED -> isOwner(list, viewerId)
+                    || accessRepository.existsByMailingList_IdAndUser_Id(list.getId(), viewerId);
+        };
     }
 
     /** Editing is the owner's right; GLOBAL lists additionally need the permission. */

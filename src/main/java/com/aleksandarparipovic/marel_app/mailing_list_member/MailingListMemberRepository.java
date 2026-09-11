@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.mailing_list_member;
 
+import com.aleksandarparipovic.marel_app.mailing_list.MailingList;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -30,6 +31,21 @@ public interface MailingListMemberRepository extends JpaRepository<MailingListMe
             where m.id = :id
             """)
     Optional<MailingListMember> findDetailById(@Param("id") Long id);
+
+    /**
+     * The lists a given user is an ACTIVE member of — the reverse of
+     * {@link #findActiveByMailingListId}, for a colleague's profile. The owner side
+     * is fetched because the caller filters each list by read access, which asks
+     * who owns it. Archived lists are left in; the caller drops them.
+     */
+    @Query("""
+            select m.mailingList from MailingListMember m
+            join fetch m.mailingList.ownerUser
+            where m.user.id = :userId
+              and m.archivedAt is null
+            order by m.mailingList.name
+            """)
+    List<MailingList> findActiveListsByUserId(@Param("userId") Long userId);
 
     boolean existsByMailingList_IdAndUser_IdAndArchivedAtIsNull(Long mailingListId, Long userId);
 

@@ -1,7 +1,9 @@
 package com.aleksandarparipovic.marel_app.production_order.repository;
 
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
+import com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus;
 import com.aleksandarparipovic.marel_app.search.dto.OrderSearchRow;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -9,12 +11,43 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Repository
 public interface ProductionOrderRepository extends JpaRepository<ProductionOrder, Long>, JpaSpecificationExecutor<ProductionOrder> {
 
     List<ProductionOrder> findByIsActiveIsTrueOrderByNameAsc();
+
+    /**
+     * The orders one user WROTE, newest first — what a commercial colleague's
+     * profile lists. The customer is fetch-joined (a to-one, so paging stays in
+     * the database) because the row shows its name; archived orders are excluded.
+     * Ordered by the order date, falling back to the creation date when an order
+     * carries none, so a row is never undated in the middle of the list.
+     */
+    @Query(value = """
+            select o from ProductionOrder o
+            left join fetch o.customer
+            where o.user.id = :userId
+              and o.archivedAt is null
+            order by coalesce(o.orderDate, o.creationDate) desc, o.id desc
+            """,
+            countQuery = """
+            select count(o) from ProductionOrder o
+            where o.user.id = :userId
+              and o.archivedAt is null
+            """)
+    Page<ProductionOrder> findActiveByUser(@Param("userId") Long userId, Pageable pageable);
+
+    /** Every non-archived order this user wrote — the profile's "kreirano ukupno". */
+    long countByUser_IdAndArchivedAtIsNull(Long userId);
+
+    /** This user's non-archived orders in one status — CREATED gives "aktivnih". */
+    long countByUser_IdAndStatusAndArchivedAtIsNull(Long userId, ProductionOrderStatus status);
+
+    /** This user's non-archived orders entered on or after {@code since} — "ovog meseca". */
+    long countByUser_IdAndArchivedAtIsNullAndCreatedAtGreaterThanEqual(Long userId, OffsetDateTime since);
 
     /**
      * Production orders whose name or code contains {@code q}, for the global

@@ -13,6 +13,8 @@ import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderDet
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderLineItemDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderOptionDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderStatsDto;
+import com.aleksandarparipovic.marel_app.production_order.dto.UserOrderRow;
+import com.aleksandarparipovic.marel_app.production_order.dto.UserOrderStatsDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderUpdateRequest;
 import com.aleksandarparipovic.marel_app.production_order_progress.OrderProgressService;
 import com.aleksandarparipovic.marel_app.production_order_progress.dto.OrderProgressSummary;
@@ -55,8 +57,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.util.ArrayList;
@@ -677,6 +681,45 @@ public class ProductionOrderService {
         }
 
         return new ProductionOrderStatsDto(active.size(), open.size(), delivered, late, dueSoon, withoutScope);
+    }
+
+    /**
+     * The orders one user WROTE, for their profile — newest first, one slim row
+     * each. No line items, deadlines or computed progress: the profile names the
+     * order and links to it, and the order's own screen carries the rest.
+     */
+    @Transactional(readOnly = true)
+    public Page<UserOrderRow> ordersByUser(Long userId, int page, int size) {
+        return productionOrderRepository
+                .findActiveByUser(userId, PageRequest.of(page, size))
+                .map(order -> new UserOrderRow(
+                        order.getId(),
+                        order.getCode(),
+                        order.getName(),
+                        order.getCustomer() != null ? order.getCustomer().getId() : null,
+                        order.getCustomer() != null ? order.getCustomer().getName() : null,
+                        order.getOrderDate() != null ? order.getOrderDate() : order.getCreationDate(),
+                        order.getStatus()));
+    }
+
+    /**
+     * The three figures over that list: how many orders this user has written in
+     * all, how many since the first of this month, and how many are still open.
+     * Counts, not a scan — cheap however many orders the person has.
+     */
+    @Transactional(readOnly = true)
+    public UserOrderStatsDto orderStatsByUser(Long userId) {
+        long total = productionOrderRepository.countByUser_IdAndArchivedAtIsNull(userId);
+        long active = productionOrderRepository.countByUser_IdAndStatusAndArchivedAtIsNull(
+                userId, ProductionOrderStatus.CREATED);
+
+        OffsetDateTime monthStart = OffsetDateTime.now()
+                .with(TemporalAdjusters.firstDayOfMonth())
+                .truncatedTo(ChronoUnit.DAYS);
+        long thisMonth = productionOrderRepository
+                .countByUser_IdAndArchivedAtIsNullAndCreatedAtGreaterThanEqual(userId, monthStart);
+
+        return new UserOrderStatsDto(total, thisMonth, active);
     }
 
     /**

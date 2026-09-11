@@ -2,9 +2,13 @@ package com.aleksandarparipovic.marel_app.user;
 
 import com.aleksandarparipovic.marel_app.user.dto.UserCreateRequest;
 import com.aleksandarparipovic.marel_app.user.dto.UserDirectoryStatsDto;
+import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.mailing_list.MailingListService;
+import com.aleksandarparipovic.marel_app.mailing_list.dto.UserMailingListDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserOptionDto;
 import com.aleksandarparipovic.marel_app.user.dto.UserUpdateRequest;
+import com.aleksandarparipovic.marel_app.user.dto.UserWorkContextDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -21,6 +25,9 @@ import java.util.List;
 public class UserController {
 
     private final UserService userService;
+    private final UserWorkContextService userWorkContextService;
+    private final MailingListService mailingListService;
+    private final CurrentUserService currentUserService;
 
     @GetMapping("/me")
     public ResponseEntity<UserDto> getCurrentUser() {
@@ -82,6 +89,55 @@ public class UserController {
     @GetMapping("/{username}")
     public ResponseEntity<UserDto> getUserByUsername(@PathVariable String username) {
         return ResponseEntity.ok(userService.getUserByUsername(username));
+    }
+
+    /**
+     * One account, by its numeric id — the colleague profile everyone may open.
+     *
+     * <p>Its OWN route, and its own security rule, kept apart from
+     * {@link #getUserByUsername} above. That one reads by name and falls through
+     * to the admin rule in {@code SecurityConfig}; this one is opened to every
+     * signed-in person, because the profile page a colleague clicks to is the
+     * read-only face of the directory — the same name, role, e-mail and telephone
+     * the directory already shows everyone, addressed by the id the directory
+     * links with. It carries no password material, no payroll, no settings.
+     *
+     * <p>Nested under {@code /id/} rather than sharing the one-segment
+     * {@code /{username}} route so the two never collide and the security rule can
+     * name exactly this shape ({@code GET /api/users/id/*}) without widening
+     * by-name reads.
+     */
+    @GetMapping("/id/{id}")
+    public ResponseEntity<UserDto> getUserById(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getUserById(id));
+    }
+
+    /**
+     * The work-status slice of a colleague's profile: department, since when, and
+     * whether the person is at work today. Same audience as the profile itself —
+     * everyone signed in — because it carries no pay and nothing the reader may
+     * change, only what a colleague needs to know to reach them.
+     *
+     * <p>{@code 204 No Content} when the account is not a worker's: an office
+     * account has no work life to state, and the caller shows the account-level
+     * facts alone rather than an empty "Organizacija".
+     */
+    @GetMapping("/id/{id}/work-status")
+    public ResponseEntity<UserWorkContextDto> getWorkStatus(@PathVariable Long id) {
+        UserWorkContextDto context = userWorkContextService.forUser(id);
+        return context == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(context);
+    }
+
+    /**
+     * The mailing lists this colleague is on — but only the ones the CALLER may
+     * also see. The intersection ("zajedničke" liste) is enforced in the mailing
+     * service against the signed-in user, so a profile can never enumerate somebody
+     * else's private lists. Same open audience as the rest of the profile.
+     */
+    @GetMapping("/id/{id}/mailing-lists")
+    public ResponseEntity<List<UserMailingListDto>> getMailingLists(@PathVariable Long id) {
+        return ResponseEntity.ok(
+                mailingListService.listsUserBelongsTo(id, currentUserService.getCurrentUserId()));
     }
 
     /**

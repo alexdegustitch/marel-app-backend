@@ -7,6 +7,8 @@ import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderDet
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderOptionDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderStatsDto;
 import com.aleksandarparipovic.marel_app.production_order.dto.ProductionOrderUpdateRequest;
+import com.aleksandarparipovic.marel_app.production_order.dto.UserOrderRow;
+import com.aleksandarparipovic.marel_app.production_order.dto.UserOrderStatsDto;
 import com.aleksandarparipovic.marel_app.search.SearchRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -85,6 +87,28 @@ public class ProductionOrderController {
     ) {
         return ResponseEntity.ok(productionOrderService.searchCopySources(
                 query, customerId, userId, createdFrom, createdTo, page, size));
+    }
+
+    /**
+     * The orders one user WROTE — a commercial colleague's profile. Nested under
+     * {@code /api/production-orders}, so the {@code PRODUCTION_ORDER_VIEW} rule
+     * already guards it: a reader who may not see orders at all does not see them
+     * on a profile either, and the profile hides the section rather than showing an
+     * empty one.
+     */
+    @GetMapping("/by-user/{userId}")
+    ResponseEntity<Page<UserOrderRow>> byUser(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "5") int size
+    ) {
+        return ResponseEntity.ok(productionOrderService.ordersByUser(userId, page, size));
+    }
+
+    /** The three figures over that user's orders: written in all, this month, still open. */
+    @GetMapping("/by-user/{userId}/stats")
+    ResponseEntity<UserOrderStatsDto> byUserStats(@PathVariable Long userId) {
+        return ResponseEntity.ok(productionOrderService.orderStatsByUser(userId));
     }
 
     @GetMapping("/{id}")

@@ -74,6 +74,36 @@ public class UserService {
         return UserMapper.toDto(user);
     }
 
+    /**
+     * One account by its numeric id, enriched the way the profile page shows it.
+     *
+     * <p>The directory enriches a whole page at once ({@link #enrichForDirectory});
+     * a profile is one person, so the same two off-row facts — is this person here
+     * right now, and the picture they chose — are looked up for the single id. Kept
+     * here rather than reading the raw {@link UserMapper#toDto} so a colleague's
+     * profile shows the same face and presence dot the directory just showed.
+     */
+    @Transactional(readOnly = true)
+    public UserDto getUserById(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() ->
+                        new EntityNotFoundException("Korisnik nije pronađen: " + id)
+                );
+
+        UserDto dto = UserMapper.toDto(user);
+        dto.setOnline(onlineIncludingSelf(List.of(user.getId())).contains(user.getId()));
+
+        userPreferencesRepository.findById(user.getId()).ifPresent(preferences -> {
+            JsonNode settings = preferences.getUiSettings();
+            JsonNode avatar = settings == null ? null : settings.get("avatarKey");
+            if (avatar != null && avatar.isTextual() && !avatar.asText().isBlank()) {
+                dto.setAvatarKey(avatar.asText());
+            }
+        });
+
+        return dto;
+    }
+
     public UserDto create(String username, String password, String email, String firstName, String lastName, String mobilePhone, String roleName) {
 
         if (!UsernameRules.isValid(username)) {

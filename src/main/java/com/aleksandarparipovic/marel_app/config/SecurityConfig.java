@@ -65,6 +65,18 @@ public class SecurityConfig {
                          * separately so it never depends on whether "/**" also
                          * matches the bare prefix.
                          */
+                        /*
+                         * The container's error dispatch. When a handler answers
+                         * sendError(403), the servlet container FORWARDS to /error
+                         * to render the body — and that forward runs through this
+                         * chain again, without the request's SecurityContext. Left
+                         * to anyRequest().authenticated(), the forward was refused
+                         * as anonymous and the entry point rewrote every 403 into a
+                         * 401 — which the client reads as "session expired" and
+                         * answers by signing the person out. A refusal must never
+                         * cost somebody their session.
+                         */
+                        .requestMatchers("/error").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/actuator", "/actuator/**").hasRole("developer")
                         .requestMatchers("/api/auth/**").permitAll()
@@ -106,6 +118,31 @@ public class SecurityConfig {
                          */
                         .requestMatchers(HttpMethod.GET, "/api/users/stats").authenticated()
                         /*
+                         * A colleague's profile, by id. The read-only face of the
+                         * directory: the same name, role, e-mail and telephone the
+                         * GET-collection rule above already opens to everyone signed
+                         * in, addressed by the id the directory links with. Named as
+                         * its own shape ("/id/*") and placed ABOVE the admin rule so
+                         * reading one account BY NAME stays admin-only — only reading
+                         * by id, the way a profile link resolves, is opened.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/users/id/*").authenticated()
+                        /*
+                         * The work-status slice of that same profile — department,
+                         * employment date, whether the person is at work today.
+                         * Same audience, same reasoning: no pay, nothing the reader
+                         * may change. Its own matcher because the id rule above only
+                         * spans one segment, and this sub-resource is two.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/users/id/*/work-status").authenticated()
+                        /*
+                         * The mailing lists a colleague is on. Authenticated here;
+                         * the service narrows the answer to lists the CALLER may see,
+                         * so opening the route leaks nothing a reader could not
+                         * already reach through the mailing-list screens.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/users/id/*/mailing-lists").authenticated()
+                        /*
                          * Linking an account to a worker. Authenticated here and
                          * decided by @PreAuthorize on the method, which asks for
                          * USER_EMPLOYEE_LINK — held by admins and supervisors.
@@ -128,6 +165,16 @@ public class SecurityConfig {
                          * supervisor to read this: an order carries its customer's
                          * name in its own response.
                          */
+                        /*
+                         * The options list — id, name, code — for pickers and the
+                         * order boards' customer filter. Open to everyone signed in
+                         * rather than gated by CUSTOMER_VIEW, because the order
+                         * boards already print each order's customer NAME to every
+                         * role that may read orders; this endpoint reveals nothing
+                         * those rows do not. The customers screens themselves stay
+                         * behind CUSTOMER_VIEW below.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/customers/options").authenticated()
                         .requestMatchers("/api/customers/**").access(permission(AppPermission.CUSTOMER_VIEW))
 
                         /*
