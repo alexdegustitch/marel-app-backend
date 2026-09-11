@@ -6,6 +6,7 @@ import com.aleksandarparipovic.marel_app.config.security.AppPermission;
 import com.aleksandarparipovic.marel_app.config.security.PermissionService;
 import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.customer.CustomerRepository;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerSampleOrderRow;
 import com.aleksandarparipovic.marel_app.outbox.OutboxAggregateType;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventPublisher;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
@@ -383,6 +384,68 @@ public class SampleOrderService {
         long dueSoon = sampleOrderRepository.count(base.and(SampleOrderSpecifications.dueWithin(today, 3)));
 
         return new SampleOrderStatsDto(total, open, total - open, late, dueSoon);
+    }
+
+    /**
+     * The dates a customer's sample list may be sorted on, and the one it
+     * sorts on when asked for anything else — the same whitelist rule the
+     * production side applies to a customer's orders.
+     */
+    private static final java.util.Set<String> CUSTOMER_SAMPLE_ORDER_SORT_FIELDS =
+            java.util.Set.of("creationDate", "deadlineDate");
+    private static final String DEFAULT_CUSTOMER_SAMPLE_ORDER_SORT_FIELD = "creationDate";
+    private static final int MAX_CUSTOMER_SAMPLE_ORDER_PAGE_SIZE = 200;
+
+    /**
+     * The sample orders made for one customer, for the customer's own page.
+     * Searched, sorted and paged BY THE SERVER, mirroring
+     * {@code ProductionOrderService.getCustomerOrders}; the search is the same
+     * one box {@link SampleOrderSpecifications#matchesText} answers everywhere
+     * else.
+     */
+    @Transactional(readOnly = true)
+    public Page<CustomerSampleOrderRow> getCustomerSampleOrders(
+            Long customerId,
+            String search,
+            Sort.Direction direction,
+            String sortBy,
+            int page,
+            int size
+    ) {
+        if (!customerRepository.existsById(customerId)) {
+            throw new EntityNotFoundException("Kupac nije pronađen (id=" + customerId + ")");
+        }
+
+        String text = (search == null || search.isBlank()) ? null : search.trim();
+
+        Specification<SampleOrder> specification = SampleOrderSpecifications.notArchived()
+                .and(SampleOrderSpecifications.forCustomer(customerId));
+        if (text != null) {
+            specification = specification.and(SampleOrderSpecifications.matchesText(text));
+        }
+
+        String sortField = CUSTOMER_SAMPLE_ORDER_SORT_FIELDS.contains(sortBy)
+                ? sortBy
+                : DEFAULT_CUSTOMER_SAMPLE_ORDER_SORT_FIELD;
+        Sort.Direction sortDirection = direction == null ? Sort.Direction.DESC : direction;
+
+        Pageable pageable = PageRequest.of(
+                Math.max(0, page),
+                Math.min(Math.max(1, size), MAX_CUSTOMER_SAMPLE_ORDER_PAGE_SIZE),
+                Sort.by(
+                        new Sort.Order(sortDirection, sortField).nullsLast(),
+                        new Sort.Order(Sort.Direction.DESC, "id")));
+
+        return sampleOrderRepository.findAll(specification, pageable)
+                .map(order -> new CustomerSampleOrderRow(
+                        order.getId(),
+                        order.getCode(),
+                        order.getName(),
+                        order.getNote(),
+                        order.getStatus(),
+                        order.getCreationDate(),
+                        order.getDeadlineDate(),
+                        order.getDeadlineNote()));
     }
 
     private static Specification<SampleOrder> attentionSpecification(SampleOrderAttention attention, LocalDate today) {

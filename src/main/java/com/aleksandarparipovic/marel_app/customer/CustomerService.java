@@ -1,10 +1,18 @@
 package com.aleksandarparipovic.marel_app.customer;
 
+import com.aleksandarparipovic.marel_app.auth.PasswordConfirmationService;
 import com.aleksandarparipovic.marel_app.common.ConflictException;
+import com.aleksandarparipovic.marel_app.customer.CustomerInsightsQueryRepository.ProductionOrderCounts;
+import com.aleksandarparipovic.marel_app.customer.CustomerInsightsQueryRepository.SampleOrderCounts;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerCreateRequest;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerDetailStatsDto;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerDto;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerListRow;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerOptionDto;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerStatsDto;
+import com.aleksandarparipovic.marel_app.customer.dto.CustomerTopProductRow;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerUpdateRequest;
+import com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -12,10 +20,15 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Looking after the list of customers.
@@ -35,8 +48,21 @@ import java.util.List;
 @RequiredArgsConstructor
 public class CustomerService {
 
+    /**
+     * What the list may be sorted on, and what it sorts on when asked for
+     * anything else. A whitelist rather than a pass-through — an unknown
+     * property would reach the criteria builder as a field name and come back
+     * as a stack trace instead of a list.
+     */
+    private static final Set<String> CUSTOMER_SORT_FIELDS = Set.of("name", "code", "createdAt");
+    private static final String DEFAULT_SORT_FIELD = "name";
+    private static final int MAX_PAGE_SIZE = 200;
+    private static final int TOP_PRODUCTS_LIMIT = 8;
+
     private final CustomerRepository customerRepository;
+    private final CustomerInsightsQueryRepository insights;
     private final CustomerMapper mapper;
+    private final PasswordConfirmationService passwordConfirmation;
 
     @Transactional
     public CustomerDto create(CustomerCreateRequest request) {
@@ -59,16 +85,35 @@ public class CustomerService {
         return mapper.toDto(customerRepository.save(customer));
     }
 
+    /**
+     * The list page's slice: searched, filtered, sorted and paged BY THE
+     * SERVER, each row carrying the order counts the card prints. Counting is
+     * two grouped queries for the whole page, never one per customer.
+     *
+     * @param hasActiveOrders true narrows to customers with an open production
+     *                        order (the KPI tile's filter); null means no filter
+     */
     @Transactional(readOnly = true)
-    public Page<CustomerDto> search(
+    public Page<CustomerListRow> search(
             String query,
             Boolean active,
+            Boolean hasActiveOrders,
             int page,
             int size,
             Sort.Direction direction,
             String sortBy
     ) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
+        String sortField = CUSTOMER_SORT_FIELDS.contains(sortBy) ? sortBy : DEFAULT_SORT_FIELD;
+        Sort.Direction sortDirection = direction == null ? Sort.Direction.ASC : direction;
+
+        // The id last, so customers tied on the sorted field keep a fixed
+        // position instead of moving between pages.
+        Pageable pageable = PageRequest.of(
+                Math.max(0, page),
+                Math.min(Math.max(1, size), MAX_PAGE_SIZE),
+                Sort.by(
+                        new Sort.Order(sortDirection, sortField).nullsLast(),
+                        new Sort.Order(Sort.Direction.ASC, "id")));
 
         Specification<Customer> spec = Specification.allOf();
         if (query != null && !query.isBlank()) {
@@ -77,8 +122,89 @@ public class CustomerService {
         if (active != null) {
             spec = spec.and(CustomerSpecifications.isActive(active));
         }
+        if (Boolean.TRUE.equals(hasActiveOrders)) {
+            spec = spec.and(CustomerSpecifications.hasActiveProductionOrders());
+        }
 
-        return customerRepository.findAll(spec, pageable).map(mapper::toDto);
+        Page<Customer> customers = customerRepository.findAll(spec, pageable);
+        return customers.map(rowsFor(customers.getContent()));
+    }
+
+    /** The per-customer counts for one page of customers, fetched up front. */
+    private Function<Customer, CustomerListRow> rowsFor(List<Customer> pageContent) {
+        List<Long> ids = pageContent.stream().map(Customer::getId).toList();
+
+        Map<Long, ProductionOrderCounts> orders = ids.isEmpty() ? Map.of()
+                : insights.productionOrderCounts(ids, ProductionOrderStatus.CREATED)
+                        .stream()
+                        .collect(Collectors.toMap(ProductionOrderCounts::getCustomerId, row -> row));
+        Map<Long, SampleOrderCounts> samples = ids.isEmpty() ? Map.of()
+                : insights.sampleOrderCounts(ids)
+                        .stream()
+                        .collect(Collectors.toMap(SampleOrderCounts::getCustomerId, row -> row));
+
+        return customer -> {
+            ProductionOrderCounts order = orders.get(customer.getId());
+            SampleOrderCounts sample = samples.get(customer.getId());
+            return new CustomerListRow(
+                    customer.getId(),
+                    customer.getCode(),
+                    customer.getName(),
+                    customer.getTaxId(),
+                    customer.getWebsite(),
+                    customer.getEmail(),
+                    customer.getPhone(),
+                    customer.getIsActive(),
+                    customer.getArchivedAt(),
+                    order == null ? 0 : order.getTotal(),
+                    order == null ? 0 : order.getActive(),
+                    sample == null ? 0 : sample.getTotal(),
+                    order == null ? null : order.getLastOrderDate());
+        };
+    }
+
+    /** The board's four figures — whole-population counts, never filter-scoped. */
+    @Transactional(readOnly = true)
+    public CustomerStatsDto stats() {
+        long total = customerRepository.count();
+        long active = customerRepository.count(CustomerSpecifications.isActive(true));
+        return new CustomerStatsDto(
+                total,
+                active,
+                total - active,
+                insights.countCustomersWithActiveOrders(ProductionOrderStatus.CREATED));
+    }
+
+    /** One customer's order figures, for the KPI row on their page. */
+    @Transactional(readOnly = true)
+    public CustomerDetailStatsDto detailStats(Long id) {
+        requireExists(id);
+
+        Map<Long, ProductionOrderCounts> orders = insights
+                .productionOrderCounts(List.of(id), ProductionOrderStatus.CREATED)
+                .stream()
+                .collect(Collectors.toMap(ProductionOrderCounts::getCustomerId, row -> row));
+        Map<Long, SampleOrderCounts> samples = insights.sampleOrderCounts(List.of(id))
+                .stream()
+                .collect(Collectors.toMap(SampleOrderCounts::getCustomerId, row -> row));
+
+        ProductionOrderCounts order = orders.get(id);
+        SampleOrderCounts sample = samples.get(id);
+        long orderTotal = order == null ? 0 : order.getTotal();
+        long orderActive = order == null ? 0 : order.getActive();
+        return new CustomerDetailStatsDto(
+                orderTotal,
+                orderActive,
+                orderTotal - orderActive,
+                sample == null ? 0 : sample.getTotal(),
+                sample == null ? 0 : sample.getOpen());
+    }
+
+    /** What this customer orders most, a handful of lines for the panel. */
+    @Transactional(readOnly = true)
+    public List<CustomerTopProductRow> topProducts(Long id) {
+        requireExists(id);
+        return insights.topProducts(id, PageRequest.of(0, TOP_PRODUCTS_LIMIT));
     }
 
     /**
@@ -157,6 +283,17 @@ public class CustomerService {
         customerRepository.save(customer);
     }
 
+    /**
+     * Deactivate, signed with the caller's re-typed password — the same
+     * signature the catalogue archives ask for. Wrong password answers
+     * {@code WRONG_PASSWORD} before anything is touched.
+     */
+    @Transactional
+    public void archive(Long id, String password, Authentication authentication) {
+        passwordConfirmation.confirm(authentication, password);
+        deactivate(id);
+    }
+
     @Transactional
     public void restore(Long id) {
         Customer customer = load(id);
@@ -167,6 +304,12 @@ public class CustomerService {
     private Customer load(Long id) {
         return customerRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Kupac nije pronađen: " + id));
+    }
+
+    private void requireExists(Long id) {
+        if (!customerRepository.existsById(id)) {
+            throw new EntityNotFoundException("Kupac nije pronađen: " + id);
+        }
     }
 
     private void requireCodeFree(String code, Long excludeId) {
