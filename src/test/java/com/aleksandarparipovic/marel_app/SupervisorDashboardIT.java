@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,7 +61,9 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
 
         assertThat(stored).isPresent();
         assertThat(stored.get().computedFor()).isEqualTo(today);
-        assertThat(stored.get().windowDays()).isEqualTo(DashboardInsightComputeService.WINDOW_DAYS);
+        // The norm cards' window is a tuned setting (V44), not the general 30.
+        assertThat(stored.get().windowDays())
+                .isEqualTo(computeService.currentThresholds().normWindowDays());
         assertThat(stored.get().rows()).isNotNull();
     }
 
@@ -75,37 +78,44 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         assertThat(board.myRecentRecords().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.myRecentPayrolls().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.pendingRequests().rows()).hasSizeLessThanOrEqualTo(5);
-        assertThat(board.claimedRequests().rows()).hasSizeLessThanOrEqualTo(5);
+        // The claimed card is the caller's whole desk, so its cap is the guard
+        // against the absurd rather than a page size.
+        assertThat(board.claimedRequests().rows()).hasSizeLessThanOrEqualTo(25);
         assertThat(board.upcomingNonWorkingDays().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
     }
 
     @Test
-    @DisplayName("with no sick-leave code configured the card says so, it does not say nobody is out")
-    void unconfiguredAbsenceIsNotAnEmptyAnswer() {
+    @DisplayName("the absence card answers from the categories' own declaration, no setting needed")
+    void absenceCardAnswersByCategoryType() {
         SupervisorDashboardResponse board = dashboardService.load(1L);
 
-        assertThat(board.absences().configured()).isFalse();
-        assertThat(board.absences().total()).isZero();
-        assertThat(board.absences().rows()).isEmpty();
+        assertThat(board.absences()).isNotNull();
+        assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
     }
 
     @Test
-    @DisplayName("once a code is named the absence card starts answering from it")
-    void configuredAbsenceQueryRuns() {
-        String categoryNo = jdbc.queryForObject(
-                "SELECT category_no FROM work_code_categories ORDER BY id LIMIT 1", String.class);
-        assertThat(categoryNo).as("the seed data has at least one work code").isNotBlank();
+    @DisplayName("the old sick-leave code-list setting is archived, so nobody edits a dead knob")
+    void sickLeaveSettingIsArchived() {
+        Integer live = jdbc.queryForObject("""
+                SELECT count(*) FROM app_settings
+                WHERE setting_key = 'sick_leave_work_code_category_nos' AND archived_at IS NULL
+                """, Integer.class);
+        assertThat(live).isZero();
+    }
 
-        jdbc.update("""
-                UPDATE app_settings SET setting_value_text = ?
-                WHERE setting_key = 'sick_leave_work_code_category_nos'
-                """, categoryNo);
-
+    @Test
+    @DisplayName("a fully entered previous month reports its karton as ready for payroll")
+    void readyRecordsFollowTheEnteredDays() {
         SupervisorDashboardResponse board = dashboardService.load(1L);
 
-        assertThat(board.absences().configured()).isTrue();
-        assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
+        // The block answers for the PREVIOUS month, and its counts are sane.
+        var ready = board.readyRecords();
+        LocalDate previous = LocalDate.now().minusMonths(1);
+        assertThat(ready.year()).isEqualTo(previous.getYear());
+        assertThat(ready.month()).isEqualTo(previous.getMonthValue());
+        assertThat(ready.readyCount()).isLessThanOrEqualTo(ready.employeeCount());
+        assertThat(ready.rows()).hasSizeLessThanOrEqualTo(5);
     }
 
     @Test
@@ -132,6 +142,152 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         assertThat(insights.computedFor()).isEqualTo(today);
         assertThat(insights.stale()).isFalse();
         assertThat(insights.yesterday()).isEqualTo(today.minusDays(1));
+    }
+
+    @Test
+    @DisplayName("the claimed card counts only what THIS user took — a colleague's desk is not on it")
+    void claimedCardIsTheCallersOwnDesk() {
+        Long product = jdbc.queryForObject("""
+                WITH ins AS (
+                    INSERT INTO products (product_name, product_code, description)
+                    SELECT 'IT proizvod za preuzete', 'IT-CLAIM', 'IT'
+                    WHERE NOT EXISTS (SELECT 1 FROM products WHERE product_code = 'IT-CLAIM')
+                    RETURNING id)
+                SELECT id FROM ins UNION ALL SELECT id FROM products WHERE product_code = 'IT-CLAIM' LIMIT 1
+                """, Long.class);
+        List<Long> users = jdbc.queryForList("SELECT id FROM users ORDER BY id LIMIT 2", Long.class);
+        assertThat(users).hasSizeGreaterThanOrEqualTo(1);
+        Long me = users.get(0);
+        Long colleague = users.size() > 1 ? users.get(1) : null;
+
+        jdbc.update("""
+                INSERT INTO manufacturing_time_requests (product_id, request_type, description, status, assigned_to, created_by, internal)
+                VALUES (?, 'CREATE', 'IT zahtev', 'IN_REVIEW', ?, ?, false)
+                """, product, me, me);
+        if (colleague != null) {
+            jdbc.update("""
+                    INSERT INTO manufacturing_time_requests (product_id, request_type, description, status, assigned_to, created_by, internal)
+                    VALUES (?, 'CREATE', 'IT zahtev', 'IN_REVIEW', ?, ?, false)
+                    """, product, colleague, colleague);
+        }
+
+        SupervisorDashboardResponse board = dashboardService.load(me);
+
+        assertThat(board.claimedRequests().total()).isEqualTo(1);
+        assertThat(board.claimedRequests().rows())
+                .allSatisfy(row -> assertThat(row.assignedToMe()).isTrue());
+    }
+
+    @Test
+    @DisplayName("a tuned threshold in app_settings is the one the next compute uses, and the board states it")
+    void thresholdsComeFromSettings() {
+        jdbc.update("""
+                UPDATE app_settings SET setting_value_numeric = 45
+                WHERE setting_key = 'dashboard_norm_window_days'
+                """);
+        jdbc.update("""
+                UPDATE app_settings SET setting_value_numeric = 5
+                WHERE setting_key = 'dashboard_norm_rise_pct'
+                """);
+
+        LocalDate today = LocalDate.now();
+        computeService.computeFor(today);
+
+        var stored = insightRepository.findLatest(DashboardInsightKey.NORM_TOO_LOW, NormFitRow.class);
+        assertThat(stored).isPresent();
+        assertThat(stored.get().windowDays()).isEqualTo(45);
+
+        var insights = dashboardService.load(1L).insights();
+        assertThat(insights.normWindowDays()).isEqualTo(45);
+        assertThat(insights.normRisePct()).isEqualTo(5);
+        assertThat(insights.normDropPct()).isEqualTo(10);
+        assertThat(insights.activityWindowDays()).isEqualTo(30);
+        assertThat(insights.topPerformerMinHours()).isEqualTo(20);
+    }
+
+    // ── Neunete smene ────────────────────────────────────────────────────────
+
+    private Long insertEmployee(String firstName, String lastName, String no) {
+        jdbc.update("""
+                INSERT INTO departments (name, is_active)
+                SELECT 'IT sektor', TRUE
+                WHERE NOT EXISTS (SELECT 1 FROM departments WHERE name = 'IT sektor')
+                """);
+        jdbc.update("""
+                INSERT INTO employees (department_id, employee_no, employment_start_date,
+                                       first_name, last_name, is_active)
+                SELECT d.id, ?, DATE '2026-01-01', ?, ?, TRUE
+                FROM departments d WHERE d.name = 'IT sektor'
+                """, no, firstName, lastName);
+        return jdbc.queryForObject(
+                "SELECT id FROM employees WHERE employee_no = ?", Long.class, no);
+    }
+
+    @Test
+    @DisplayName("an employed person with nothing entered is on the missing-shifts list; a shift or a leave period takes them off it")
+    void missingShiftsFollowWhatTheDayHolds() {
+        LocalDate monday = LocalDate.parse("2026-06-01");
+        Long employeeId = insertEmployee("Pera", "Perić", "IT-MS-1");
+
+        var missing = dashboardService.missingShifts(monday);
+        assertThat(missing.applicable()).isTrue();
+        assertThat(missing.rows())
+                .anySatisfy(row -> assertThat(row.employeeId()).isEqualTo(employeeId));
+
+        // A live shift on the day answers the question.
+        Long shiftTemplateId = jdbc.queryForObject("""
+                WITH ins AS (
+                    INSERT INTO shifts (shift_code, name, start_time, end_time, is_active)
+                    SELECT 'IT-S1', 'Prva smena', TIME '06:00', TIME '14:00', TRUE
+                    WHERE NOT EXISTS (SELECT 1 FROM shifts WHERE shift_code = 'IT-S1')
+                    RETURNING id)
+                SELECT id FROM ins UNION ALL SELECT id FROM shifts WHERE shift_code = 'IT-S1' LIMIT 1
+                """, Long.class);
+        jdbc.update("""
+                INSERT INTO work_shifts (employee_id, shift_id, start_at, end_at, work_date, is_active)
+                VALUES (?, ?, TIMESTAMPTZ '2026-06-01 06:00:00+02', TIMESTAMPTZ '2026-06-01 14:00:00+02',
+                        DATE '2026-06-01', TRUE)
+                """, employeeId, shiftTemplateId);
+        assertThat(dashboardService.missingShifts(monday).rows())
+                .noneSatisfy(row -> assertThat(row.employeeId()).isEqualTo(employeeId));
+
+        // A recorded leave period covers a day even before its shift exists —
+        // the absence is already entered, so the list must not ask for it again.
+        Long otherId = insertEmployee("Mika", "Mikić", "IT-MS-2");
+        Long categoryId = jdbc.queryForObject(
+                "SELECT id FROM work_code_categories ORDER BY id LIMIT 1", Long.class);
+        jdbc.update("""
+                INSERT INTO employee_leave_periods (employee_id, work_code_category_id, date_from, date_to)
+                VALUES (?, ?, DATE '2026-06-01', DATE '2026-06-05')
+                """, otherId, categoryId);
+        assertThat(dashboardService.missingShifts(monday).rows())
+                .noneSatisfy(row -> assertThat(row.employeeId()).isEqualTo(otherId));
+    }
+
+    @Test
+    @DisplayName("Sunday does not ask for shifts — the block says not-applicable instead of counting everybody")
+    void sundayIsNotApplicable() {
+        insertEmployee("Žika", "Žikić", "IT-MS-3");
+
+        var sunday = dashboardService.missingShifts(LocalDate.parse("2026-06-07"));
+
+        assertThat(sunday.applicable()).isFalse();
+        assertThat(sunday.total()).isZero();
+        assertThat(sunday.rows()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the board carries the count of missing shifts for its card")
+    void boardCarriesMissingShiftCount() {
+        SupervisorDashboardResponse board = dashboardService.load(1L);
+
+        assertThat(board.missingShifts()).isNotNull();
+        if (LocalDate.now().getDayOfWeek() == java.time.DayOfWeek.SUNDAY) {
+            assertThat(board.missingShifts().applicable()).isFalse();
+        } else {
+            assertThat(board.missingShifts().applicable()).isTrue();
+            assertThat(board.missingShifts().total()).isGreaterThanOrEqualTo(0);
+        }
     }
 
     @Test

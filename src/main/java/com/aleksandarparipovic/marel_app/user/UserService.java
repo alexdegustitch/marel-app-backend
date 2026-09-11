@@ -99,6 +99,10 @@ public class UserService {
             if (avatar != null && avatar.isTextual() && !avatar.asText().isBlank()) {
                 dto.setAvatarKey(avatar.asText());
             }
+            JsonNode photo = settings == null ? null : settings.get("avatarFileId");
+            if (photo != null && photo.canConvertToLong()) {
+                dto.setAvatarFileId(photo.asLong());
+            }
         });
 
         return dto;
@@ -221,16 +225,22 @@ public class UserService {
         Set<Long> online = onlineIncludingSelf(ids);
 
         Map<Long, String> avatars = new HashMap<>();
+        Map<Long, Long> photos = new HashMap<>();
         for (UserPreferences preferences : userPreferencesRepository.findAllById(ids)) {
             JsonNode settings = preferences.getUiSettings();
             JsonNode avatar = settings == null ? null : settings.get("avatarKey");
             if (avatar != null && avatar.isTextual() && !avatar.asText().isBlank()) {
                 avatars.put(preferences.getUserId(), avatar.asText());
             }
+            JsonNode photo = settings == null ? null : settings.get("avatarFileId");
+            if (photo != null && photo.canConvertToLong()) {
+                photos.put(preferences.getUserId(), photo.asLong());
+            }
         }
 
         return page.map(user -> {
             user.setAvatarKey(avatars.get(user.getId()));
+            user.setAvatarFileId(photos.get(user.getId()));
             user.setOnline(online.contains(user.getId()));
             return user;
         });

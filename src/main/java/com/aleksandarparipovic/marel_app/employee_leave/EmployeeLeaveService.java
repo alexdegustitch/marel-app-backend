@@ -123,7 +123,8 @@ public class EmployeeLeaveService {
     public LeavePreviewResponse preview(LeaveRequest request) {
         Employee employee = requireActiveEmployee(request.employeeId());
         WorkCodeCategory category = requireLeaveCategory(request.workCodeCategoryId());
-        Plan plan = computePlan(employee, category, request.dateFrom(), request.dateTo());
+        Plan plan = computePlan(employee, category, request.dateFrom(), request.dateTo(),
+                request.includeSaturdays());
         return toPreviewResponse(plan);
     }
 
@@ -151,7 +152,8 @@ public class EmployeeLeaveService {
     public LeaveApplyResponse apply(LeaveRequest request) {
         Employee employee = requireActiveEmployee(request.employeeId());
         WorkCodeCategory category = requireLeaveCategory(request.workCodeCategoryId());
-        Plan plan = computePlan(employee, category, request.dateFrom(), request.dateTo());
+        Plan plan = computePlan(employee, category, request.dateFrom(), request.dateTo(),
+                request.includeSaturdays());
 
         if (plan.allMonthsClosed()) {
             throw new ConflictException(
@@ -274,7 +276,7 @@ public class EmployeeLeaveService {
         for (EmployeeLeavePeriod period : periods) {
             LocalDate from = period.getDateFrom().isBefore(ym.atDay(1)) ? ym.atDay(1) : period.getDateFrom();
             LocalDate to = period.getDateTo().isAfter(ym.atEndOfMonth()) ? ym.atEndOfMonth() : period.getDateTo();
-            Plan plan = computePlan(employee, period.getWorkCodeCategory(), from, to);
+            Plan plan = computePlan(employee, period.getWorkCodeCategory(), from, to, false);
 
             List<LocalDate> conflictDates = new ArrayList<>();
             for (PlannedDay day : plan.days()) {
@@ -351,7 +353,8 @@ public class EmployeeLeaveService {
         }
     }
 
-    private Plan computePlan(Employee employee, WorkCodeCategory chosen, LocalDate from, LocalDate to) {
+    private Plan computePlan(Employee employee, WorkCodeCategory chosen, LocalDate from, LocalDate to,
+                             boolean includeSaturdays) {
         if (from == null || to == null || to.isBefore(from)) {
             throw new IllegalArgumentException("Period nije ispravan: datum od mora biti pre ili jednak datumu do.");
         }
@@ -405,12 +408,22 @@ public class EmployeeLeaveService {
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
             List<WorkShift> onDay = shiftsByDate.getOrDefault(d, List.of());
             WorkCalendarDay calDay = calByDate.get(d);
-            boolean working = isWorkingDay(d, calDay);
+            /*
+             * Two notions of "working", kept apart on purpose. The run (the
+             * thirty-day rule) always uses the strict calendar — a Saturday
+             * nobody was expected in never breaks a sick-leave run, whichever
+             * door the entry came through. Whether the day GETS a leave shift
+             * may additionally count Saturdays, when the request asks for it.
+             */
+            boolean runWorking = isWorkingDay(d, calDay);
+            boolean working = includeSaturdays
+                    ? isWorkingDayCountingSaturday(d, calDay)
+                    : runWorking;
             String holidayLabel = holidayLabelOf(calDay);
 
             if (closed.contains(YearMonth.from(d))) {
                 // Left exactly as it stands; the run follows what EXISTS there.
-                runStart = advanceRunOverExisting(runStart, d, onDay, working);
+                runStart = advanceRunOverExisting(runStart, d, onDay, runWorking);
                 days.add(new PlannedDay(d, DayStatus.CLOSED_MONTH, false, null, holidayLabel,
                         List.of(), false, chosen));
                 continue;
@@ -527,6 +540,19 @@ public class EmployeeLeaveService {
         }
         DayOfWeek dow = d.getDayOfWeek();
         return dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY;
+    }
+
+    /**
+     * The quick single-day entry's calendar: a plain Saturday counts as worked
+     * (the factory normally works Saturdays — the same convention the bonus
+     * calculation encodes), while Sundays, holidays and explicit overrides keep
+     * their say.
+     */
+    private static boolean isWorkingDayCountingSaturday(LocalDate d, WorkCalendarDay calDay) {
+        if (calDay != null) {
+            return WorkCalendarDayEffectiveStatus.isWorkingForBonusPurposes(calDay);
+        }
+        return d.getDayOfWeek() != DayOfWeek.SUNDAY;
     }
 
     private static String holidayLabelOf(WorkCalendarDay calDay) {

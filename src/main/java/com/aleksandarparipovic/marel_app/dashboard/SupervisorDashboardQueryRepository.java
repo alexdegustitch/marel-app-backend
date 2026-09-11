@@ -1,6 +1,8 @@
 package com.aleksandarparipovic.marel_app.dashboard;
 
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.AbsenceRow;
+import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.MissingShiftRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.MissingEntryRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RecentPayrollRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RecentRecordRow;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.RequestRow;
@@ -144,6 +146,7 @@ public class SupervisorDashboardQueryRepository {
                 LEFT JOIN users requester ON requester.id = r.created_by
                 LEFT JOIN users assignee  ON assignee.id = r.assigned_to
                 WHERE r.status = :status
+                  AND r.internal = false
                 ORDER BY r.created_at ASC
                 LIMIT :limit
                 """,
@@ -166,22 +169,81 @@ public class SupervisorDashboardQueryRepository {
     }
 
     public long countOpenRequests(String status) {
-        return count("SELECT COUNT(*) FROM manufacturing_time_requests WHERE status = :status",
+        // `internal = false` exactly as the requests page filters (V42): a
+        // supervisor's self-request lives on its order, and a badge counting
+        // what the list will not show teaches people to distrust the badge.
+        return count("SELECT COUNT(*) FROM manufacturing_time_requests WHERE status = :status AND internal = false",
                 new MapSqlParameterSource("status", status));
     }
 
-    // ── Absence on the codes that mean sick leave ───────────────────────────
+    /**
+     * The requests THIS user has taken and not finished.
+     *
+     * <p>Its own query rather than a flag on {@link #findOpenRequests}: the
+     * "Preuzeti, neodrađeni" card is about the reader's own desk — a colleague's
+     * claimed requests are that colleague's, and counting them on somebody
+     * else's tile is how the tile said 11 while the list said 3.
+     */
+    public List<RequestRow> findMyClaimedRequests(Long userId, int limit) {
+        return jdbc.query("""
+                SELECT r.id,
+                       p.id                AS product_id,
+                       p.product_name      AS product_name,
+                       r.request_type      AS request_type,
+                       r.status            AS status,
+                       requester.full_name AS requested_by_name,
+                       assignee.full_name  AS assigned_to_name,
+                       r.assigned_to       AS assigned_to,
+                       r.created_at        AS created_at
+                FROM manufacturing_time_requests r
+                JOIN products p       ON p.id = r.product_id
+                LEFT JOIN users requester ON requester.id = r.created_by
+                LEFT JOIN users assignee  ON assignee.id = r.assigned_to
+                WHERE r.status = 'IN_REVIEW'
+                  AND r.assigned_to = :userId
+                  AND r.internal = false
+                ORDER BY r.created_at ASC
+                LIMIT :limit
+                """,
+                new MapSqlParameterSource("userId", userId).addValue("limit", limit),
+                (rs, i) -> {
+                    OffsetDateTime createdAt = offsetDateTime(rs, "created_at");
+                    return new RequestRow(
+                            rs.getLong("id"),
+                            rs.getLong("product_id"),
+                            rs.getString("product_name"),
+                            rs.getString("request_type"),
+                            rs.getString("status"),
+                            rs.getString("requested_by_name"),
+                            rs.getString("assigned_to_name"),
+                            true,
+                            daysSince(createdAt),
+                            createdAt);
+                });
+    }
+
+    public long countMyClaimedRequests(Long userId) {
+        return count("""
+                SELECT COUNT(*) FROM manufacturing_time_requests
+                WHERE status = 'IN_REVIEW' AND assigned_to = :userId AND internal = false
+                """, new MapSqlParameterSource("userId", userId));
+    }
+
+    // ── Who is on sick leave or vacation today ──────────────────────────────
 
     /**
-     * Who is absent today on one of the configured codes.
+     * Everybody on sick leave or godišnji odmor today.
      *
-     * <p>The codes arrive as {@code category_no} values from a setting, because the
-     * schema does not say which category means sick leave —
-     * {@code work_code_categories.type} is free text. Matching on the code rather
-     * than the id is on purpose: a category is re-versioned over time (valid_from /
-     * valid_until) and every version keeps the code the factory knows it by.
+     * <p>Recognised by what the category IS — {@code type = 'SICK_LEAVE'}, which
+     * V39 made a declared fact, plus the one non-sick leave GO — rather than by
+     * the code list a setting used to carry. The setting predated V39, when the
+     * schema could not answer "which categories mean sick leave"; now it can,
+     * and a list somebody forgets to update is strictly worse than the schema.
      */
-    public List<AbsenceRow> findAbsentOn(LocalDate day, List<String> categoryNos, LocalDate windowFrom, int limit) {
+    private static final String LEAVE_CATEGORY_PREDICATE =
+            "(upper(wcc.type) = 'SICK_LEAVE' OR wcc.category_no = 'GO')";
+
+    public List<AbsenceRow> findAbsentOn(LocalDate day, LocalDate windowFrom, int limit) {
         return jdbc.query("""
                 SELECT e.id                     AS employee_id,
                        e.full_name              AS employee_name,
@@ -193,24 +255,23 @@ public class SupervisorDashboardQueryRepository {
                        (SELECT count(DISTINCT ws2.work_date)
                         FROM absence_records ar2
                         JOIN work_shifts ws2          ON ws2.id = ar2.work_shift_id
-                        JOIN work_code_categories w2  ON w2.id = ar2.work_code_category_id
+                        JOIN work_code_categories wcc ON wcc.id = ar2.work_code_category_id
                         WHERE ar2.employee_id = e.id
                           AND ar2.is_active = true
                           AND ws2.work_date BETWEEN :windowFrom AND :day
-                          AND w2.category_no IN (:categoryNos))::int AS days_in_window
+                          AND %s)::int AS days_in_window
                 FROM absence_records ar
                 JOIN work_shifts ws           ON ws.id = ar.work_shift_id
                 JOIN employees e              ON e.id = ar.employee_id
                 JOIN work_code_categories wcc ON wcc.id = ar.work_code_category_id
                 WHERE ar.is_active = true
                   AND ws.work_date = :day
-                  AND wcc.category_no IN (:categoryNos)
+                  AND %s
                 GROUP BY e.id, e.full_name, e.employee_no, wcc.category_no, wcc.category_name, ws.work_date
                 ORDER BY e.full_name ASC
                 LIMIT :limit
-                """,
+                """.formatted(LEAVE_CATEGORY_PREDICATE, LEAVE_CATEGORY_PREDICATE),
                 new MapSqlParameterSource("day", day)
-                        .addValue("categoryNos", categoryNos)
                         .addValue("windowFrom", windowFrom)
                         .addValue("limit", limit),
                 (rs, i) -> new AbsenceRow(
@@ -224,7 +285,7 @@ public class SupervisorDashboardQueryRepository {
                         nullableInt(rs, "days_in_window")));
     }
 
-    public long countAbsentOn(LocalDate day, List<String> categoryNos) {
+    public long countAbsentOn(LocalDate day) {
         return count("""
                 SELECT COUNT(DISTINCT ar.employee_id)
                 FROM absence_records ar
@@ -232,9 +293,192 @@ public class SupervisorDashboardQueryRepository {
                 JOIN work_code_categories wcc ON wcc.id = ar.work_code_category_id
                 WHERE ar.is_active = true
                   AND ws.work_date = :day
-                  AND wcc.category_no IN (:categoryNos)
+                  AND %s
+                """.formatted(LEAVE_CATEGORY_PREDICATE),
+                new MapSqlParameterSource("day", day));
+    }
+
+    // ── Kartoni ready for payroll ────────────────────────────────────────────
+
+    /**
+     * How complete each employee's month is: how many REQUIRED days hold no
+     * live shift.
+     *
+     * <p>A required day is what the work calendar calls a working day — an
+     * explicit override wins, then WORKDAY, and with no row at all a weekday.
+     * A plain Saturday is deliberately NOT required: the leave planner skips
+     * Saturdays when it materialises sick leave, so demanding them would mark
+     * a correctly-entered sick month as unfinished forever. The daily
+     * missing-shifts list still nudges Saturdays; the month's readiness must
+     * not punish them. Days outside the person's employment do not count.
+     */
+    public record RecordReadiness(Long employeeId, String fullName, Long employeeRecordId,
+                                  Long monthlyReportId, int requiredDays, int missingDays) {}
+
+    public List<RecordReadiness> findRecordReadiness(LocalDate from, LocalDate to) {
+        return jdbc.query("""
+                WITH required AS (
+                    SELECT d::date AS day
+                    FROM generate_series(CAST(:from AS date), CAST(:to AS date), interval '1 day') d
+                    LEFT JOIN work_calendar_days wcd ON wcd.calendar_date = d::date
+                    WHERE COALESCE(wcd.working_override,
+                                   CASE WHEN wcd.day_type IS NOT NULL
+                                        THEN wcd.day_type = 'WORKDAY'
+                                        ELSE extract(isodow FROM d) NOT IN (6, 7) END)
+                )
+                SELECT e.id        AS employee_id,
+                       e.full_name AS full_name,
+                       er.id       AS employee_record_id,
+                       max(mr.id)  AS monthly_report_id,
+                       count(DISTINCT r.day)::int AS required_days,
+                       count(DISTINCT r.day) FILTER (WHERE NOT EXISTS (
+                           SELECT 1 FROM work_shifts ws
+                           WHERE ws.employee_id = e.id
+                             AND ws.work_date = r.day
+                             AND ws.is_active = true
+                             AND ws.archived_at IS NULL))::int AS missing_days
+                FROM employees e
+                LEFT JOIN employee_records er ON er.employee_id = e.id
+                       AND er.archived_at IS NULL
+                       AND er.start_date <= CAST(:to AS date)
+                       AND er.end_date >= CAST(:from AS date)
+                LEFT JOIN monthly_reports mr ON mr.employee_record_id = er.id
+                JOIN required r ON r.day >= e.employment_start_date
+                       AND (e.employment_end_date IS NULL OR r.day <= e.employment_end_date)
+                WHERE e.is_active = true
+                  AND e.archived_at IS NULL
+                GROUP BY e.id, e.full_name, er.id
+                ORDER BY e.full_name ASC, e.id ASC
                 """,
-                new MapSqlParameterSource("day", day).addValue("categoryNos", categoryNos));
+                new MapSqlParameterSource("from", from).addValue("to", to),
+                (rs, i) -> new RecordReadiness(
+                        rs.getLong("employee_id"),
+                        rs.getString("full_name"),
+                        nullableLong(rs, "employee_record_id"),
+                        nullableLong(rs, "monthly_report_id"),
+                        rs.getInt("required_days"),
+                        rs.getInt("missing_days")));
+    }
+
+    // ── Shifts that exist but hold nothing ──────────────────────────────────
+
+    /**
+     * Every live shift with neither work nor an absence on it — ALL of history,
+     * not the snapshot's 30-day window. This is the karton-hygiene worklist the
+     * board's "Rupe u unosu" tile counts: an empty shift from two months ago
+     * still corrupts its month's payroll the day somebody recalculates it.
+     */
+    public List<MissingEntryRow> findEntryGaps(int limit) {
+        return jdbc.query("""
+                SELECT ws.id                 AS work_shift_id,
+                       ws.employee_id        AS employee_id,
+                       ws.employee_record_id AS employee_record_id,
+                       e.full_name           AS employee_name,
+                       ws.work_date          AS work_date,
+                       s.shift_code          AS shift_code,
+                       ws.total_minutes      AS shift_minutes
+                FROM work_shifts ws
+                JOIN employees e ON e.id = ws.employee_id
+                LEFT JOIN shifts s ON s.id = ws.shift_id
+                WHERE ws.is_active = true
+                  AND ws.archived_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM work_logs wl
+                                  WHERE wl.work_shift_id = ws.id AND wl.is_active = true)
+                  AND NOT EXISTS (SELECT 1 FROM absence_records ar
+                                  WHERE ar.work_shift_id = ws.id AND ar.is_active = true)
+                ORDER BY ws.work_date DESC, e.full_name ASC
+                LIMIT :limit
+                """,
+                new MapSqlParameterSource("limit", limit),
+                (rs, i) -> new MissingEntryRow(
+                        rs.getLong("work_shift_id"),
+                        rs.getLong("employee_id"),
+                        nullableLong(rs, "employee_record_id"),
+                        rs.getString("employee_name"),
+                        localDate(rs, "work_date"),
+                        rs.getString("shift_code"),
+                        nullableInt(rs, "shift_minutes")));
+    }
+
+    public long countEntryGaps() {
+        return count("""
+                SELECT COUNT(*)
+                FROM work_shifts ws
+                WHERE ws.is_active = true
+                  AND ws.archived_at IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM work_logs wl
+                                  WHERE wl.work_shift_id = ws.id AND wl.is_active = true)
+                  AND NOT EXISTS (SELECT 1 FROM absence_records ar
+                                  WHERE ar.work_shift_id = ws.id AND ar.is_active = true)
+                """, new MapSqlParameterSource());
+    }
+
+    // ── Employees the day has no entry for ──────────────────────────────────
+
+    /**
+     * Who is employed on {@code day} and has no active shift on it.
+     *
+     * <p>An employee whose leave PERIOD covers the day is excluded even when the
+     * shift itself has not been materialised yet — the absence is already
+     * recorded, and offering to enter it again would create the very duplicate
+     * the karton sweep exists to avoid.
+     */
+    public List<MissingShiftRow> findEmployeesWithoutShift(LocalDate day, int limit) {
+        return jdbc.query("""
+                SELECT e.id          AS employee_id,
+                       e.full_name   AS full_name,
+                       e.employee_no AS employee_no,
+                       d.name        AS department_name,
+                       er.id         AS employee_record_id
+                FROM employees e
+                LEFT JOIN departments d ON d.id = e.department_id
+                LEFT JOIN employee_records er ON er.employee_id = e.id
+                       AND er.archived_at IS NULL
+                       AND :day BETWEEN er.start_date AND er.end_date
+                WHERE e.is_active = true
+                  AND e.archived_at IS NULL
+                  AND (e.employment_start_date IS NULL OR e.employment_start_date <= :day)
+                  AND (e.employment_end_date IS NULL OR e.employment_end_date >= :day)
+                  AND NOT EXISTS (SELECT 1 FROM work_shifts ws
+                                  WHERE ws.employee_id = e.id
+                                    AND ws.work_date = :day
+                                    AND ws.is_active = true
+                                    AND ws.archived_at IS NULL)
+                  AND NOT EXISTS (SELECT 1 FROM employee_leave_periods lp
+                                  WHERE lp.employee_id = e.id
+                                    AND lp.archived_at IS NULL
+                                    AND :day BETWEEN lp.date_from AND lp.date_to)
+                ORDER BY e.full_name ASC, e.id ASC
+                LIMIT :limit
+                """,
+                new MapSqlParameterSource("day", day).addValue("limit", limit),
+                (rs, i) -> new MissingShiftRow(
+                        rs.getLong("employee_id"),
+                        rs.getString("full_name"),
+                        rs.getString("employee_no"),
+                        rs.getString("department_name"),
+                        nullableLong(rs, "employee_record_id")));
+    }
+
+    public long countEmployeesWithoutShift(LocalDate day) {
+        return count("""
+                SELECT COUNT(*)
+                FROM employees e
+                WHERE e.is_active = true
+                  AND e.archived_at IS NULL
+                  AND (e.employment_start_date IS NULL OR e.employment_start_date <= :day)
+                  AND (e.employment_end_date IS NULL OR e.employment_end_date >= :day)
+                  AND NOT EXISTS (SELECT 1 FROM work_shifts ws
+                                  WHERE ws.employee_id = e.id
+                                    AND ws.work_date = :day
+                                    AND ws.is_active = true
+                                    AND ws.archived_at IS NULL)
+                  AND NOT EXISTS (SELECT 1 FROM employee_leave_periods lp
+                                  WHERE lp.employee_id = e.id
+                                    AND lp.archived_at IS NULL
+                                    AND :day BETWEEN lp.date_from AND lp.date_to)
+                """,
+                new MapSqlParameterSource("day", day));
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

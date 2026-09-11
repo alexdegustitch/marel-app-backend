@@ -57,6 +57,13 @@ public final class RolePermissions {
              */
             "supervisor", EnumSet.of(
                     AppPermission.DASHBOARD_SUPERVISOR_VIEW,
+                    /*
+                     * The board's "Osveži" forces the analytics snapshot to
+                     * recompute NOW rather than waiting for the morning job.
+                     * It reads what the supervisor may already see and writes
+                     * only the snapshot table, so the board's owner holds it.
+                     */
+                    AppPermission.DASHBOARD_INSIGHTS_RECOMPUTE,
                     AppPermission.WORK_RECORD_VIEW,
                     AppPermission.PAYROLL_VIEW,
                     AppPermission.MANUFACTURING_TIME_MANAGE,

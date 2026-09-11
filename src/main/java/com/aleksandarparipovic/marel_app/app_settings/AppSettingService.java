@@ -4,8 +4,10 @@ import com.aleksandarparipovic.marel_app.app_settings.dto.AppSettingResponse;
 import com.aleksandarparipovic.marel_app.app_settings.dto.AppSettingHistoryDto;
 import com.aleksandarparipovic.marel_app.app_settings.dto.AppSettingResponse;
 import com.aleksandarparipovic.marel_app.app_settings.dto.AppSettingUpdateRequest;
+import com.aleksandarparipovic.marel_app.dashboard.insight.DashboardSettingsChangedEvent;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +33,7 @@ public class AppSettingService {
 
     private final AppSettingRepository appSettingRepository;
     private final EntityManager entityManager;
+    private final ApplicationEventPublisher eventPublisher;
 
     public BigDecimal getMaxEfficiencyPercentAt(OffsetDateTime at) {
         return appSettingRepository.findMaxEfficiencyPercentAt(at)
@@ -232,7 +235,15 @@ public class AppSettingService {
         newSetting.setIsActive(true);
         newSetting.setCreatedAt(now);
 
-        return new AppSettingResponse(appSettingRepository.save(newSetting));
+        AppSettingResponse saved = new AppSettingResponse(appSettingRepository.save(newSetting));
+
+        // A board threshold that changed must change the board: the snapshot is
+        // recomputed after this commit (async — see DashboardInsightSettingsListener).
+        if (req.getSettingKey() != null && req.getSettingKey().startsWith("dashboard_")) {
+            eventPublisher.publishEvent(new DashboardSettingsChangedEvent(req.getSettingKey()));
+        }
+
+        return saved;
     }
 
     /** Creates a new AppSetting row cloning the metadata of {@code source} but with a different validity window. */

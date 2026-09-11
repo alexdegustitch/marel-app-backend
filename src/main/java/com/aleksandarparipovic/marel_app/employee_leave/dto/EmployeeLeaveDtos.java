@@ -27,7 +27,15 @@ public final class EmployeeLeaveDtos {
             /** Consent to archive the conflicting shifts the preview named. */
             boolean archiveConflicts,
             /** Consent to EXTENDED sick leave without thirty days of history. */
-            boolean acceptExtendedWarning
+            boolean acceptExtendedWarning,
+            /**
+             * Count a plain Saturday as a working day, so the leave is written on
+             * it. The board's quick single-day entry sends true — the factory
+             * normally works Saturdays, and that drawer lists them as missing —
+             * while the calendar's period entry keeps the default of skipping
+             * weekends whole. Sundays and holidays are skipped either way.
+             */
+            boolean includeSaturdays
     ) {
     }
 

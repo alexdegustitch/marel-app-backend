@@ -97,7 +97,7 @@ class EmployeeCalendarIT extends AbstractIntegrationTest {
         leaveService.apply(new LeaveRequest(
                 employeeId, sickId,
                 LocalDate.parse("2026-06-03"), LocalDate.parse("2026-06-04"),
-                null, false, false));
+                null, false, false, false));
 
         // The worked day's report, with a hand-corrected meal on it.
         entityManager.createNativeQuery("""

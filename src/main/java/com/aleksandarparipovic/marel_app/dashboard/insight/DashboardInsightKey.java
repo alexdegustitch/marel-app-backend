@@ -42,6 +42,12 @@ public enum DashboardInsightKey {
     /** Yesterday's products, by pieces made. */
     YESTERDAY_TOP_PRODUCTS,
 
+    /** Yesterday's production orders, by pieces made toward them. */
+    YESTERDAY_TOP_ORDERS,
+
+    /** Yesterday's best performers — same ranking as TOP_PERFORMERS, one day. */
+    YESTERDAY_TOP_PERFORMERS,
+
     /** The employees with the highest sustained performance over the window. */
     TOP_PERFORMERS,
 
@@ -59,5 +65,13 @@ public enum DashboardInsightKey {
     PERFORMANCE_SPREAD,
 
     /** Operations whose scrap has risen above their own earlier level. */
-    SCRAP_SPIKE
+    SCRAP_SPIKE,
+
+    /**
+     * Shift+operation entries whose UNCAPPED daily rate is implausibly high.
+     * The approved rate is clipped at max_efficiency_percent, so a quantity
+     * with an extra zero quietly becomes "the maximum" — this card is where
+     * such an entry surfaces before it reaches a payslip.
+     */
+    SUSPECT_ENTRIES
 }

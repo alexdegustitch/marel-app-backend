@@ -60,6 +60,14 @@ public class UserDto {
     private String avatarKey;
 
     /**
+     * The uploaded profile photo's file id, when the person chose their own
+     * picture instead of a catalogue avatar. Read from the same
+     * {@code ui_settings} the avatar key lives in, and populated in the same
+     * places; the photo wins over the key on every screen that draws both.
+     */
+    private Long avatarFileId;
+
+    /**
      * Whether this person is at the application right now.
      *
      * <p>DERIVED, never stored — a live session with a heartbeat inside the

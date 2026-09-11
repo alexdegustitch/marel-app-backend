@@ -1,8 +1,7 @@
 package com.aleksandarparipovic.marel_app.dashboard;
 
-import com.aleksandarparipovic.marel_app.app_settings.AppSetting;
-import com.aleksandarparipovic.marel_app.app_settings.AppSettingRepository;
 import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse.Block;
+import com.aleksandarparipovic.marel_app.dashboard.dto.MissingShiftsResponse;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.AbsenceBlock;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse.Insights;
@@ -13,17 +12,20 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Missi
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OperationVolumeRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OrderVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.PerformerRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.Arrays;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
 
@@ -52,13 +54,26 @@ public class SupervisorDashboardService {
     /** How far ahead the days-off card counts, for its badge. Same as the admin board. */
     private static final int CALENDAR_HORIZON_DAYS = 90;
 
-    /** Which work codes mean sick leave. Seeded empty; the factory fills it in. */
-    static final String SICK_LEAVE_SETTING_KEY = "sick_leave_work_code_category_nos";
+    /**
+     * The missing-shifts drawer lists the whole factory, so this is a guard
+     * against an absurd read rather than a page size.
+     */
+    private static final int MISSING_SHIFT_ROWS = 500;
+
+    /** The entry-gaps worklist: enough to work through, not the whole history. */
+    private static final int ENTRY_GAP_ROWS = 12;
+
+    /**
+     * One person's claimed queue, whole: it is their own desk, and a desk shown
+     * in part is a count the list beneath it contradicts. The cap only guards
+     * against the absurd.
+     */
+    private static final int CLAIMED_ROWS = 25;
 
     private final SupervisorDashboardQueryRepository queryRepository;
     private final DashboardQueryRepository adminQueryRepository;
     private final DashboardInsightRepository insightRepository;
-    private final AppSettingRepository appSettingRepository;
+    private final DashboardInsightComputeService computeService;
 
     @Transactional(readOnly = true)
     public SupervisorDashboardResponse load(Long currentUserId) {
@@ -77,49 +92,93 @@ public class SupervisorDashboardService {
                 Block.of(
                         queryRepository.countOpenRequests("PENDING"),
                         queryRepository.findOpenRequests("PENDING", currentUserId, ROWS_PER_BLOCK)),
+                // The claimed card is the CALLER's desk: what they took and have
+                // not finished. Colleagues' claimed requests live on the requests
+                // page — a tile counting them here said 11 over a list of 3.
                 Block.of(
-                        queryRepository.countOpenRequests("IN_REVIEW"),
-                        queryRepository.findOpenRequests("IN_REVIEW", currentUserId, ROWS_PER_BLOCK)),
+                        queryRepository.countMyClaimedRequests(currentUserId),
+                        queryRepository.findMyClaimedRequests(currentUserId, CLAIMED_ROWS)),
                 Block.of(
                         adminQueryRepository.countNonWorkingDaysBetween(
                                 today, today.plusDays(CALENDAR_HORIZON_DAYS)),
                         adminQueryRepository.findUpcomingNonWorkingDays(today, ROWS_PER_BLOCK)),
                 absences(today),
+                readyRecords(today),
+                missingShiftsBlock(today),
+                Block.of(
+                        queryRepository.countEntryGaps(),
+                        queryRepository.findEntryGaps(ENTRY_GAP_ROWS)),
                 insights(today));
     }
 
     /**
-     * Who is out sick today.
-     *
-     * <p>Returns {@code configured = false} rather than an empty list when the
-     * setting is blank. The two are not the same thing and the screen must not say
-     * "nobody is absent" when what is true is "nobody has said what absence looks
-     * like".
+     * The card's count: who is employed today and has no shift entered. Sunday
+     * gets {@code applicable = false} instead of a factory-wide count — shifts
+     * are not required then, and a board that shouts "everyone is missing" every
+     * Sunday would teach people to ignore the card.
      */
-    private AbsenceBlock absences(LocalDate today) {
-        List<String> categoryNos = sickLeaveCategoryNos();
-        if (categoryNos.isEmpty()) {
-            return new AbsenceBlock(false, 0, List.of());
+    private SupervisorDashboardResponse.MissingShiftsBlock missingShiftsBlock(LocalDate day) {
+        if (day.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return new SupervisorDashboardResponse.MissingShiftsBlock(false, 0);
         }
-
-        return new AbsenceBlock(
-                true,
-                queryRepository.countAbsentOn(today, categoryNos),
-                queryRepository.findAbsentOn(
-                        today, categoryNos, today.minusDays(WINDOW_DAYS - 1L), ROWS_PER_BLOCK));
+        return new SupervisorDashboardResponse.MissingShiftsBlock(
+                true, queryRepository.countEmployeesWithoutShift(day));
     }
 
-    /** The configured codes, split and trimmed; empty when nothing is set. */
-    private List<String> sickLeaveCategoryNos() {
-        return appSettingRepository
-                .findCurrentByKey(SICK_LEAVE_SETTING_KEY, OffsetDateTime.now())
-                .map(AppSetting::getSettingValueText)
-                .filter(value -> value != null && !value.isBlank())
-                .map(value -> Arrays.stream(value.split(","))
-                        .map(String::trim)
-                        .filter(part -> !part.isEmpty())
-                        .toList())
-                .orElseGet(List::of);
+    /**
+     * The names behind the count, read at the moment the drawer opens. Live on
+     * purpose: this is a worklist somebody acts on row by row, and a colleague
+     * may have entered one of the shifts since the board loaded.
+     */
+    @Transactional(readOnly = true)
+    public MissingShiftsResponse missingShifts(LocalDate date) {
+        LocalDate day = date != null ? date : LocalDate.now();
+        if (day.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            return new MissingShiftsResponse(day, false, 0, List.of());
+        }
+        return new MissingShiftsResponse(
+                day,
+                true,
+                queryRepository.countEmployeesWithoutShift(day),
+                queryRepository.findEmployeesWithoutShift(day, MISSING_SHIFT_ROWS));
+    }
+
+    /**
+     * Who is on sick leave or godišnji odmor today. The categories declare it
+     * themselves (type SICK_LEAVE, plus GO) — the old code-list setting is gone
+     * because V39 made the schema able to answer the question.
+     */
+    private AbsenceBlock absences(LocalDate today) {
+        return new AbsenceBlock(
+                queryRepository.countAbsentOn(today),
+                queryRepository.findAbsentOn(
+                        today, today.minusDays(WINDOW_DAYS - 1L), ROWS_PER_BLOCK));
+    }
+
+    /**
+     * Whose PREVIOUS month is fully entered — the "obračuni spremni za predaju"
+     * card. Previous month, because that is the month being handed to payroll;
+     * the current one cannot be complete before it ends.
+     */
+    private SupervisorDashboardResponse.ReadyRecordsBlock readyRecords(LocalDate today) {
+        YearMonth month = YearMonth.from(today).minusMonths(1);
+        List<SupervisorDashboardQueryRepository.RecordReadiness> all =
+                queryRepository.findRecordReadiness(month.atDay(1), month.atEndOfMonth());
+
+        List<SupervisorDashboardResponse.ReadyRecordRow> ready = all.stream()
+                .filter(r -> r.requiredDays() > 0
+                        && r.missingDays() == 0
+                        && r.employeeRecordId() != null)
+                .map(r -> new SupervisorDashboardResponse.ReadyRecordRow(
+                        r.employeeId(), r.fullName(), r.employeeRecordId(), r.monthlyReportId()))
+                .toList();
+
+        return new SupervisorDashboardResponse.ReadyRecordsBlock(
+                month.getYear(),
+                month.getMonthValue(),
+                ready.size(),
+                all.size(),
+                ready.stream().limit(ROWS_PER_BLOCK).toList());
     }
 
     /**
@@ -131,6 +190,9 @@ public class SupervisorDashboardService {
      */
     private Insights insights(LocalDate today) {
         LocalDate yesterday = today.minusDays(1);
+        // The criteria as tuned right now. Changing one in Parametri recomputes
+        // the snapshot, so what the hints SAY and what the rows MET stay one.
+        DashboardInsightComputeService.Thresholds thresholds = computeService.currentThresholds();
 
         Optional<DashboardInsightRepository.Stored<NormFitRow>> normTooLow =
                 insightRepository.findLatest(DashboardInsightKey.NORM_TOO_LOW, NormFitRow.class);
@@ -139,7 +201,7 @@ public class SupervisorDashboardService {
         OffsetDateTime computedAt = normTooLow.map(DashboardInsightRepository.Stored::computedAt).orElse(null);
 
         if (computedFor == null) {
-            return Insights.notComputedYet(DashboardInsightComputeService.WINDOW_DAYS, yesterday);
+            return Insights.notComputedYet(DashboardInsightComputeService.WINDOW_DAYS, thresholds, yesterday);
         }
 
         return new Insights(
@@ -147,6 +209,12 @@ public class SupervisorDashboardService {
                 computedAt,
                 !today.equals(computedFor),
                 DashboardInsightComputeService.WINDOW_DAYS,
+                thresholds.normWindowDays(),
+                thresholds.normRisePct(),
+                thresholds.normDropPct(),
+                thresholds.activityWindowDays(),
+                thresholds.topPerformerMinHours(),
+                thresholds.suspectRatePct(),
                 computedFor.minusDays(1),
                 normTooLow.map(DashboardInsightRepository.Stored::rows).orElseGet(List::of),
                 rows(DashboardInsightKey.NORM_TOO_HIGH, NormFitRow.class),
@@ -155,10 +223,13 @@ public class SupervisorDashboardService {
                 rows(DashboardInsightKey.LEAST_WORKED_OPERATIONS, OperationVolumeRow.class),
                 rows(DashboardInsightKey.YESTERDAY_TOP_OPERATIONS, OperationVolumeRow.class),
                 rows(DashboardInsightKey.YESTERDAY_TOP_PRODUCTS, ProductVolumeRow.class),
+                rows(DashboardInsightKey.YESTERDAY_TOP_ORDERS, OrderVolumeRow.class),
+                rows(DashboardInsightKey.YESTERDAY_TOP_PERFORMERS, PerformerRow.class),
                 rows(DashboardInsightKey.TOP_PERFORMERS, PerformerRow.class),
                 rows(DashboardInsightKey.MISSING_ENTRIES, MissingEntryRow.class),
                 rows(DashboardInsightKey.PERFORMANCE_SPREAD, SpreadRow.class),
-                rows(DashboardInsightKey.SCRAP_SPIKE, ScrapRow.class));
+                rows(DashboardInsightKey.SCRAP_SPIKE, ScrapRow.class),
+                rows(DashboardInsightKey.SUSPECT_ENTRIES, SuspectEntryRow.class));
     }
 
     private <T> List<T> rows(DashboardInsightKey key, Class<T> rowType) {

@@ -226,18 +226,32 @@ class AccountSelfServiceIT extends AbstractIntegrationTest {
     }
 
     /*
-     * Setting one here would quietly open a SECOND way into an account whose owner
-     * believes it is reachable only through Google.
+     * The rule this replaces refused a Google account any local password — and
+     * with it every password-confirmed action in the application (archiving,
+     * approving, freezing a payroll), forever, behind a misleading "wrong
+     * password". A Google account now ESTABLISHES its first password without a
+     * current one to show (it has none), and from then on is an ordinary
+     * password-holding account. The after-commit letter is the owner's warning
+     * if somebody else did it at an unlocked session.
      */
     @Test
-    @DisplayName("a Google account has no password to change")
-    void googleAccountHasNoPassword() {
+    @DisplayName("a Google account establishes its first password, then changes it like anybody")
+    void googleAccountEstablishesItsFirstPassword() {
         User user = aGoogleAccount();
 
+        PasswordChangeRequest establish = passwordChange(null, "Nova2026Lozinka");
+        accountService.changeOwnPassword(user.getId(), establish);
+
+        User reloaded = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(reloaded.getPasswordHash()).isNotNull();
+
+        // From now on the ordinary rule holds: no change without the current one.
         assertThatThrownBy(() ->
-                accountService.changeOwnPassword(user.getId(), passwordChange(PASSWORD, "Nova2026Lozinka")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Google");
+                accountService.changeOwnPassword(user.getId(), passwordChange(null, "Druga2026Lozinka")))
+                .isInstanceOf(RuntimeException.class);
+
+        accountService.changeOwnPassword(
+                user.getId(), passwordChange("Nova2026Lozinka", "Druga2026Lozinka"));
     }
 
     // ── The username never moves ────────────────────────────────────────────

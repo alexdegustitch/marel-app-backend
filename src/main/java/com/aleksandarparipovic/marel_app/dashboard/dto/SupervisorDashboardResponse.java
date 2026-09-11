@@ -6,10 +6,12 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Missi
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OperationVolumeRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OrderVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.PerformerRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -47,12 +49,35 @@ public record SupervisorDashboardResponse(
         /** Manufacturing-time requests nobody has taken yet. */
         Block<RequestRow> pendingRequests,
 
-        /** Requests somebody took and has not finished. */
+        /**
+         * Requests THIS USER took and has not finished — their own desk, whole
+         * (capped only against the absurd). Colleagues' claimed requests live
+         * on the requests page.
+         */
         Block<RequestRow> claimedRequests,
 
         Block<NonWorkingDayRow> upcomingNonWorkingDays,
 
         AbsenceBlock absences,
+
+        /** Whose previous month is fully entered and ready for payroll. */
+        ReadyRecordsBlock readyRecords,
+
+        /**
+         * How many employed people have no shift entered for today. The count only —
+         * the names come through {@code GET /api/dashboard/missing-shifts}, which the
+         * board's drawer asks the moment it opens, so the list is live at the moment
+         * of acting on it rather than as old as the board.
+         */
+        MissingShiftsBlock missingShifts,
+
+        /**
+         * Live shifts with neither work nor an absence — ALL of history, read
+         * live. The snapshot's missingEntries stays the 30-day anomaly view;
+         * this is the worklist tile, and an empty shift from two months ago
+         * belongs on a worklist however old it is.
+         */
+        Block<MissingEntryRow> entryGaps,
 
         Insights insights
 ) {
@@ -109,14 +134,10 @@ public record SupervisorDashboardResponse(
     ) {}
 
     /**
-     * Who is absent on a sick-leave code today.
-     *
-     * @param configured false when nobody has said which work codes mean sick leave.
-     *                   The card then says so, instead of reporting an empty list as
-     *                   though it were good news.
+     * Who is on sick leave or godišnji odmor today — recognised by the
+     * category's declared type (V39), not by a code list somebody maintains.
      */
     public record AbsenceBlock(
-            boolean configured,
             long total,
             List<AbsenceRow> rows
     ) {}
@@ -134,6 +155,63 @@ public record SupervisorDashboardResponse(
     ) {}
 
     /**
+     * How far the month before this one has been entered — whose karton is
+     * complete and can go to payroll.
+     *
+     * @param readyCount    employees whose every required day of the month holds
+     *                      a shift (and whose karton exists)
+     * @param employeeCount everybody employed in that month
+     */
+    public record ReadyRecordsBlock(
+            int year,
+            int month,
+            long readyCount,
+            long employeeCount,
+            List<ReadyRecordRow> rows
+    ) {}
+
+    /**
+     * One employee whose month is fully entered.
+     *
+     * @param monthlyReportId what the payroll screen is addressed by; null while
+     *                        the month's report has not been produced yet — the
+     *                        row then leads to the payroll list instead.
+     */
+    public record ReadyRecordRow(
+            Long employeeId,
+            String fullName,
+            Long employeeRecordId,
+            Long monthlyReportId
+    ) {}
+
+    /**
+     * How many employed people the day has no entry for.
+     *
+     * @param applicable false on Sunday — shifts are not required then, so the
+     *                   card is disabled rather than reporting everybody missing
+     */
+    public record MissingShiftsBlock(
+            boolean applicable,
+            long total
+    ) {}
+
+    /**
+     * An employed person with no active shift on the asked-about day.
+     *
+     * @param employeeRecordId the karton holding the day's month, so the drawer
+     *                         can open it directly. Null when that month's karton
+     *                         has not been created yet — the row then leads to
+     *                         the worker's calendar instead of a dead address.
+     */
+    public record MissingShiftRow(
+            Long employeeId,
+            String fullName,
+            String employeeNo,
+            String departmentName,
+            Long employeeRecordId
+    ) {}
+
+    /**
      * The morning's analytics, as they were computed.
      *
      * @param computedFor the day the figures describe. Shown on the screen: if the
@@ -146,6 +224,18 @@ public record SupervisorDashboardResponse(
             OffsetDateTime computedAt,
             boolean stale,
             int windowDays,
+            /** The norm cards' window — tunable in Parametri (V44). */
+            int normWindowDays,
+            /** How far above 100 % "norma je preniska" begins. */
+            int normRisePct,
+            /** How far below 100 % "norma je previsoka" begins. */
+            int normDropPct,
+            /** The "Šta se radilo" window — tunable in Parametri (V44). */
+            int activityWindowDays,
+            /** Hours of recorded normed work before a person is ranked in "Najbolji". */
+            int topPerformerMinHours,
+            /** The uncapped rate above which an entry is called a probable typo. */
+            int suspectRatePct,
             LocalDate yesterday,
             List<NormFitRow> normTooLow,
             List<NormFitRow> normTooHigh,
@@ -154,17 +244,28 @@ public record SupervisorDashboardResponse(
             List<OperationVolumeRow> leastWorkedOperations,
             List<OperationVolumeRow> yesterdayOperations,
             List<ProductVolumeRow> yesterdayProducts,
+            List<OrderVolumeRow> yesterdayOrders,
+            List<PerformerRow> yesterdayPerformers,
             List<PerformerRow> topPerformers,
             List<MissingEntryRow> missingEntries,
             List<SpreadRow> performanceSpread,
-            List<ScrapRow> scrapSpike
+            List<ScrapRow> scrapSpike,
+            List<SuspectEntryRow> suspectEntries
     ) {
 
         /** What the board shows before the job has ever run. */
-        public static Insights notComputedYet(int windowDays, LocalDate yesterday) {
-            return new Insights(null, null, true, windowDays, yesterday,
+        public static Insights notComputedYet(
+                int windowDays,
+                com.aleksandarparipovic.marel_app.dashboard.insight.DashboardInsightComputeService.Thresholds thresholds,
+                LocalDate yesterday) {
+            return new Insights(null, null, true, windowDays,
+                    thresholds.normWindowDays(), thresholds.normRisePct(), thresholds.normDropPct(),
+                    thresholds.activityWindowDays(), thresholds.topPerformerMinHours(),
+                    thresholds.suspectRatePct(),
+                    yesterday,
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of(), List.of(), List.of(), List.of());
         }
     }
 }

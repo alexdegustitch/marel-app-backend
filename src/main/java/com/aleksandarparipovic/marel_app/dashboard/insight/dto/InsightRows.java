@@ -75,6 +75,17 @@ public final class InsightRows {
             Integer employeeCount
     ) {}
 
+    /** How much was made toward one production order, for the yesterday card. */
+    public record OrderVolumeRow(
+            Long productionOrderId,
+            String orderCode,
+            String orderName,
+            Long quantity,
+            Long durationMin,
+            Integer productCount,
+            Integer employeeCount
+    ) {}
+
     /**
      * An employee's sustained performance.
      *
@@ -96,13 +107,46 @@ public final class InsightRows {
     ) {}
 
     /** A shift holding neither work nor an absence. */
+    /**
+     * A shift holding neither work nor an absence.
+     *
+     * @param employeeRecordId the karton the shift lives in, so a row can open
+     *                         the month WITH the shift in focus. Null in
+     *                         snapshots stored before the field existed — such
+     *                         a row degrades to the worker's calendar.
+     */
     public record MissingEntryRow(
             Long workShiftId,
             Long employeeId,
+            Long employeeRecordId,
             String employeeName,
             LocalDate workDate,
             String shiftCode,
             Integer shiftMinutes
+    ) {}
+
+    /**
+     * One shift's work on one operation whose UNCAPPED rate is implausible.
+     *
+     * @param ratePct          the rate WITHOUT the max-efficiency ceiling — what
+     *                         the entry would earn if the cap did not exist,
+     *                         which is exactly what exposes a typed quantity
+     * @param employeeRecordId the karton the shift lives in, so the row opens
+     *                         the month with the shift in focus
+     */
+    public record SuspectEntryRow(
+            Long workShiftId,
+            Long employeeId,
+            Long employeeRecordId,
+            String employeeName,
+            LocalDate workDate,
+            Long operationId,
+            String operationName,
+            String productName,
+            Integer minNorm,
+            Long quantity,
+            Long durationMin,
+            BigDecimal ratePct
     ) {}
 
     /**

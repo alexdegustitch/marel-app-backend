@@ -1,13 +1,16 @@
 package com.aleksandarparipovic.marel_app.dashboard.insight;
 
+import com.aleksandarparipovic.marel_app.app_settings.AppSettingService;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.MissingEntryRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OperationVolumeRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OrderVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.PerformerRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.RowMapper;
@@ -16,9 +19,11 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -33,10 +38,11 @@ import java.util.List;
  * <h2>On the thresholds</h2>
  * The numbers below decide what counts as "worth looking at". They are NOT
  * business rules — nothing is paid or calculated from them, they only choose
- * which rows reach a card. They are gathered here, named, and safe to change:
- * raising {@link #NORM_DEVIATION_PP} shortens the norm cards, it does not change
- * anybody's performance. Any of them can become a setting the day somebody wants
- * to tune it from the screen.
+ * which rows reach a card. The ones the owner asked to tune from Parametri —
+ * the norm deviation (rise and drop separately), the norm window, the activity
+ * window and the performer minimum — are app_settings now (V44), read fresh at
+ * compute time; the rest stay named constants here until somebody wants them
+ * on the screen too.
  */
 @Slf4j
 @Service
@@ -52,8 +58,33 @@ public class DashboardInsightComputeService {
     /** Rows kept for the data-gap card, which is a worklist rather than a highlight. */
     private static final int GAP_ROWS = 12;
 
-    /** How far a rate must sit from 100 % before the norm is called into question. */
-    private static final int NORM_DEVIATION_PP = 15;
+    // ── The tunable thresholds (V44): the setting keys and their fallbacks ──
+    // The fallbacks only matter if somebody deletes the seeded rows — they
+    // mirror the migration's values, not the old constants.
+
+    public static final String SETTING_NORM_RISE_PCT = "dashboard_norm_rise_pct";
+    public static final String SETTING_NORM_DROP_PCT = "dashboard_norm_drop_pct";
+    public static final String SETTING_NORM_WINDOW_DAYS = "dashboard_norm_window_days";
+    public static final String SETTING_ACTIVITY_WINDOW_DAYS = "dashboard_activity_window_days";
+    public static final String SETTING_TOP_PERFORMER_MIN_HOURS = "dashboard_top_performer_min_hours";
+    public static final String SETTING_SUSPECT_RATE_PCT = "dashboard_suspect_rate_pct";
+
+    static final int DEFAULT_NORM_RISE_PCT = 10;
+    static final int DEFAULT_NORM_DROP_PCT = 10;
+    static final int DEFAULT_NORM_WINDOW_DAYS = 90;
+    static final int DEFAULT_ACTIVITY_WINDOW_DAYS = 30;
+    static final int DEFAULT_TOP_PERFORMER_MIN_HOURS = 20;
+    static final int DEFAULT_SUSPECT_RATE_PCT = 250;
+
+    /** What the board is currently told to call worth looking at. */
+    public record Thresholds(
+            int normRisePct,
+            int normDropPct,
+            int normWindowDays,
+            int activityWindowDays,
+            int topPerformerMinHours,
+            int suspectRatePct
+    ) {}
 
     /** Below this much recorded work, a percentage says more about luck than about the norm. */
     private static final int NORM_MIN_MINUTES = 600;
@@ -62,8 +93,11 @@ public class DashboardInsightComputeService {
     /** What makes an un-normed operation worth naming. */
     private static final int NO_NORM_MIN_QUANTITY = 200;
 
-    /** A performer is ranked only once they have a month's worth of hours behind them. */
-    private static final int PERFORMER_MIN_MINUTES = 1_200;
+    /**
+     * The yesterday performers card ranks one day, so the monthly minimum would
+     * empty it — an hour of measured work is enough to be worth naming there.
+     */
+    private static final int YESTERDAY_PERFORMER_MIN_MINUTES = 60;
 
     /** Spread needs several people, each with enough time on the operation to compare. */
     private static final int SPREAD_MIN_EMPLOYEES = 3;
@@ -81,6 +115,31 @@ public class DashboardInsightComputeService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final DashboardInsightRepository repository;
+    private final AppSettingService appSettingService;
+
+    /**
+     * The tunable thresholds as they stand right now. Public because the board
+     * shows them — a card's hint has to state the criterion its rows met.
+     */
+    public Thresholds currentThresholds() {
+        return new Thresholds(
+                intSetting(SETTING_NORM_RISE_PCT, DEFAULT_NORM_RISE_PCT),
+                intSetting(SETTING_NORM_DROP_PCT, DEFAULT_NORM_DROP_PCT),
+                intSetting(SETTING_NORM_WINDOW_DAYS, DEFAULT_NORM_WINDOW_DAYS),
+                intSetting(SETTING_ACTIVITY_WINDOW_DAYS, DEFAULT_ACTIVITY_WINDOW_DAYS),
+                intSetting(SETTING_TOP_PERFORMER_MIN_HOURS, DEFAULT_TOP_PERFORMER_MIN_HOURS),
+                intSetting(SETTING_SUSPECT_RATE_PCT, DEFAULT_SUSPECT_RATE_PCT));
+    }
+
+    /** A numeric setting as a positive int, or the fallback when absent or absurd. */
+    private int intSetting(String key, int fallback) {
+        BigDecimal value = appSettingService.getSettingAt(key, OffsetDateTime.now());
+        if (value == null) {
+            return fallback;
+        }
+        int asInt = value.intValue();
+        return asInt > 0 ? asInt : fallback;
+    }
 
     /**
      * Answers every question for one day and stores the results.
@@ -92,36 +151,77 @@ public class DashboardInsightComputeService {
      */
     @Transactional
     public void computeFor(LocalDate computedFor) {
+        Thresholds t = currentThresholds();
         LocalDate from = computedFor.minusDays(WINDOW_DAYS - 1L);
+        LocalDate normFrom = computedFor.minusDays(t.normWindowDays() - 1L);
+        LocalDate activityFrom = computedFor.minusDays(t.activityWindowDays() - 1L);
         LocalDate yesterday = computedFor.minusDays(1);
 
-        repository.save(DashboardInsightKey.NORM_TOO_LOW, computedFor, WINDOW_DAYS,
-                normFit(from, computedFor, true));
-        repository.save(DashboardInsightKey.NORM_TOO_HIGH, computedFor, WINDOW_DAYS,
-                normFit(from, computedFor, false));
+        repository.save(DashboardInsightKey.NORM_TOO_LOW, computedFor, t.normWindowDays(),
+                normFit(normFrom, computedFor, true, t.normRisePct()));
+        repository.save(DashboardInsightKey.NORM_TOO_HIGH, computedFor, t.normWindowDays(),
+                normFit(normFrom, computedFor, false, t.normDropPct()));
         repository.save(DashboardInsightKey.NO_NORM_HIGH_VOLUME, computedFor, WINDOW_DAYS,
                 noNormHighVolume(from, computedFor));
-        repository.save(DashboardInsightKey.MOST_WORKED_OPERATIONS, computedFor, WINDOW_DAYS,
-                operationVolume(from, computedFor, true));
-        repository.save(DashboardInsightKey.LEAST_WORKED_OPERATIONS, computedFor, WINDOW_DAYS,
-                operationVolume(from, computedFor, false));
+        repository.save(DashboardInsightKey.MOST_WORKED_OPERATIONS, computedFor, t.activityWindowDays(),
+                operationVolume(activityFrom, computedFor, true));
+        repository.save(DashboardInsightKey.LEAST_WORKED_OPERATIONS, computedFor, t.activityWindowDays(),
+                operationVolume(activityFrom, computedFor, false));
         repository.save(DashboardInsightKey.YESTERDAY_TOP_OPERATIONS, computedFor, 1,
                 operationVolume(yesterday, yesterday, true));
         repository.save(DashboardInsightKey.YESTERDAY_TOP_PRODUCTS, computedFor, 1,
                 productVolume(yesterday, yesterday));
-        repository.save(DashboardInsightKey.TOP_PERFORMERS, computedFor, WINDOW_DAYS,
-                topPerformers(from, computedFor));
+        repository.save(DashboardInsightKey.YESTERDAY_TOP_ORDERS, computedFor, 1,
+                orderVolume(yesterday, yesterday));
+        repository.save(DashboardInsightKey.YESTERDAY_TOP_PERFORMERS, computedFor, 1,
+                topPerformers(yesterday, yesterday, YESTERDAY_PERFORMER_MIN_MINUTES));
+        repository.save(DashboardInsightKey.TOP_PERFORMERS, computedFor, t.activityWindowDays(),
+                topPerformers(activityFrom, computedFor, t.topPerformerMinHours() * 60));
         repository.save(DashboardInsightKey.MISSING_ENTRIES, computedFor, WINDOW_DAYS,
                 missingEntries(from, computedFor));
         repository.save(DashboardInsightKey.PERFORMANCE_SPREAD, computedFor, WINDOW_DAYS,
                 performanceSpread(from, computedFor));
         repository.save(DashboardInsightKey.SCRAP_SPIKE, computedFor, WINDOW_DAYS,
                 scrapSpike(from, computedFor));
+        repository.save(DashboardInsightKey.SUSPECT_ENTRIES, computedFor, WINDOW_DAYS,
+                suspectEntries(from, computedFor, t.suspectRatePct()));
 
         int removed = repository.deleteComputedBefore(computedFor.minusDays(RETENTION_DAYS));
         if (removed > 0) {
             log.info("[DashboardInsight] Uklonjeno {} starih snimaka.", removed);
         }
+    }
+
+    /** The "Šta se radilo" panel's live answer, for whichever window is asked. */
+    public record Activity(
+            int windowDays,
+            int topPerformerMinHours,
+            List<OperationVolumeRow> mostWorkedOperations,
+            List<OperationVolumeRow> leastWorkedOperations,
+            List<PerformerRow> topPerformers
+    ) {}
+
+    /**
+     * The activity lists computed NOW, over a window the caller may choose.
+     *
+     * <p>Live and not from the snapshot, because the window became personal: the
+     * global default lives in Parametri, each user may keep their own, and one
+     * morning snapshot cannot hold everybody's answer. These are three bounded
+     * aggregates over the fact table — cheap enough to answer on demand.
+     */
+    @Transactional(readOnly = true)
+    public Activity activity(LocalDate today, Integer requestedWindowDays) {
+        Thresholds t = currentThresholds();
+        int window = requestedWindowDays != null && requestedWindowDays >= 1 && requestedWindowDays <= 366
+                ? requestedWindowDays
+                : t.activityWindowDays();
+        LocalDate from = today.minusDays(window - 1L);
+        return new Activity(
+                window,
+                t.topPerformerMinHours(),
+                operationVolume(from, today, true),
+                operationVolume(from, today, false),
+                topPerformers(from, today, t.topPerformerMinHours() * 60));
     }
 
     // ---------------------------------------------------------------- norm fit
@@ -136,8 +236,10 @@ public class DashboardInsightComputeService {
      * card exists to find: a norm set so low that everybody sits on the ceiling.
      *
      * @param above true for norms that look too easy, false for too hard
+     * @param deviationPct how far from 100 % the rate must sit — the tuned
+     *                     rise or drop threshold, whichever side this call asks
      */
-    private List<NormFitRow> normFit(LocalDate from, LocalDate to, boolean above) {
+    private List<NormFitRow> normFit(LocalDate from, LocalDate to, boolean above, int deviationPct) {
         String sql = """
                 SELECT * FROM (
                     SELECT f.operation_id,
@@ -178,7 +280,7 @@ public class DashboardInsightComputeService {
                         .addValue("to", to)
                         .addValue("minMinutes", NORM_MIN_MINUTES)
                         .addValue("minLogs", NORM_MIN_LOGS)
-                        .addValue("threshold", above ? 100 + NORM_DEVIATION_PP : 100 - NORM_DEVIATION_PP)
+                        .addValue("threshold", above ? 100 + deviationPct : 100 - deviationPct)
                         .addValue("limit", ROWS),
                 (rs, i) -> new NormFitRow(
                         rs.getLong("operation_id"),
@@ -264,6 +366,36 @@ public class DashboardInsightComputeService {
         return jdbc.query(sql, params(from, to), operationVolumeMapper());
     }
 
+    /** Production orders by what was made toward them. */
+    private List<OrderVolumeRow> orderVolume(LocalDate from, LocalDate to) {
+        String sql = """
+                SELECT f.production_order_id,
+                       max(f.production_order_code)        AS order_code,
+                       max(po.name)                        AS order_name,
+                       sum(f.quantity)::bigint             AS quantity,
+                       sum(f.duration_min)::bigint         AS duration_min,
+                       count(DISTINCT f.product_id)::int   AS product_count,
+                       count(DISTINCT f.employee_id)::int  AS employee_count
+                FROM work_log_facts f
+                JOIN production_orders po ON po.id = f.production_order_id
+                WHERE f.work_date BETWEEN :from AND :to
+                  AND f.production_order_id IS NOT NULL
+                GROUP BY f.production_order_id
+                HAVING sum(f.quantity) > 0
+                ORDER BY sum(f.quantity) DESC
+                LIMIT :limit
+                """;
+
+        return jdbc.query(sql, params(from, to), (rs, i) -> new OrderVolumeRow(
+                rs.getLong("production_order_id"),
+                rs.getString("order_code"),
+                rs.getString("order_name"),
+                rs.getLong("quantity"),
+                rs.getLong("duration_min"),
+                rs.getInt("product_count"),
+                rs.getInt("employee_count")));
+    }
+
     /** Products by what was made of them. */
     private List<ProductVolumeRow> productVolume(LocalDate from, LocalDate to) {
         String sql = """
@@ -304,7 +436,7 @@ public class DashboardInsightComputeService {
      * definition, and letting those in would rank whoever happened to be assigned
      * to them.
      */
-    private List<PerformerRow> topPerformers(LocalDate from, LocalDate to) {
+    private List<PerformerRow> topPerformers(LocalDate from, LocalDate to, int minMinutes) {
         String sql = """
                 SELECT f.employee_id,
                        max(e.full_name)                     AS employee_name,
@@ -333,7 +465,7 @@ public class DashboardInsightComputeService {
         return jdbc.query(sql, new MapSqlParameterSource()
                         .addValue("from", from)
                         .addValue("to", to)
-                        .addValue("minMinutes", PERFORMER_MIN_MINUTES)
+                        .addValue("minMinutes", minMinutes)
                         .addValue("limit", ROWS),
                 (rs, i) -> new PerformerRow(
                         rs.getLong("employee_id"),
@@ -357,12 +489,13 @@ public class DashboardInsightComputeService {
      */
     private List<MissingEntryRow> missingEntries(LocalDate from, LocalDate to) {
         String sql = """
-                SELECT ws.id                AS work_shift_id,
-                       ws.employee_id       AS employee_id,
-                       e.full_name          AS employee_name,
-                       ws.work_date         AS work_date,
-                       s.shift_code         AS shift_code,
-                       ws.total_minutes     AS shift_minutes
+                SELECT ws.id                 AS work_shift_id,
+                       ws.employee_id        AS employee_id,
+                       ws.employee_record_id AS employee_record_id,
+                       e.full_name           AS employee_name,
+                       ws.work_date          AS work_date,
+                       s.shift_code          AS shift_code,
+                       ws.total_minutes      AS shift_minutes
                 FROM work_shifts ws
                 JOIN employees e ON e.id = ws.employee_id
                 LEFT JOIN shifts s ON s.id = ws.shift_id
@@ -386,10 +519,75 @@ public class DashboardInsightComputeService {
                 (rs, i) -> new MissingEntryRow(
                         rs.getLong("work_shift_id"),
                         rs.getLong("employee_id"),
+                        rs.getObject("employee_record_id", Long.class),
                         rs.getString("employee_name"),
                         rs.getObject("work_date", LocalDate.class),
                         rs.getString("shift_code"),
                         integer(rs, "shift_minutes")));
+    }
+
+    // -------------------------------------------------------- suspect entries
+
+    /**
+     * One shift's work on one operation whose UNCAPPED rate is implausible.
+     *
+     * <p>The approved rate is clipped at {@code max_efficiency_percent}, so a
+     * quantity typed with an extra zero quietly becomes "the maximum" and looks
+     * like a good day. The uncapped rate is what the entry would earn without
+     * the ceiling — that is where the typo shows. Grouped per shift+operation,
+     * because that is the row somebody opens the karton to fix.
+     */
+    private List<SuspectEntryRow> suspectEntries(LocalDate from, LocalDate to, int thresholdPct) {
+        String sql = """
+                SELECT * FROM (
+                    SELECT f.work_shift_id,
+                           f.employee_id,
+                           max(ws.employee_record_id)                     AS employee_record_id,
+                           max(e.full_name)                               AS employee_name,
+                           f.work_date,
+                           f.operation_id,
+                           max(f.operation_name)                          AS operation_name,
+                           max(f.product_name)                            AS product_name,
+                           o.min_norm                                     AS min_norm,
+                           sum(f.quantity)::bigint                        AS quantity,
+                           sum(f.duration_min)::bigint                    AS duration_min,
+                           round(100.0 * (sum(f.quantity)::numeric * 60)
+                                 / nullif(sum(f.duration_min), 0)
+                                 / nullif(o.min_norm, 0), 1)              AS rate_pct
+                    FROM work_log_facts f
+                    JOIN operations o   ON o.id = f.operation_id
+                    JOIN employees e    ON e.id = f.employee_id
+                    JOIN work_shifts ws ON ws.id = f.work_shift_id
+                    WHERE f.work_date BETWEEN :from AND :to
+                      AND o.norm_required = true
+                      AND o.min_norm > 0
+                      AND f.duration_min > 0
+                    GROUP BY f.work_shift_id, f.employee_id, f.work_date, f.operation_id, o.min_norm
+                    HAVING sum(f.quantity) > 0
+                ) suspect
+                WHERE rate_pct >= :threshold
+                ORDER BY rate_pct DESC
+                LIMIT :limit
+                """;
+
+        return jdbc.query(sql, new MapSqlParameterSource()
+                        .addValue("from", from)
+                        .addValue("to", to)
+                        .addValue("threshold", thresholdPct)
+                        .addValue("limit", ROWS),
+                (rs, i) -> new SuspectEntryRow(
+                        rs.getLong("work_shift_id"),
+                        rs.getLong("employee_id"),
+                        rs.getObject("employee_record_id", Long.class),
+                        rs.getString("employee_name"),
+                        rs.getObject("work_date", LocalDate.class),
+                        rs.getLong("operation_id"),
+                        rs.getString("operation_name"),
+                        rs.getString("product_name"),
+                        integer(rs, "min_norm"),
+                        rs.getLong("quantity"),
+                        rs.getLong("duration_min"),
+                        rs.getBigDecimal("rate_pct")));
     }
 
     // ---------------------------------------------------------------- spread

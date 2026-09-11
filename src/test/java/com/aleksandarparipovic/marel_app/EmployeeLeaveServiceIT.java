@@ -110,7 +110,7 @@ class EmployeeLeaveServiceIT extends AbstractIntegrationTest {
     private LeaveRequest request(Setup s, Long categoryId, String from, String to,
                                  boolean archiveConflicts, boolean acceptExtended) {
         return new LeaveRequest(s.employeeId(), categoryId,
-                LocalDate.parse(from), LocalDate.parse(to), null, archiveConflicts, acceptExtended);
+                LocalDate.parse(from), LocalDate.parse(to), null, archiveConflicts, acceptExtended, false);
     }
 
     /** category_no of the live shift on one date, or null when the day is empty. */
@@ -174,6 +174,37 @@ class EmployeeLeaveServiceIT extends AbstractIntegrationTest {
         assertThat(leaveRepository.findIntersecting(
                 s.employeeId(), LocalDate.parse("2026-06-01"), LocalDate.parse("2026-06-30")))
                 .hasSize(1);
+    }
+
+    @Test
+    @DisplayName("the quick single-day door may count Saturday as worked; Sunday never")
+    void includeSaturdaysWritesSaturdayButNotSunday() {
+        Setup s = setUp();
+
+        // 2026-06-06 is a Saturday. The calendar door skips it whole…
+        LeavePreviewResponse calendarDoor = leaveService.preview(new LeaveRequest(
+                s.employeeId(), s.vacationId(),
+                LocalDate.parse("2026-06-06"), LocalDate.parse("2026-06-06"),
+                null, false, false, false));
+        assertThat(calendarDoor.toCreate()).isZero();
+        assertThat(calendarDoor.days().getFirst().status()).isEqualTo("SKIP_WEEKEND");
+
+        // …while the board's quick door writes it like any workday.
+        LeaveApplyResponse applied = leaveService.apply(new LeaveRequest(
+                s.employeeId(), s.vacationId(),
+                LocalDate.parse("2026-06-06"), LocalDate.parse("2026-06-06"),
+                null, false, false, true));
+        entityManager.flush();
+        assertThat(applied.createdShifts()).isEqualTo(1);
+        assertThat(categoryOn(s, "2026-06-06")).isEqualTo("GO");
+
+        // Sunday stays a skipped day even for the quick door.
+        LeavePreviewResponse sunday = leaveService.preview(new LeaveRequest(
+                s.employeeId(), s.vacationId(),
+                LocalDate.parse("2026-06-07"), LocalDate.parse("2026-06-07"),
+                null, false, false, true));
+        assertThat(sunday.toCreate()).isZero();
+        assertThat(sunday.days().getFirst().status()).isEqualTo("SKIP_WEEKEND");
     }
 
     @Test

@@ -259,12 +259,22 @@ public class AuthService {
 
     /**
      * Creates the local account for a Google-verified identity once the user has
-     * picked a role (and optionally a phone number) on the "complete your profile"
-     * step — same active=false-until-admin-approval gate as email registration.
+     * picked a role, chosen a password and (optionally) a phone number on the
+     * "complete your profile" step — same active=false-until-admin-approval gate
+     * as email registration.
+     *
+     * <p>THE PASSWORD IS NOT OPTIONAL, and that is the point of it being here:
+     * every signed action in the application — archiving, approving a
+     * registration, freezing a payroll — is confirmed with the LOCAL password.
+     * The earlier design provisioned Google accounts with no password at all,
+     * which made every such confirmation permanently refuse them with "wrong
+     * password". Google remains the convenient way in; the password is the
+     * signature.
      */
     @Transactional
     public RegisterResponse completeGoogleRegistration(
-            String email, String firstName, String lastName, Long roleId, String mobilePhone
+            String email, String firstName, String lastName, Long roleId, String mobilePhone,
+            String password, String confirmPassword
     ) {
         if (userRepository.existsByEmailAddress(email)) {
             throw new IllegalArgumentException("Nalog sa ovom email adresom već postoji");
@@ -280,13 +290,22 @@ public class AuthService {
         String safeFirst = (firstName == null || firstName.isBlank()) ? "Google" : firstName.trim();
         String safeLast = (lastName == null || lastName.isBlank()) ? "Korisnik" : lastName.trim();
 
+        // Same rule as e-mail registration: the address is where the suggestion
+        // comes from. Google gives us a verified address and often no usable
+        // name at all, so deriving from the name here was the weaker source.
+        String username = makeUnique(UsernameRules.suggestFrom(email, safeFirst, safeLast));
+
+        if (!password.equals(confirmPassword)) {
+            throw new IllegalArgumentException("Lozinka i njena potvrda se ne poklapaju.");
+        }
+        List<String> passwordProblems = PasswordPolicy.violations(password, username, email);
+        if (!passwordProblems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", passwordProblems));
+        }
+
         User user = User.builder()
-                // Same rule as e-mail registration: the address is where the
-                // suggestion comes from. Google gives us a verified address and
-                // often no usable name at all, so deriving from the name here was
-                // the weaker of the two sources.
-                .username(makeUnique(UsernameRules.suggestFrom(email, safeFirst, safeLast)))
-                .passwordHash(null)
+                .username(username)
+                .passwordHash(passwordEncoder.encode(password))
                 .firstName(safeFirst)
                 .lastName(safeLast)
                 .mobilePhone(mobilePhone)
