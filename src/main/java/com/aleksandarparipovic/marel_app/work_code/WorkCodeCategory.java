@@ -56,6 +56,30 @@ public class WorkCodeCategory {
     private Boolean affectsMealAllowance = false;
 
     /**
+     * Whether these hours count towards the daily and monthly efficiency
+     * percentage — the administrator's declaration, editable in the šifarnik.
+     *
+     * <p>Nothing in the calculation reads it yet: the recalc derives its own
+     * "affects norm" from {@code norm_multiplier > 0}
+     * (see PayrollRunItemService). Wiring this flag into that derivation is the
+     * "additional logic" the šifarnik form tells the administrator to raise
+     * with the developer.
+     */
+    @Column(name = "affects_norm", nullable = false)
+    @Builder.Default
+    private Boolean affectsNorm = true;
+
+    /**
+     * Historically dead (see {@link #affectsWeekendBonus}'s javadoc) and still
+     * unread; mapped now only so the šifarnik can keep it equal to
+     * {@link #affectsMonthlyBonus}, which is the value the owner considers it
+     * to mean.
+     */
+    @Column(name = "affects_bonus", nullable = false)
+    @Builder.Default
+    private Boolean affectsBonus = true;
+
+    /**
      * Do these minutes count towards the 180 a day the weekend bonus needs.
      *
      * <p>Separate from {@link #affectsMonthlyBonus} because the two bonuses ask
@@ -120,6 +144,23 @@ public class WorkCodeCategory {
     @Column(name = "is_full_day", nullable = false)
     @Builder.Default
     private Boolean isFullDay = false;
+
+    /**
+     * Whether this VERSION of the category governs any day of {@code [from, to]}.
+     *
+     * <p>A category is re-versioned over time (same {@code category_no}, new
+     * row, adjacent validity windows), so "the categories" of a period are the
+     * versions overlapping it — not every non-archived row. Both bounds
+     * inclusive, matching the repository's date-window queries.
+     */
+    public boolean isInForceDuring(LocalDate from, LocalDate to) {
+        return (validFrom == null || !validFrom.isAfter(to))
+                && (validUntil == null || !validUntil.isBefore(from));
+    }
+
+    public boolean isInForceOn(LocalDate date) {
+        return isInForceDuring(date, date);
+    }
 
     // DB managed timestamps
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)

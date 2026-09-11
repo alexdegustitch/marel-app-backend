@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
@@ -61,7 +62,13 @@ public class PayrollRunInitializationService {
             List<PayrollRunItem> items = txService.createPayrollRunItems(payrollRun, monthlyReportsWithEmployee);
 
             // Phase 4: create item categories for each active work code category
-            List<WorkCodeCategory> activeWorkCategories = workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc();
+            // in force during this month — a re-versioned code's superseded
+            // rows are history, not the month's categories.
+            LocalDate monthStart = YearMonth.of(year, month).atDay(1);
+            LocalDate monthEnd = YearMonth.of(year, month).atEndOfMonth();
+            List<WorkCodeCategory> activeWorkCategories =
+                    workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
+                            .stream().filter(c -> c.isInForceDuring(monthStart, monthEnd)).toList();
             List<PayrollAdjustmentCategory> allAdjCategoriesForScope =
                     payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
 
@@ -114,7 +121,9 @@ public class PayrollRunInitializationService {
         List<MonthlyReport> single = List.of(mr);
         List<PayrollRunItem> items = txService.createPayrollRunItems(payrollRun, single);
 
-        List<WorkCodeCategory> activeWorkCategories = workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc();
+        List<WorkCodeCategory> activeWorkCategories =
+                workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
+                        .stream().filter(c -> c.isInForceDuring(mr.getStartDate(), mr.getEndDate())).toList();
         List<PayrollAdjustmentCategory> activeAdjCategories = payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
 
         Map<Long, PayrollSchemeScope> scopes = payrollSchemeScopeService.scopesFor(

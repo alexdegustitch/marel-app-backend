@@ -59,4 +59,22 @@ public interface WorkCodeCategoryRepository extends JpaRepository<WorkCodeCatego
      * practice the EXTENDED one, which auto-upgraded days are written as.
      */
     Optional<WorkCodeCategory> findFirstBySickLeaveKindAndIsActiveTrueAndArchivedAtIsNull(String sickLeaveKind);
+
+    /**
+     * Every version of one category — the whole chain sharing a code.
+     *
+     * <p>The šifarnik's rename cascades through this: a code is the identity
+     * that survives re-versioning, so changing it on one version and not the
+     * others would cut the chain in two.
+     */
+    List<WorkCodeCategory> findByCategoryNoIgnoreCaseAndArchivedAtIsNull(String categoryNo);
+
+    /**
+     * The open-ended version of a code — the one an edit targets.
+     *
+     * <p>At most one exists: ex_work_code_categories_no_overlap refuses two
+     * overlapping windows for a code, and an open window overlaps everything
+     * after it.
+     */
+    Optional<WorkCodeCategory> findFirstByCategoryNoIgnoreCaseAndValidUntilIsNullAndArchivedAtIsNull(String categoryNo);
 }

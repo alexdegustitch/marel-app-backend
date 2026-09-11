@@ -376,7 +376,11 @@ public class PayrollRunItemService {
 
         Map<Long, PayrollSchemeScope> byEmployee = payrollSchemeScopeService.scopesFor(
                 employeeIds, start, end,
-                workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc(),
+                // Only the category VERSIONS governing this month: a
+                // re-versioned code keeps its closed rows, and the superseded
+                // version of a code is not one of the month's categories.
+                workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
+                        .stream().filter(c -> c.isInForceDuring(start, end)).toList(),
                 payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull());
 
         // Absent from the map means no scheme period covers the month, which

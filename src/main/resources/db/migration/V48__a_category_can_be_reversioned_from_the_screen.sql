@@ -1,0 +1,35 @@
+-- =============================================================================
+-- A work-code category can be re-versioned from the screen
+-- =============================================================================
+-- WHAT CHANGES
+--   · work_code_categories: the plain unique index on
+--     (lower(category_no), lower(category_name)) is dropped.
+--
+-- WHY
+--   The šifarnik gains create/edit for work-code categories, and an edit that
+--   changes a calculation value (coefficient, is_paid, the bonus flags…) does
+--   not overwrite the row — it CLOSES the current version (valid_until) and
+--   inserts a new one with a new valid_from, so a recalculated old month keeps
+--   reading the values it was worked under. Two versions of the same category
+--   naturally share both the code and the name, which is exactly what this
+--   index forbade.
+--
+--   The invariant that actually matters is kept, and kept in the database:
+--   ex_work_code_categories_no_overlap (GiST) still refuses two versions of
+--   one code whose validity windows overlap — so there is still at most ONE
+--   open-ended row per code, and "the version in force on a date" stays a
+--   single-row answer (see WorkCodeCategoryRepository.findInForceByCategoryNo).
+--
+-- WHAT HAPPENS TO EXISTING DATA
+--   Nothing rewritten; an index disappears. Every existing row already
+--   satisfies the exclusion constraint that remains.
+--
+--   Guarded (IF EXISTS); replaying is safe.
+--
+-- Rollback:
+--   CREATE UNIQUE INDEX uq_work_code_categories_no_name_ci
+--       ON public.work_code_categories (lower(category_no), lower(category_name));
+--   (Only valid while no category has been re-versioned.)
+-- =============================================================================
+
+DROP INDEX IF EXISTS public.uq_work_code_categories_no_name_ci;
