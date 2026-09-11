@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.dashboard;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
 import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse;
+import com.aleksandarparipovic.marel_app.dashboard.dto.CommercialDashboardResponse;
 import com.aleksandarparipovic.marel_app.dashboard.dto.MissingShiftsResponse;
 import com.aleksandarparipovic.marel_app.dashboard.dto.SupervisorDashboardResponse;
 import com.aleksandarparipovic.marel_app.dashboard.insight.DashboardInsightComputeService;
@@ -30,6 +31,7 @@ public class DashboardController {
 
     private final AdminDashboardService adminDashboardService;
     private final SupervisorDashboardService supervisorDashboardService;
+    private final CommercialDashboardService commercialDashboardService;
     private final DashboardInsightComputeService insightComputeService;
     private final DashboardInsightJob insightJob;
     private final CurrentUserService currentUserService;
@@ -45,6 +47,13 @@ public class DashboardController {
     public ResponseEntity<SupervisorDashboardResponse> supervisor() {
         return ResponseEntity.ok(
                 supervisorDashboardService.load(currentUserService.getCurrentUserId()));
+    }
+
+    @GetMapping("/commercial")
+    @PreAuthorize("@perm.has('DASHBOARD_COMMERCIAL_VIEW')")
+    public ResponseEntity<CommercialDashboardResponse> commercial() {
+        return ResponseEntity.ok(
+                commercialDashboardService.load(currentUserService.getCurrentUserId()));
     }
 
     /**
