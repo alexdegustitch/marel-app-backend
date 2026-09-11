@@ -79,6 +79,9 @@ public class NotificationFanoutService {
             OutboxEventType.PRODUCTION_ORDER_CREATED,
             OutboxEventType.PRODUCTION_ORDER_UPDATED,
             OutboxEventType.PRODUCTION_ORDER_COMPLETED,
+            OutboxEventType.PRODUCTION_ORDER_CANCELLED,
+            OutboxEventType.PRODUCTION_ORDER_DEADLINE_APPROACHING,
+            OutboxEventType.PRODUCTION_ORDER_READY_FOR_DELIVERY,
             OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED);
 
     /**
@@ -90,7 +93,9 @@ public class NotificationFanoutService {
     private static final Set<OutboxEventType> SAMPLE_ORDER_EMAIL_EVENT_TYPES = EnumSet.of(
             OutboxEventType.SAMPLE_ORDER_CREATED,
             OutboxEventType.SAMPLE_ORDER_UPDATED,
-            OutboxEventType.SAMPLE_ORDER_COMPLETED);
+            OutboxEventType.SAMPLE_ORDER_COMPLETED,
+            OutboxEventType.SAMPLE_ORDER_CANCELLED,
+            OutboxEventType.SAMPLE_ORDER_DEADLINE_APPROACHING);
 
     /**
      * The two decisions about a person's own account. These MUST go by e-mail:
@@ -210,7 +215,9 @@ public class NotificationFanoutService {
             // one who just did it.
             case PRODUCTION_ORDER_CREATED -> { }
 
-            case PRODUCTION_ORDER_UPDATED, PRODUCTION_ORDER_COMPLETED ->
+            case PRODUCTION_ORDER_UPDATED, PRODUCTION_ORDER_COMPLETED,
+                 PRODUCTION_ORDER_CANCELLED, PRODUCTION_ORDER_READY_FOR_DELIVERY,
+                 PRODUCTION_ORDER_DEADLINE_APPROACHING ->
                     addUser(recipients, longOf(payload, "responsibleUserId"));
 
             case PRODUCTION_ORDER_DEADLINE_CHANGED ->
@@ -222,7 +229,8 @@ public class NotificationFanoutService {
             // conversation.
             case SAMPLE_ORDER_CREATED -> { }
 
-            case SAMPLE_ORDER_UPDATED, SAMPLE_ORDER_COMPLETED ->
+            case SAMPLE_ORDER_UPDATED, SAMPLE_ORDER_COMPLETED,
+                 SAMPLE_ORDER_CANCELLED, SAMPLE_ORDER_DEADLINE_APPROACHING ->
                     addUser(recipients, longOf(payload, "responsibleUserId"));
 
             /*
@@ -538,10 +546,15 @@ public class NotificationFanoutService {
             case PRODUCTION_ORDER_CREATED -> "Otvoren nalog za proizvodnju";
             case PRODUCTION_ORDER_UPDATED -> "Izmenjen nalog za proizvodnju";
             case PRODUCTION_ORDER_COMPLETED -> "Nalog za proizvodnju je isporučen";
+            case PRODUCTION_ORDER_CANCELLED -> "Nalog za proizvodnju je otkazan";
+            case PRODUCTION_ORDER_DEADLINE_APPROACHING -> "Rok isporuke uskoro ističe";
+            case PRODUCTION_ORDER_READY_FOR_DELIVERY -> "Nalog je spreman za isporuku";
             case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Promenjen rok isporuke";
             case SAMPLE_ORDER_CREATED -> "Otvoren nalog za izradu uzoraka";
             case SAMPLE_ORDER_UPDATED -> "Izmenjen nalog za izradu uzoraka";
             case SAMPLE_ORDER_COMPLETED -> "Nalog za izradu uzoraka je zatvoren";
+            case SAMPLE_ORDER_CANCELLED -> "Nalog za izradu uzoraka je otkazan";
+            case SAMPLE_ORDER_DEADLINE_APPROACHING -> "Rok naloga za uzorke uskoro ističe";
             case PAYROLL_CHANGE_REQUEST_CREATED -> "Zahtev za izmenu obračuna";
             case PAYROLL_CHANGE_REQUEST_ACCEPTED -> "Obračun je vraćen na doradu";
             case PAYROLL_CHANGE_REQUEST_DECLINED -> "Zahtev za izmenu je odbijen";
@@ -595,8 +608,34 @@ public class NotificationFanoutService {
             case PRODUCTION_ORDER_UPDATED -> "Nalog "
                     + textOf(payload, "orderCode", "-") + ": "
                     + joinChanges(payload) + ".";
-            case PRODUCTION_ORDER_COMPLETED -> "Nalog "
-                    + textOf(payload, "orderCode", "-") + " je isporučen.";
+            /*
+             * The two terminal notices are worded formally — they are the
+             * record the office forwards, not chat. The date is written into
+             * the payload at the moment of the transition; an event replayed
+             * from before that field existed falls back to the old sentence.
+             */
+            case PRODUCTION_ORDER_COMPLETED -> payload != null && payload.hasNonNull("statusDate")
+                    ? "Obaveštavamo Vas da je pošiljka po nalogu "
+                            + textOf(payload, "orderCode", "-") + " ("
+                            + textOf(payload, "orderName", "-") + ") isporučena dana "
+                            + textOf(payload, "statusDate", "-")
+                            + " Nalog se ovim smatra realizovanim."
+                    : "Nalog " + textOf(payload, "orderCode", "-") + " je isporučen.";
+            case PRODUCTION_ORDER_CANCELLED -> "Obaveštavamo Vas da je nalog "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-") + ") otkazan dana "
+                    + textOf(payload, "statusDate", "-")
+                    + " Sve dalje aktivnosti po ovom nalogu se obustavljaju.";
+            // Which deadline is running out is the entire message: "the order
+            // is due" helps nobody decide what to push through the shop floor.
+            case PRODUCTION_ORDER_DEADLINE_APPROACHING -> "Podsećamo Vas da po nalogu "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-") + ") uskoro ističe rok: "
+                    + joinOf(payload, "deadlines") + ".";
+            case PRODUCTION_ORDER_READY_FOR_DELIVERY -> "Obaveštavamo Vas da su sve stavke naloga "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-")
+                    + ") izrađene. Nalog će uskoro biti spreman za isporuku.";
             case PRODUCTION_ORDER_DEADLINE_CHANGED -> "Nalog "
                     + textOf(payload, "orderCode", "-") + ": rok "
                     + joinOf(payload, "deadlinesBefore") + " promenjen na "
@@ -613,8 +652,22 @@ public class NotificationFanoutService {
             case SAMPLE_ORDER_UPDATED -> "Nalog za uzorke "
                     + textOf(payload, "orderCode", "-") + ": "
                     + joinChanges(payload) + ".";
-            case SAMPLE_ORDER_COMPLETED -> "Nalog za uzorke "
-                    + textOf(payload, "orderCode", "-") + " je zatvoren.";
+            case SAMPLE_ORDER_COMPLETED -> payload != null && payload.hasNonNull("statusDate")
+                    ? "Obaveštavamo Vas da je nalog za uzorke "
+                            + textOf(payload, "orderCode", "-") + " ("
+                            + textOf(payload, "orderName", "-") + ") zatvoren dana "
+                            + textOf(payload, "statusDate", "-")
+                            + " Sve stavke naloga se smatraju predatim."
+                    : "Nalog za uzorke " + textOf(payload, "orderCode", "-") + " je zatvoren.";
+            case SAMPLE_ORDER_CANCELLED -> "Obaveštavamo Vas da je nalog za uzorke "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-") + ") otkazan dana "
+                    + textOf(payload, "statusDate", "-")
+                    + " Sve dalje aktivnosti po ovom nalogu se obustavljaju.";
+            case SAMPLE_ORDER_DEADLINE_APPROACHING -> "Podsećamo Vas da po nalogu za uzorke "
+                    + textOf(payload, "orderCode", "-") + " ("
+                    + textOf(payload, "orderName", "-") + ") uskoro ističe rok: "
+                    + joinOf(payload, "deadlines") + ".";
             /*
              * The employee and the month, and nothing about the amounts — this
              * reaches whoever may ANSWER the request, and what they may see of

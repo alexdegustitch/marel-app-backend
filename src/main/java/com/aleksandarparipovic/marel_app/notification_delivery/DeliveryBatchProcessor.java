@@ -2,7 +2,9 @@ package com.aleksandarparipovic.marel_app.notification_delivery;
 
 import com.aleksandarparipovic.marel_app.common.ErrorSanitizer;
 import com.aleksandarparipovic.marel_app.notification_event.NotificationEvent;
+import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
 import com.aleksandarparipovic.marel_app.user.User;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -79,7 +81,12 @@ public class DeliveryBatchProcessor {
                     event.getEntityId(),
                     delivery.getMessageId(),
                     delivery.getInReplyTo(),
-                    delivery.getReferencesHeader()
+                    delivery.getReferencesHeader(),
+                    event.getType(),
+                    // Read HERE for the same reason as the actor: the payload
+                    // column is on the lazily-fetched event, and the composer
+                    // runs after this transaction is gone.
+                    event.getPayload()
             ));
         }
 
@@ -153,7 +160,9 @@ public class DeliveryBatchProcessor {
             Long entityId,
             String messageId,
             String inReplyTo,
-            String references
+            String references,
+            OutboxEventType eventType,
+            JsonNode payload
     ) {
     }
 }

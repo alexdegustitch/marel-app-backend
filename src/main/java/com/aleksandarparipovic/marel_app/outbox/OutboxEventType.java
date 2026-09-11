@@ -31,6 +31,26 @@ public enum OutboxEventType {
     PRODUCTION_ORDER_UPDATED,
     PRODUCTION_ORDER_COMPLETED,
     /**
+     * The order was called off. A formal notice, not an edit: the conversation
+     * is told once that everything stops, and the order accepts no further
+     * changes afterwards.
+     */
+    PRODUCTION_ORDER_CANCELLED,
+    /**
+     * A deadline is 7 days, 3 days or 0 days away. Published by the morning
+     * reminder job, never by a user's action — the payload names exactly which
+     * deadline is running out (a successive delivery, a line item's partial
+     * quantity), because "the order is due" helps nobody plan.
+     */
+    PRODUCTION_ORDER_DEADLINE_APPROACHING,
+    /**
+     * Every line item's work is done — the order reached 100%. Published once
+     * per order by the morning job (the completion flag on the order is what
+     * makes it once), so the office hears the shop floor finished before the
+     * shipment is even prepared.
+     */
+    PRODUCTION_ORDER_READY_FOR_DELIVERY,
+    /**
      * No longer published — PRODUCTION_ORDER_UPDATED covers a moved deadline
      * alongside everything else that changed in the same save. Kept because
      * rows written before that change still name it, and deserialising them
@@ -46,6 +66,10 @@ public enum OutboxEventType {
     SAMPLE_ORDER_CREATED,
     SAMPLE_ORDER_UPDATED,
     SAMPLE_ORDER_COMPLETED,
+    /** The sample order's cancellation notice, same moment as the production one. */
+    SAMPLE_ORDER_CANCELLED,
+    /** The sample order's deadline reminder — its single rok, 7/3/0 days out. */
+    SAMPLE_ORDER_DEADLINE_APPROACHING,
     /**
      * A supervisor asking payroll to reopen a month, and payroll's answer.
      *

@@ -284,16 +284,12 @@ The capabilities are implemented. What is left is coverage and polish.
    notification arrives as its own conversation. Credentials come from the
    environment: `MAIL_USERNAME` and `MAIL_PASSWORD` are BOTH the Postmark
    Server API Token.
-4. **~~`PRODUCTION_ORDER_COMPLETED` is not yet emitted.~~ All three order events
+4. **~~`PRODUCTION_ORDER_COMPLETED` is not yet emitted.~~ All order events
    are emitted.** `create` publishes `PRODUCTION_ORDER_CREATED` (which opens the
    conversation), `update` publishes `PRODUCTION_ORDER_UPDATED` with the list of
-   what changed, and `markDelivered` publishes `PRODUCTION_ORDER_COMPLETED` on the
-   actual transition. The event type, the
-   recipient-snapshot email fan-out and the delivery path are all built and
-   tested, but nothing publishes the event: `ProductionOrderService` does not call
-   `OutboxEventPublisher` when an order moves to `DELIVERED`. That is a one-line
-   addition inside the existing status-change transaction, deliberately left out
-   because changing production-order behaviour was outside the approved scope.
+   what changed, `markDelivered` publishes `PRODUCTION_ORDER_COMPLETED` on the
+   actual transition, and `cancel` publishes `PRODUCTION_ORDER_CANCELLED` —
+   see "Order-conversation coverage (2026-09-11)" at the end of this document.
 5. **Cleanup jobs.** Retention is documented but only session expiry and processed
    outbox rows are realistic candidates; neither job is written.
 6. **Frontend integration.** The API change below needs communicating.
@@ -387,3 +383,45 @@ pg_dump -d marel_app --data-only --no-owner --no-privileges \
 
 If you forget, `ddl-auto=validate` in the test profile fails the build — which is
 the point.
+
+---
+
+## 8. Order-conversation coverage (2026-09-11)
+
+Branch `feature/order-email-coverage`. The conversation mails grew from one
+sentence into the agreed format, and the moments nobody was announcing are
+announced. Both order types (production and sample) are covered alike.
+
+**The mail body and its PDF.** Every CREATED / UPDATED / COMPLETED / CANCELLED
+event carries an `orderView` in its payload — the whole order captured inside
+the publishing transaction (`order_email_view.OrderEmailView`, built by the two
+order services). `NotificationEmailComposer` renders it as the order table
+(`OrderEmailHtmlRenderer`, DIFF mode): what an edit removed is struck through,
+what it added or changed is bold, the rest stays plain. The same view rendered
+CLEAN becomes the attached PDF (`OrderPdfRenderer`, Flying Saucer + OpenPDF,
+DejaVu fonts under `resources/fonts` for the sr-Latn glyphs). A failed PDF
+render logs and sends the mail without the file. Sample-order mails now carry
+the deep link too (`SAMPLE_ORDER` route in the composer).
+
+**Cancellation is announced.** `PRODUCTION_ORDER_CANCELLED` and
+`SAMPLE_ORDER_CANCELLED`, published on the actual transition only, with a
+formal notice naming the date (`statusDate`). COMPLETED got the same formal
+wording, falling back to the old sentence for replayed events without the date.
+
+**The 09:00 job** (`order_reminder.OrderReminderJob`, Europe/Belgrade, one
+transaction per order): deadline reminders at 7/3/0 days for every successive
+delivery line and every line-item partial quantity with a date — the payload
+names WHICH deadline is running out — and the once-per-order "all line items
+done" notice when read-time progress reaches 100%
+(`production_orders.completion_notified_at` makes it once). Sent reminders are
+recorded in `order_reminders` (V51); the unique index over (order, subject,
+date, threshold) keeps a rerun silent, and a MOVED deadline warns again for its
+new date. The production order's own `delivery_deadline` is free text and is
+deliberately not parsed for reminders.
+
+**Note for the test suite:** `ProductionOrderDeadlineChangeIT` was already red
+on master — it pinned the retired `PRODUCTION_ORDER_DEADLINE_CHANGED` event. It
+now pins the behaviour that replaced it (the deadline change listed in
+`PRODUCTION_ORDER_UPDATED`). New tests: `OrderEmailViewTest`,
+`OrderEmailHtmlRendererTest`, `OrderReminderIT`, plus composer tests that
+render a real PDF and the cancel announcements in `OrderCancelIT`.

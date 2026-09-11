@@ -5,6 +5,7 @@ import jakarta.mail.internet.MimeMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
@@ -73,13 +74,26 @@ public class PostmarkEmailSender implements EmailSender {
     public void send(EmailMessage message) {
         try {
             MimeMessage mime = mailSender.createMimeMessage();
+            // Multipart only when something is actually attached: a multipart
+            // wrapper around a plain HTML body is extra MIME structure some
+            // clients render with an empty "attachment" pane.
+            boolean hasAttachments = message.attachments() != null
+                    && !message.attachments().isEmpty();
             MimeMessageHelper helper = new MimeMessageHelper(
-                    mime, false, StandardCharsets.UTF_8.name());
+                    mime, hasAttachments, StandardCharsets.UTF_8.name());
 
             helper.setFrom(fromWithDisplayName(message.fromName()));
             helper.setTo(message.toAddresses().toArray(new String[0]));
             helper.setSubject(message.subject());
             helper.setText(message.htmlBody(), true);
+
+            if (hasAttachments) {
+                for (EmailMessage.Attachment attachment : message.attachments()) {
+                    helper.addAttachment(attachment.fileName(),
+                            new ByteArrayResource(attachment.content()),
+                            attachment.contentType());
+                }
+            }
 
             if (message.replyTo() != null && !message.replyTo().isBlank()) {
                 helper.setReplyTo(message.replyTo());

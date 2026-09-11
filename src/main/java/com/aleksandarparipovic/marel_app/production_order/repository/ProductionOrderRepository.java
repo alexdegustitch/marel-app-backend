@@ -20,6 +20,15 @@ public interface ProductionOrderRepository extends JpaRepository<ProductionOrder
     List<ProductionOrder> findByIsActiveIsTrueOrderByNameAsc();
 
     /**
+     * The ids the morning reminder job walks — every order still open. Ids
+     * rather than entities, because the job re-loads each order inside its own
+     * per-order transaction; holding a detached list of entities across those
+     * would only invite stale reads.
+     */
+    @Query("select o.id from ProductionOrder o where o.status = :status and o.isActive = true")
+    List<Long> findIdsByStatusAndActive(@Param("status") ProductionOrderStatus status);
+
+    /**
      * The orders one user WROTE, newest first — what a commercial colleague's
      * profile lists. The customer is fetch-joined (a to-one, so paging stays in
      * the database) because the row shows its name; archived orders are excluded.
