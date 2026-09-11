@@ -27,6 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * even when the form never touched them — so a naive "we just wrote deadlines,
  * announce it" would e-mail the entire recipient list every time somebody fixes
  * a typo in a note. Within a month people would switch the notifications off.
+ *
+ * <p>The announcement rides in PRODUCTION_ORDER_UPDATED — one event per save,
+ * the moved deadline listed among its changes. The dedicated
+ * PRODUCTION_ORDER_DEADLINE_CHANGED event is no longer published (see
+ * OutboxEventType); this suite pins the behaviour that replaced it.
  */
 @Transactional
 class ProductionOrderDeadlineChangeIT extends AbstractIntegrationTest {
@@ -58,10 +63,13 @@ class ProductionOrderDeadlineChangeIT extends AbstractIntegrationTest {
                 List.of());
     }
 
+    /** The update events whose change list names the deadlines ("rokovi"). */
     private List<OutboxEvent> deadlineEventsFor(Long orderId) {
         return outboxEventRepository.findAll().stream()
-                .filter(e -> e.getEventType() == OutboxEventType.PRODUCTION_ORDER_DEADLINE_CHANGED)
+                .filter(e -> e.getEventType() == OutboxEventType.PRODUCTION_ORDER_UPDATED)
                 .filter(e -> orderId.equals(e.getAggregateId()))
+                .filter(e -> e.getPayload().hasNonNull("changes")
+                        && e.getPayload().get("changes").toString().contains("rokovi"))
                 .toList();
     }
 
@@ -85,9 +93,8 @@ class ProductionOrderDeadlineChangeIT extends AbstractIntegrationTest {
         List<OutboxEvent> events = deadlineEventsFor(order.id());
         assertThat(events).hasSize(1);
 
-        var payload = events.getFirst().getPayload();
-        assertThat(payload.get("deadlinesBefore").toString()).contains("01.03.2026.");
-        assertThat(payload.get("deadlinesAfter").toString()).contains("15.04.2026.");
+        String changes = events.getFirst().getPayload().get("changes").toString();
+        assertThat(changes).contains("01.03.2026.").contains("15.04.2026.");
     }
 
     @Test

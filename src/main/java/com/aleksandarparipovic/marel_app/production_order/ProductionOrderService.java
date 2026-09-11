@@ -32,6 +32,8 @@ import com.aleksandarparipovic.marel_app.production_order_line_item_note.Product
 import com.aleksandarparipovic.marel_app.production_order_line_item_note.repository.ProductionOrderLineItemNoteRepository;
 import com.aleksandarparipovic.marel_app.production_order_line_item_quantity.ProductionOrderLineItemQuantity;
 import com.aleksandarparipovic.marel_app.production_order_line_item_quantity.repository.ProductionOrderLineItemQuantityRepository;
+import com.aleksandarparipovic.marel_app.order_email_view.OrderEmailState;
+import com.aleksandarparipovic.marel_app.order_email_view.OrderEmailView;
 import com.aleksandarparipovic.marel_app.outbox.OutboxAggregateType;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventPublisher;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
@@ -235,6 +237,10 @@ public class ProductionOrderService {
         payload.put("orderCode", order.getCode());
         payload.put("orderName", order.getName());
         payload.put("actorUserId", currentUserService.getCurrentUserId());
+        // The whole order, captured NOW inside the creating transaction — the
+        // mail renders this, not whatever the order says when the delivery
+        // worker eventually gets to it.
+        payload.put("orderView", OrderEmailView.of(order.getCode(), emailState(order)));
 
         outboxEventPublisher.publish(
                 OutboxEventType.PRODUCTION_ORDER_CREATED,
@@ -242,6 +248,84 @@ public class ProductionOrderService {
                 order.getId(),
                 payload
         );
+    }
+
+    /**
+     * The order as its mail displays it — the {@link OrderEmailView} input.
+     *
+     * <p>Separate from {@link #snapshot} although they read the same rows: the
+     * snapshot exists to answer "did anything change" as compactly as possible,
+     * this exists to be RENDERED, field by field, with labels a recipient reads.
+     * Folding them together would couple the change gate to the mail layout.
+     */
+    private OrderEmailState emailState(ProductionOrder order) {
+        List<OrderEmailState.Field> fields = new ArrayList<>();
+        fields.add(new OrderEmailState.Field("Naziv", blankToNull(order.getName())));
+        fields.add(new OrderEmailState.Field("Kupac",
+                order.getCustomer() == null ? null : order.getCustomer().getName()));
+        fields.add(new OrderEmailState.Field("Datum kreiranja", formatDate(order.getCreationDate())));
+        fields.add(new OrderEmailState.Field("Datum porudžbine", formatDate(order.getOrderDate())));
+        fields.add(new OrderEmailState.Field("Rok isporuke", blankToNull(order.getDeliveryDeadline())));
+        // Flags carry "da" or nothing: four "ne" rows would bury the line that
+        // matters, and a flag switched off reads as its "da" struck through.
+        fields.add(new OrderEmailState.Field("Testiranje", flagValue(order.getTestingRequired())));
+        fields.add(new OrderEmailState.Field("Visok prioritet", flagValue(order.getIsHighPriority())));
+        fields.add(new OrderEmailState.Field("Najava", flagValue(order.getIsAnnounced())));
+        fields.add(new OrderEmailState.Field("Sukcesivne isporuke",
+                flagValue(order.getHasSuccessiveDeliveries())));
+        fields.add(new OrderEmailState.Field("Napomena", blankToNull(order.getNote())));
+
+        List<String> deadlines = describeDeadlines(productionOrderDeadlineRepository
+                .findAllByProductionOrder_IdAndIsActiveIsTrue(order.getId()));
+
+        List<OrderEmailState.Item> items = productionOrderLineItemRepository
+                .findByProductionOrder_IdAndIsActiveIsTrueOrderByLineOrderAsc(order.getId())
+                .stream()
+                .map(this::emailItem)
+                .toList();
+
+        return new OrderEmailState(fields, deadlines, items);
+    }
+
+    private OrderEmailState.Item emailItem(ProductionOrderLineItem item) {
+        String name = item.getProduct() == null ? "-" : item.getProduct().getProductName();
+        if (item.getProductDescription() != null && !item.getProductDescription().isBlank()) {
+            name += " — " + item.getProductDescription().trim();
+        }
+
+        List<ProductionOrderLineItemQuantity> quantities = productionOrderLineItemQuantityRepository
+                .findByProductionOrderLineItem_IdOrderByOrderQuantityAsc(item.getId())
+                .stream()
+                .filter(q -> Boolean.TRUE.equals(q.getIsActive()))
+                .toList();
+
+        // "500 (do 03.09.2026.) + 50" — the partial quantities with their own
+        // deadlines, or the line total when the form entered no partials.
+        String quantity = quantities.isEmpty()
+                ? String.valueOf(item.getQuantity())
+                : quantities.stream()
+                        .map(q -> q.getQuantity() + (q.getDeliveryDeadline() == null
+                                ? ""
+                                : " (do " + DATE_FORMAT.format(q.getDeliveryDeadline()) + ")"))
+                        .collect(Collectors.joining(" + "));
+
+        return new OrderEmailState.Item(
+                item.getProduct() == null ? "-" : String.valueOf(item.getProduct().getId()),
+                name,
+                quantity,
+                blankToNull(item.getNote()));
+    }
+
+    private static String flagValue(Boolean flag) {
+        return Boolean.TRUE.equals(flag) ? "da" : null;
+    }
+
+    private static String formatDate(LocalDate date) {
+        return date == null ? null : DATE_FORMAT.format(date);
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     /**
@@ -325,7 +409,8 @@ public class ProductionOrderService {
      * without the comparison every corrected typo would mail the whole recipient
      * list.
      */
-    private void publishOrderUpdated(ProductionOrder order, OrderSnapshot before) {
+    private void publishOrderUpdated(
+            ProductionOrder order, OrderSnapshot before, OrderEmailState beforeState) {
         List<String> changes = describeChanges(before, snapshot(order));
         if (changes.isEmpty()) {
             return;
@@ -338,6 +423,11 @@ public class ProductionOrderService {
         payload.put("responsibleUserId",
                 order.getUser() == null ? null : order.getUser().getId());
         payload.put("actorUserId", currentUserService.getCurrentUserId());
+        // The whole order with this save's differences marked — what the mail
+        // strikes through and bolds. Diffed HERE, against the state captured
+        // before the first setter ran, so a later save cannot smear into it.
+        payload.put("orderView",
+                OrderEmailView.diff(order.getCode(), beforeState, emailState(order)));
 
         outboxEventPublisher.publish(
                 OutboxEventType.PRODUCTION_ORDER_UPDATED,
@@ -433,6 +523,7 @@ public class ProductionOrderService {
         // entity in place, so a snapshot taken any later would already be the new
         // values compared against themselves — every save would report no change.
         OrderSnapshot before = snapshot(order);
+        OrderEmailState beforeState = emailState(order);
 
         order.setName(req.name().trim());
         order.setNote(req.note());
@@ -520,7 +611,7 @@ public class ProductionOrderService {
             }
         }
 
-        publishOrderUpdated(order, before);
+        publishOrderUpdated(order, before, beforeState);
 
         return productionOrderMapper.toDetailDto(order, deadlineDtos, lineItemDtos);
     }
@@ -550,6 +641,10 @@ public class ProductionOrderService {
             payload.put("responsibleUserId",
                     order.getUser() == null ? null : order.getUser().getId());
             payload.put("actorUserId", currentUserService.getCurrentUserId());
+            // The date the formal notice names, and the final order document
+            // the mail carries as its PDF.
+            payload.put("statusDate", DATE_FORMAT.format(LocalDate.now()));
+            payload.put("orderView", OrderEmailView.of(order.getCode(), emailState(order)));
 
             outboxEventPublisher.publish(
                     OutboxEventType.PRODUCTION_ORDER_COMPLETED,
@@ -588,8 +683,28 @@ public class ProductionOrderService {
             order.setCancelledAt(OffsetDateTime.now());
             // The identity whose password was just confirmed — the signature
             // records the signer, not whatever the session happens to hold.
-            order.setCancelledBy(userRepository.findByUsername(authentication.getName()).orElse(null));
+            User signer = userRepository.findByUsername(authentication.getName()).orElse(null);
+            order.setCancelledBy(signer);
             productionOrderRepository.save(order);
+
+            // The conversation's formal notice that everything stops. Published
+            // only on the actual transition, same as markDelivered: replaying a
+            // cancel must not tell everybody twice.
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("orderCode", order.getCode());
+            payload.put("orderName", order.getName());
+            payload.put("responsibleUserId",
+                    order.getUser() == null ? null : order.getUser().getId());
+            payload.put("actorUserId", signer == null ? null : signer.getId());
+            payload.put("statusDate", DATE_FORMAT.format(LocalDate.now()));
+            payload.put("orderView", OrderEmailView.of(order.getCode(), emailState(order)));
+
+            outboxEventPublisher.publish(
+                    OutboxEventType.PRODUCTION_ORDER_CANCELLED,
+                    OutboxAggregateType.PRODUCTION_ORDER,
+                    order.getId(),
+                    payload
+            );
         }
 
         return getDetail(order.getId());

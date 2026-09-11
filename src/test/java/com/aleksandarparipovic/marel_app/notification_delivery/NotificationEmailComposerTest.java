@@ -17,7 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class NotificationEmailComposerTest {
 
     private final NotificationEmailComposer composer =
-            new NotificationEmailComposer("https://app.furlytics.com", "Furlytics");
+            new NotificationEmailComposer(
+                    "https://app.furlytics.com", "Furlytics", new OrderPdfRenderer());
 
     private DeliveryBatchProcessor.PendingSend send(
             String subject, String body, String actorName, String actorEmail,
@@ -26,7 +27,7 @@ class NotificationEmailComposerTest {
         return new DeliveryBatchProcessor.PendingSend(
                 1L, NotificationChannel.EMAIL, List.of("primalac@marel.rs"),
                 subject, body, actorName, actorEmail, entityType, entityId,
-                null, null, null);
+                null, null, null, null, null);
     }
 
     @Test
@@ -71,6 +72,63 @@ class NotificationEmailComposerTest {
                 "Nešto", "Poruka.", null, null, "SOMETHING_ELSE", 7L));
 
         assertThat(message.htmlBody()).doesNotContain("<a href");
+    }
+
+    @Test
+    @DisplayName("an order event renders the whole order, marked, and attaches its PDF")
+    void orderViewBecomesTableAndPdf() {
+        com.aleksandarparipovic.marel_app.order_email_view.OrderEmailView view =
+                com.aleksandarparipovic.marel_app.order_email_view.OrderEmailView.diff(
+                        "190/2026",
+                        new com.aleksandarparipovic.marel_app.order_email_view.OrderEmailState(
+                                List.of(new com.aleksandarparipovic.marel_app.order_email_view
+                                        .OrderEmailState.Field("Kupac", "ENIA")),
+                                List.of(),
+                                List.of()),
+                        new com.aleksandarparipovic.marel_app.order_email_view.OrderEmailState(
+                                List.of(new com.aleksandarparipovic.marel_app.order_email_view
+                                        .OrderEmailState.Field("Kupac", "ENIA Grčka")),
+                                List.of(),
+                                List.of()));
+
+        com.fasterxml.jackson.databind.JsonNode payload =
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .valueToTree(java.util.Map.of("orderView", view));
+
+        EmailMessage message = composer.compose(new DeliveryBatchProcessor.PendingSend(
+                1L, NotificationChannel.EMAIL, List.of("primalac@marel.rs"),
+                "Re: Nalog 190/2026 — ENIA Grčka",
+                "Nalog 190/2026: kupac: ENIA → ENIA Grčka.",
+                "Maja Vučetić", "maja@marel.rs", "PRODUCTION_ORDER", 42L,
+                null, null, null,
+                com.aleksandarparipovic.marel_app.outbox.OutboxEventType.PRODUCTION_ORDER_UPDATED,
+                payload));
+
+        // The body greets, explains the marking, and shows both readings.
+        assertThat(message.htmlBody())
+                .contains("Dobar dan,")
+                .contains("uklonjeno je precrtano")
+                .contains("<del").contains("ENIA")
+                .contains("<b>ENIA Grčka</b>");
+
+        // The PDF rides along, named after the order, and really is a PDF.
+        assertThat(message.attachments()).hasSize(1);
+        EmailMessage.Attachment attachment = message.attachments().get(0);
+        assertThat(attachment.fileName()).isEqualTo("Nalog-190-2026.pdf");
+        assertThat(attachment.contentType()).isEqualTo("application/pdf");
+        assertThat(new String(attachment.content(), 0, 4,
+                java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF");
+    }
+
+    @Test
+    @DisplayName("an event without an order view keeps the plain shape and no attachment")
+    void plainEventStaysPlain() {
+        EmailMessage message = composer.compose(send(
+                "Nalog je isporučen", "Nalog N-12 je isporučen.",
+                null, null, "PRODUCTION_ORDER", 42L));
+
+        assertThat(message.htmlBody()).doesNotContain("Dobar dan");
+        assertThat(message.attachments()).isEmpty();
     }
 
     @Test

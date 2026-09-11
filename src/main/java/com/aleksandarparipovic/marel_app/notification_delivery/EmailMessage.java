@@ -27,6 +27,8 @@ import java.util.List;
  * @param inReplyTo   the message this one continues; null starts a conversation
  * @param references  the full ancestor chain, space separated; null or blank on
  *                    a first message
+ * @param attachments files carried with the message — the order's PDF document
+ *                    on conversation mail; empty for everything else
  */
 public record EmailMessage(
         List<String> toAddresses,
@@ -36,8 +38,13 @@ public record EmailMessage(
         String replyTo,
         String messageId,
         String inReplyTo,
-        String references
+        String references,
+        List<Attachment> attachments
 ) {
+
+    /** One attached file, held in memory — these are one-page order documents. */
+    public record Attachment(String fileName, String contentType, byte[] content) {
+    }
 
     /**
      * A standalone message to one person — no conversation to join.
@@ -51,6 +58,7 @@ public record EmailMessage(
             String address, String subject, String htmlBody, String fromName, String replyTo
     ) {
         return new EmailMessage(
-                List.of(address), subject, htmlBody, fromName, replyTo, null, null, null);
+                List.of(address), subject, htmlBody, fromName, replyTo,
+                null, null, null, List.of());
     }
 }

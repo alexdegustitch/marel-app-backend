@@ -17,6 +17,17 @@ public interface SampleOrderRepository extends JpaRepository<SampleOrder, Long>,
     List<SampleOrder> findByIsActiveIsTrueOrderByNameAsc();
 
     /**
+     * The ids the morning reminder job walks — every order still open. The
+     * status column is free text (see SampleOrderStatus), so it is compared
+     * the same lenient way the application reads it everywhere else.
+     */
+    @Query("""
+            select s.id from SampleOrder s
+            where lower(s.status) = 'created' and s.isActive = true
+            """)
+    List<Long> findOpenIds();
+
+    /**
      * Sample orders whose name or code contains {@code q}, for the global
      * command-palette search. Case-insensitive, non-archived orders only, exact
      * code matches first; the customer name rides along as the subtitle. The

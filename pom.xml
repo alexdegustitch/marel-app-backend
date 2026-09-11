@@ -155,6 +155,16 @@
 			<artifactId>thumbnailator</artifactId>
 			<version>0.4.20</version>
 		</dependency>
+		<!-- HTML -> PDF for the order document attached to conversation mails.
+		     Renders the same markup the mail body uses, so the attachment and
+		     the message can never say two different things. Backed by OpenPDF;
+		     the DejaVu fonts under resources/fonts carry the sr-Latn glyphs the
+		     built-in PDF fonts lack. -->
+		<dependency>
+			<groupId>org.xhtmlrenderer</groupId>
+			<artifactId>flying-saucer-pdf</artifactId>
+			<version>10.5.0</version>
+		</dependency>
 
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>

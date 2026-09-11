@@ -2,6 +2,8 @@ package com.aleksandarparipovic.marel_app;
 
 import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
+import com.aleksandarparipovic.marel_app.outbox.OutboxEventRepository;
+import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrder;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrderService;
 import com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus;
@@ -56,6 +58,7 @@ class OrderCancelIT extends AbstractIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private RoleRepository roleRepository;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private OutboxEventRepository outboxEventRepository;
 
     @AfterEach
     void clearAuthentication() {
@@ -156,7 +159,7 @@ class OrderCancelIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("re-cancelling is a no-op, not an error")
+    @DisplayName("re-cancelling is a no-op, not an error — and announces only once")
     void reCancelIsNoOp() {
         Authentication auth = asCommercial();
         ProductionOrder order = anOrder(ProductionOrderStatus.CREATED);
@@ -166,6 +169,31 @@ class OrderCancelIT extends AbstractIntegrationTest {
 
         assertThat(productionOrderRepository.findById(order.getId()).orElseThrow().getStatus())
                 .isEqualTo(ProductionOrderStatus.CANCELLED);
+
+        // The formal notice goes to the conversation on the actual transition,
+        // and only then — a replayed cancel must not tell everybody twice.
+        assertThat(outboxEventRepository.findAll())
+                .filteredOn(e -> e.getEventType() == OutboxEventType.PRODUCTION_ORDER_CANCELLED
+                        && e.getAggregateId().equals(order.getId()))
+                .hasSize(1)
+                .allSatisfy(e -> {
+                    assertThat(e.getPayload().hasNonNull("statusDate")).isTrue();
+                    assertThat(e.getPayload().hasNonNull("orderView")).isTrue();
+                });
+    }
+
+    @Test
+    @DisplayName("a cancelled sample order announces its cancellation too")
+    void sampleCancelAnnounces() {
+        Authentication auth = asCommercial();
+        SampleOrder order = aSampleOrder(SampleOrderStatus.CREATED);
+
+        sampleOrderService.cancel(order.getId(), PASSWORD, auth);
+
+        assertThat(outboxEventRepository.findAll())
+                .filteredOn(e -> e.getEventType() == OutboxEventType.SAMPLE_ORDER_CANCELLED
+                        && e.getAggregateId().equals(order.getId()))
+                .hasSize(1);
     }
 
     @Test

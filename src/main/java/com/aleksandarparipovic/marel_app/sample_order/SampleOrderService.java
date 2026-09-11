@@ -8,6 +8,8 @@ import com.aleksandarparipovic.marel_app.config.security.PermissionService;
 import com.aleksandarparipovic.marel_app.customer.Customer;
 import com.aleksandarparipovic.marel_app.customer.CustomerRepository;
 import com.aleksandarparipovic.marel_app.customer.dto.CustomerSampleOrderRow;
+import com.aleksandarparipovic.marel_app.order_email_view.OrderEmailState;
+import com.aleksandarparipovic.marel_app.order_email_view.OrderEmailView;
 import com.aleksandarparipovic.marel_app.outbox.OutboxAggregateType;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventPublisher;
 import com.aleksandarparipovic.marel_app.outbox.OutboxEventType;
@@ -172,6 +174,7 @@ public class SampleOrderService {
         // entity in place, so a snapshot taken any later would already be the new
         // values compared against themselves — every save would report no change.
         OrderSnapshot before = snapshot(order);
+        OrderEmailState beforeState = emailState(order);
 
         LocalDate creationDate = req.creationDate() != null ? req.creationDate() : order.getCreationDate();
         requireDeadlineNotBeforeCreation(creationDate, req.deadlineDate());
@@ -203,7 +206,7 @@ public class SampleOrderService {
             }
         }
 
-        publishOrderUpdated(order, before);
+        publishOrderUpdated(order, before, beforeState);
 
         return mapper.toDetailDto(order, lineItemDtos);
     }
@@ -242,6 +245,10 @@ public class SampleOrderService {
             payload.put("orderName", order.getName());
             payload.put("responsibleUserId", order.getUser() == null ? null : order.getUser().getId());
             payload.put("actorUserId", actorId);
+            // The date the formal notice names, and the final order document
+            // the mail carries as its PDF.
+            payload.put("statusDate", DATE_FORMAT.format(LocalDate.now()));
+            payload.put("orderView", OrderEmailView.of(order.getCode(), emailState(order)));
 
             outboxEventPublisher.publish(
                     OutboxEventType.SAMPLE_ORDER_COMPLETED,
@@ -279,8 +286,28 @@ public class SampleOrderService {
             order.setCancelledAt(OffsetDateTime.now());
             // The identity whose password was just confirmed — the signature
             // records the signer, not whatever the session happens to hold.
-            order.setCancelledBy(userRepository.findByUsername(authentication.getName()).orElse(null));
+            User signer = userRepository.findByUsername(authentication.getName()).orElse(null);
+            order.setCancelledBy(signer);
             sampleOrderRepository.save(order);
+
+            // The conversation's formal notice that everything stops. Published
+            // only on the actual transition, same as close(): replaying a
+            // cancel must not tell everybody twice.
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("orderCode", order.getCode());
+            payload.put("orderName", order.getName());
+            payload.put("responsibleUserId",
+                    order.getUser() == null ? null : order.getUser().getId());
+            payload.put("actorUserId", signer == null ? null : signer.getId());
+            payload.put("statusDate", DATE_FORMAT.format(LocalDate.now()));
+            payload.put("orderView", OrderEmailView.of(order.getCode(), emailState(order)));
+
+            outboxEventPublisher.publish(
+                    OutboxEventType.SAMPLE_ORDER_CANCELLED,
+                    OutboxAggregateType.SAMPLE_ORDER,
+                    order.getId(),
+                    payload
+            );
         }
 
         return getDetail(order.getId());
@@ -812,6 +839,10 @@ public class SampleOrderService {
         payload.put("orderCode", order.getCode());
         payload.put("orderName", order.getName());
         payload.put("actorUserId", currentUserService.getCurrentUserId());
+        // The whole order, captured NOW inside the creating transaction — the
+        // mail renders this, not whatever the order says when the delivery
+        // worker eventually gets to it.
+        payload.put("orderView", OrderEmailView.of(order.getCode(), emailState(order)));
 
         outboxEventPublisher.publish(
                 OutboxEventType.SAMPLE_ORDER_CREATED,
@@ -819,6 +850,49 @@ public class SampleOrderService {
                 order.getId(),
                 payload
         );
+    }
+
+    /**
+     * The order as its mail displays it — the {@link OrderEmailView} input.
+     *
+     * <p>Separate from {@link #snapshot} although they read the same rows: the
+     * snapshot exists to answer "did anything change" as compactly as possible,
+     * this exists to be RENDERED, field by field, with labels a recipient reads.
+     */
+    private OrderEmailState emailState(SampleOrder order) {
+        List<OrderEmailState.Field> fields = new ArrayList<>();
+        fields.add(new OrderEmailState.Field("Naziv", blankToNull(order.getName())));
+        fields.add(new OrderEmailState.Field("Kupac",
+                order.getCustomer() == null ? null : order.getCustomer().getName()));
+        fields.add(new OrderEmailState.Field("Datum kreiranja",
+                order.getCreationDate() == null ? null : DATE_FORMAT.format(order.getCreationDate())));
+        fields.add(new OrderEmailState.Field("Rok",
+                order.getDeadlineDate() == null ? null : DATE_FORMAT.format(order.getDeadlineDate())));
+        fields.add(new OrderEmailState.Field("Napomena roka", blankToNull(order.getDeadlineNote())));
+        fields.add(new OrderEmailState.Field("Napomena", blankToNull(order.getNote())));
+
+        List<OrderEmailState.Item> items = lineItemRepository
+                .findBySampleOrder_IdAndIsActiveIsTrueOrderByOrderLineAsc(order.getId())
+                .stream()
+                .map(item -> {
+                    String name = item.getProduct() == null
+                            ? "-" : item.getProduct().getProductName();
+                    if (item.getProductDescription() != null
+                            && !item.getProductDescription().isBlank()) {
+                        name += " — " + item.getProductDescription().trim();
+                    }
+                    return new OrderEmailState.Item(
+                            item.getProduct() == null
+                                    ? "-" : String.valueOf(item.getProduct().getId()),
+                            name,
+                            String.valueOf(item.getQuantity()),
+                            blankToNull(item.getNote()));
+                })
+                .toList();
+
+        // A sample order has one rok, carried as a header field — no successive
+        // delivery lines to list.
+        return new OrderEmailState(fields, List.of(), items);
     }
 
     /**
@@ -877,7 +951,8 @@ public class SampleOrderService {
      * items on every save whether or not the form touched them, so without the
      * comparison every corrected typo would mail the whole recipient list.
      */
-    private void publishOrderUpdated(SampleOrder order, OrderSnapshot before) {
+    private void publishOrderUpdated(
+            SampleOrder order, OrderSnapshot before, OrderEmailState beforeState) {
         List<String> changes = describeChanges(before, snapshot(order));
         if (changes.isEmpty()) {
             return;
@@ -889,6 +964,11 @@ public class SampleOrderService {
         payload.put("changes", changes);
         payload.put("responsibleUserId", order.getUser() == null ? null : order.getUser().getId());
         payload.put("actorUserId", currentUserService.getCurrentUserId());
+        // The whole order with this save's differences marked — what the mail
+        // strikes through and bolds. Diffed HERE, against the state captured
+        // before the first setter ran, so a later save cannot smear into it.
+        payload.put("orderView",
+                OrderEmailView.diff(order.getCode(), beforeState, emailState(order)));
 
         outboxEventPublisher.publish(
                 OutboxEventType.SAMPLE_ORDER_UPDATED,

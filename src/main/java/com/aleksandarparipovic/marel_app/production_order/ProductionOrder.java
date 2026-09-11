@@ -77,6 +77,14 @@ public class ProductionOrder {
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 
+    /**
+     * When the "all line items are done" notice went out; null until it does.
+     * Written once by the morning reminder job — progress is computed at read
+     * time and can move backwards, but an announcement cannot un-happen.
+     */
+    @Column(name = "completion_notified_at")
+    private OffsetDateTime completionNotifiedAt;
+
     /** Who called it off — the signature under the cancellation. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "cancelled_by")
