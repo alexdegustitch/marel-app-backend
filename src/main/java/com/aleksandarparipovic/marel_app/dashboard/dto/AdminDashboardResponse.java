@@ -97,9 +97,17 @@ public record AdminDashboardResponse(
         }
     }
 
-    /** A month a supervisor has handed over (status APPROVED) and payroll has not frozen. */
+    /**
+     * A month a supervisor has handed over (status APPROVED) and payroll has
+     * not frozen.
+     *
+     * @param monthlyReportId what the payroll screen is addressed by; null
+     *   while the month's report has not been produced yet — the row then
+     *   leads to the payroll list instead of a dead address.
+     */
     public record ReadyPayrollRow(
             Long payrollRunItemId,
+            Long monthlyReportId,
             Long employeeId,
             String employeeName,
             LocalDate period,

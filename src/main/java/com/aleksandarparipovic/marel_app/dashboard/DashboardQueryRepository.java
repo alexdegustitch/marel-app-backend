@@ -40,7 +40,8 @@ public class DashboardQueryRepository {
 
     public List<ReadyPayrollRow> findReadyPayrolls(int limit) {
         return jdbc.query("""
-                SELECT pri.id, e.id AS employee_id, e.full_name, pri.period, pri.updated_at
+                SELECT pri.id, pri.monthly_report_id, e.id AS employee_id, e.full_name,
+                       pri.period, pri.updated_at
                 FROM payroll_run_items pri
                 JOIN employees e ON e.id = pri.employee_id
                 WHERE pri.status = 'APPROVED'
@@ -50,6 +51,7 @@ public class DashboardQueryRepository {
                 new MapSqlParameterSource("limit", limit),
                 (rs, i) -> new ReadyPayrollRow(
                         rs.getLong("id"),
+                        nullableLong(rs, "monthly_report_id"),
                         rs.getLong("employee_id"),
                         rs.getString("full_name"),
                         localDate(rs, "period"),
@@ -123,5 +125,10 @@ public class DashboardQueryRepository {
 
     private static OffsetDateTime offsetDateTime(ResultSet rs, String column) throws SQLException {
         return rs.getObject(column, OffsetDateTime.class);
+    }
+
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
     }
 }
