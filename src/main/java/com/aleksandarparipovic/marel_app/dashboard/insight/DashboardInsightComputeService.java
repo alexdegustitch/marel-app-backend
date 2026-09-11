@@ -10,6 +10,7 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Perfo
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.RowMapper;
@@ -66,12 +67,14 @@ public class DashboardInsightComputeService {
     public static final String SETTING_NORM_WINDOW_DAYS = "dashboard_norm_window_days";
     public static final String SETTING_ACTIVITY_WINDOW_DAYS = "dashboard_activity_window_days";
     public static final String SETTING_TOP_PERFORMER_MIN_HOURS = "dashboard_top_performer_min_hours";
+    public static final String SETTING_SUSPECT_RATE_PCT = "dashboard_suspect_rate_pct";
 
     static final int DEFAULT_NORM_RISE_PCT = 10;
     static final int DEFAULT_NORM_DROP_PCT = 10;
     static final int DEFAULT_NORM_WINDOW_DAYS = 90;
     static final int DEFAULT_ACTIVITY_WINDOW_DAYS = 30;
     static final int DEFAULT_TOP_PERFORMER_MIN_HOURS = 20;
+    static final int DEFAULT_SUSPECT_RATE_PCT = 250;
 
     /** What the board is currently told to call worth looking at. */
     public record Thresholds(
@@ -79,7 +82,8 @@ public class DashboardInsightComputeService {
             int normDropPct,
             int normWindowDays,
             int activityWindowDays,
-            int topPerformerMinHours
+            int topPerformerMinHours,
+            int suspectRatePct
     ) {}
 
     /** Below this much recorded work, a percentage says more about luck than about the norm. */
@@ -123,7 +127,8 @@ public class DashboardInsightComputeService {
                 intSetting(SETTING_NORM_DROP_PCT, DEFAULT_NORM_DROP_PCT),
                 intSetting(SETTING_NORM_WINDOW_DAYS, DEFAULT_NORM_WINDOW_DAYS),
                 intSetting(SETTING_ACTIVITY_WINDOW_DAYS, DEFAULT_ACTIVITY_WINDOW_DAYS),
-                intSetting(SETTING_TOP_PERFORMER_MIN_HOURS, DEFAULT_TOP_PERFORMER_MIN_HOURS));
+                intSetting(SETTING_TOP_PERFORMER_MIN_HOURS, DEFAULT_TOP_PERFORMER_MIN_HOURS),
+                intSetting(SETTING_SUSPECT_RATE_PCT, DEFAULT_SUSPECT_RATE_PCT));
     }
 
     /** A numeric setting as a positive int, or the fallback when absent or absurd. */
@@ -178,6 +183,8 @@ public class DashboardInsightComputeService {
                 performanceSpread(from, computedFor));
         repository.save(DashboardInsightKey.SCRAP_SPIKE, computedFor, WINDOW_DAYS,
                 scrapSpike(from, computedFor));
+        repository.save(DashboardInsightKey.SUSPECT_ENTRIES, computedFor, WINDOW_DAYS,
+                suspectEntries(from, computedFor, t.suspectRatePct()));
 
         int removed = repository.deleteComputedBefore(computedFor.minusDays(RETENTION_DAYS));
         if (removed > 0) {
@@ -517,6 +524,70 @@ public class DashboardInsightComputeService {
                         rs.getObject("work_date", LocalDate.class),
                         rs.getString("shift_code"),
                         integer(rs, "shift_minutes")));
+    }
+
+    // -------------------------------------------------------- suspect entries
+
+    /**
+     * One shift's work on one operation whose UNCAPPED rate is implausible.
+     *
+     * <p>The approved rate is clipped at {@code max_efficiency_percent}, so a
+     * quantity typed with an extra zero quietly becomes "the maximum" and looks
+     * like a good day. The uncapped rate is what the entry would earn without
+     * the ceiling — that is where the typo shows. Grouped per shift+operation,
+     * because that is the row somebody opens the karton to fix.
+     */
+    private List<SuspectEntryRow> suspectEntries(LocalDate from, LocalDate to, int thresholdPct) {
+        String sql = """
+                SELECT * FROM (
+                    SELECT f.work_shift_id,
+                           f.employee_id,
+                           max(ws.employee_record_id)                     AS employee_record_id,
+                           max(e.full_name)                               AS employee_name,
+                           f.work_date,
+                           f.operation_id,
+                           max(f.operation_name)                          AS operation_name,
+                           max(f.product_name)                            AS product_name,
+                           o.min_norm                                     AS min_norm,
+                           sum(f.quantity)::bigint                        AS quantity,
+                           sum(f.duration_min)::bigint                    AS duration_min,
+                           round(100.0 * (sum(f.quantity)::numeric * 60)
+                                 / nullif(sum(f.duration_min), 0)
+                                 / nullif(o.min_norm, 0), 1)              AS rate_pct
+                    FROM work_log_facts f
+                    JOIN operations o   ON o.id = f.operation_id
+                    JOIN employees e    ON e.id = f.employee_id
+                    JOIN work_shifts ws ON ws.id = f.work_shift_id
+                    WHERE f.work_date BETWEEN :from AND :to
+                      AND o.norm_required = true
+                      AND o.min_norm > 0
+                      AND f.duration_min > 0
+                    GROUP BY f.work_shift_id, f.employee_id, f.work_date, f.operation_id, o.min_norm
+                    HAVING sum(f.quantity) > 0
+                ) suspect
+                WHERE rate_pct >= :threshold
+                ORDER BY rate_pct DESC
+                LIMIT :limit
+                """;
+
+        return jdbc.query(sql, new MapSqlParameterSource()
+                        .addValue("from", from)
+                        .addValue("to", to)
+                        .addValue("threshold", thresholdPct)
+                        .addValue("limit", ROWS),
+                (rs, i) -> new SuspectEntryRow(
+                        rs.getLong("work_shift_id"),
+                        rs.getLong("employee_id"),
+                        rs.getObject("employee_record_id", Long.class),
+                        rs.getString("employee_name"),
+                        rs.getObject("work_date", LocalDate.class),
+                        rs.getLong("operation_id"),
+                        rs.getString("operation_name"),
+                        rs.getString("product_name"),
+                        integer(rs, "min_norm"),
+                        rs.getLong("quantity"),
+                        rs.getLong("duration_min"),
+                        rs.getBigDecimal("rate_pct")));
     }
 
     // ---------------------------------------------------------------- spread

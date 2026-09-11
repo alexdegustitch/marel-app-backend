@@ -11,6 +11,7 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Perfo
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -233,6 +234,8 @@ public record SupervisorDashboardResponse(
             int activityWindowDays,
             /** Hours of recorded normed work before a person is ranked in "Najbolji". */
             int topPerformerMinHours,
+            /** The uncapped rate above which an entry is called a probable typo. */
+            int suspectRatePct,
             LocalDate yesterday,
             List<NormFitRow> normTooLow,
             List<NormFitRow> normTooHigh,
@@ -246,7 +249,8 @@ public record SupervisorDashboardResponse(
             List<PerformerRow> topPerformers,
             List<MissingEntryRow> missingEntries,
             List<SpreadRow> performanceSpread,
-            List<ScrapRow> scrapSpike
+            List<ScrapRow> scrapSpike,
+            List<SuspectEntryRow> suspectEntries
     ) {
 
         /** What the board shows before the job has ever run. */
@@ -257,10 +261,11 @@ public record SupervisorDashboardResponse(
             return new Insights(null, null, true, windowDays,
                     thresholds.normWindowDays(), thresholds.normRisePct(), thresholds.normDropPct(),
                     thresholds.activityWindowDays(), thresholds.topPerformerMinHours(),
+                    thresholds.suspectRatePct(),
                     yesterday,
                     List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), List.of(), List.of());
         }
     }
 }

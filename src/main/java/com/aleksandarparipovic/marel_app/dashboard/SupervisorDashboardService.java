@@ -17,6 +17,7 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Perfo
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SpreadRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.SuspectEntryRow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -213,6 +214,7 @@ public class SupervisorDashboardService {
                 thresholds.normDropPct(),
                 thresholds.activityWindowDays(),
                 thresholds.topPerformerMinHours(),
+                thresholds.suspectRatePct(),
                 computedFor.minusDays(1),
                 normTooLow.map(DashboardInsightRepository.Stored::rows).orElseGet(List::of),
                 rows(DashboardInsightKey.NORM_TOO_HIGH, NormFitRow.class),
@@ -226,7 +228,8 @@ public class SupervisorDashboardService {
                 rows(DashboardInsightKey.TOP_PERFORMERS, PerformerRow.class),
                 rows(DashboardInsightKey.MISSING_ENTRIES, MissingEntryRow.class),
                 rows(DashboardInsightKey.PERFORMANCE_SPREAD, SpreadRow.class),
-                rows(DashboardInsightKey.SCRAP_SPIKE, ScrapRow.class));
+                rows(DashboardInsightKey.SCRAP_SPIKE, ScrapRow.class),
+                rows(DashboardInsightKey.SUSPECT_ENTRIES, SuspectEntryRow.class));
     }
 
     private <T> List<T> rows(DashboardInsightKey key, Class<T> rowType) {

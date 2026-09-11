@@ -126,6 +126,30 @@ public final class InsightRows {
     ) {}
 
     /**
+     * One shift's work on one operation whose UNCAPPED rate is implausible.
+     *
+     * @param ratePct          the rate WITHOUT the max-efficiency ceiling — what
+     *                         the entry would earn if the cap did not exist,
+     *                         which is exactly what exposes a typed quantity
+     * @param employeeRecordId the karton the shift lives in, so the row opens
+     *                         the month with the shift in focus
+     */
+    public record SuspectEntryRow(
+            Long workShiftId,
+            Long employeeId,
+            Long employeeRecordId,
+            String employeeName,
+            LocalDate workDate,
+            Long operationId,
+            String operationName,
+            String productName,
+            Integer minNorm,
+            Long quantity,
+            Long durationMin,
+            BigDecimal ratePct
+    ) {}
+
+    /**
      * How far apart employees are on one operation.
      *
      * @param spreadPct the gap in percentage points between the best and the worst
