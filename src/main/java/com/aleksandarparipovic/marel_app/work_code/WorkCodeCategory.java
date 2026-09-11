@@ -120,8 +120,8 @@ public class WorkCodeCategory {
     // initialiser and would insert NULL into a NOT NULL column — which is
     // exactly what 233 integration tests hit.
     @Builder.Default
-    @Column(name = "is_base_operation", nullable = false)
-    private Boolean baseOperation = true;
+    @Column(name = "is_basic_work_operation", nullable = false)
+    private Boolean basicWorkOperation = true;
 
     @Column(name = "allows_parallel_work", nullable = false)
     private Boolean allowsParallelWork = false;

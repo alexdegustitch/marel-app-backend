@@ -656,7 +656,7 @@ public class WorkCodeCategoryAdminService {
                               boolean fixedHourlyRate,
                               BigDecimal hourlyRate,
                               boolean affectsMealAllowance,
-                              boolean baseOperation,
+                              boolean basicWorkOperation,
                               boolean affectsWeekendBonus,
                               boolean affectsMonthlyBonus,
                               boolean isFullDay,
@@ -675,7 +675,7 @@ public class WorkCodeCategoryAdminService {
                     Boolean.TRUE.equals(base.getFixedHourlyRate()),
                     base.getHourlyRate(),
                     Boolean.TRUE.equals(base.getAffectsMealAllowance()),
-                    Boolean.TRUE.equals(base.getBaseOperation()),
+                    Boolean.TRUE.equals(base.getBasicWorkOperation()),
                     Boolean.TRUE.equals(base.getAffectsWeekendBonus()),
                     Boolean.TRUE.equals(base.getAffectsMonthlyBonus()),
                     Boolean.TRUE.equals(base.getIsFullDay()),
@@ -710,8 +710,8 @@ public class WorkCodeCategoryAdminService {
             throw new IllegalArgumentException("Za fiksnu satnicu mora da se unese satnica veća od nule.");
         }
         boolean isWork = "WORK".equals(request.type());
-        boolean baseOperation = Boolean.TRUE.equals(request.baseOperation());
-        if (baseOperation && !isWork) {
+        boolean basicWorkOperation = Boolean.TRUE.equals(request.basicWorkOperation());
+        if (basicWorkOperation && !isWork) {
             throw new IllegalArgumentException("Osnovna kategorija rada mora biti tipa \"na poslu\".");
         }
         boolean weekendPair = Boolean.TRUE.equals(request.weekendBonusPair());
@@ -728,7 +728,7 @@ public class WorkCodeCategoryAdminService {
                 fixedRate,
                 fixedRate ? request.hourlyRate() : null,
                 Boolean.TRUE.equals(request.affectsMealAllowance()),
-                baseOperation,
+                basicWorkOperation,
                 !Boolean.FALSE.equals(request.affectsWeekendBonus()),
                 !Boolean.FALSE.equals(request.affectsMonthlyBonus()),
                 Boolean.TRUE.equals(request.isFullDay()),
@@ -766,7 +766,7 @@ public class WorkCodeCategoryAdminService {
                 .affectsMonthlyBonus(form.affectsMonthlyBonus())
                 .displayOrder(displayOrder)
                 .baseCategory(false)
-                .baseOperation(form.baseOperation())
+                .basicWorkOperation(form.basicWorkOperation())
                 .allowsParallelWork(false)
                 .isFullDay(form.isFullDay())
                 .build();
@@ -793,7 +793,7 @@ public class WorkCodeCategoryAdminService {
         target.setFixedHourlyRate(form.fixedHourlyRate());
         target.setHourlyRate(form.hourlyRate());
         target.setAffectsMealAllowance(form.affectsMealAllowance());
-        target.setBaseOperation(form.baseOperation());
+        target.setBasicWorkOperation(form.basicWorkOperation());
         target.setAffectsWeekendBonus(form.affectsWeekendBonus());
         target.setAffectsMonthlyBonus(form.affectsMonthlyBonus());
         target.setAffectsBonus(form.affectsMonthlyBonus());
@@ -808,7 +808,7 @@ public class WorkCodeCategoryAdminService {
                 || Boolean.TRUE.equals(current.getFixedHourlyRate()) != form.fixedHourlyRate()
                 || !bigDecimalEquals(current.getHourlyRate(), form.hourlyRate())
                 || Boolean.TRUE.equals(current.getAffectsMealAllowance()) != form.affectsMealAllowance()
-                || Boolean.TRUE.equals(current.getBaseOperation()) != form.baseOperation()
+                || Boolean.TRUE.equals(current.getBasicWorkOperation()) != form.basicWorkOperation()
                 || Boolean.TRUE.equals(current.getAffectsWeekendBonus()) != form.affectsWeekendBonus()
                 || Boolean.TRUE.equals(current.getAffectsMonthlyBonus()) != form.affectsMonthlyBonus()
                 || Boolean.TRUE.equals(current.getIsFullDay()) != form.isFullDay();
@@ -949,7 +949,7 @@ public class WorkCodeCategoryAdminService {
                 c.getHourlyRate(),
                 c.getFixedHourlyRate(),
                 c.getAffectsMealAllowance(),
-                c.getBaseOperation(),
+                c.getBasicWorkOperation(),
                 c.getAffectsWeekendBonus(),
                 c.getAffectsMonthlyBonus(),
                 c.getIsFullDay(),

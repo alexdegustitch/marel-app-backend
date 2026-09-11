@@ -86,14 +86,14 @@ class EmployeeWorkCategoryPeriodIT extends AbstractIntegrationTest {
 
     @Test
     @DisplayName("a category nobody can be assigned to is refused")
-    void refusesANonBaseOperation() {
+    void refusesANonBasicWorkOperation() {
         Employee employee = fixture.scenario().build().employee();
 
         WorkCodeCategory notAssignable = categoryRepository.findAll().stream()
                 .filter(c -> c.getArchivedAt() == null)
                 .findFirst()
                 .orElseThrow();
-        ReflectionTestUtils.setField(notAssignable, "baseOperation", Boolean.FALSE);
+        ReflectionTestUtils.setField(notAssignable, "basicWorkOperation", Boolean.FALSE);
         categoryRepository.saveAndFlush(notAssignable);
 
         assertThatThrownBy(() ->
@@ -120,7 +120,7 @@ class EmployeeWorkCategoryPeriodIT extends AbstractIntegrationTest {
     private WorkCodeCategory assignable(int index) {
         List<WorkCodeCategory> usable = categoryRepository.findAll().stream()
                 .filter(c -> c.getArchivedAt() == null)
-                .filter(c -> Boolean.TRUE.equals(c.getBaseOperation()))
+                .filter(c -> Boolean.TRUE.equals(c.getBasicWorkOperation()))
                 .toList();
         assertThat(usable.size())
                 .as("the fixture schema needs at least two assignable categories")

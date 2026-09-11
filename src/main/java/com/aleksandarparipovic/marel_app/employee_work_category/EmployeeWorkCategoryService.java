@@ -57,7 +57,7 @@ public class EmployeeWorkCategoryService {
 
         // Only a category somebody can actually be assigned to. The form offers
         // no others, so this refuses a hand-written request rather than a click.
-        if (!Boolean.TRUE.equals(category.getBaseOperation())) {
+        if (!Boolean.TRUE.equals(category.getBasicWorkOperation())) {
             throw new IllegalArgumentException(
                     "Kategorija \"" + category.getCategoryNo()
                             + "\" ne može biti podrazumevana — nije osnovna operacija.");
@@ -109,7 +109,7 @@ public class EmployeeWorkCategoryService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Kategorija rada ne postoji: " + workCodeCategoryId));
 
-        if (!Boolean.TRUE.equals(category.getBaseOperation())) {
+        if (!Boolean.TRUE.equals(category.getBasicWorkOperation())) {
             throw new IllegalArgumentException(
                     "Kategorija \"" + category.getCategoryNo()
                             + "\" ne može biti podrazumevana — nije osnovna operacija.");
