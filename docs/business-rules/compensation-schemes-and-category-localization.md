@@ -650,9 +650,14 @@ appends a dated period. **A checklist for a closed scheme:** every category a
 supervisor may pick, every category the contextual MAPPINGS can produce from
 those (§4), and the remap target itself with `is_selectable = false`.
 
-There is deliberately no administration screen for this yet. It is the obvious
-next step and nothing above blocks it — the tables already carry everything a
-screen would write.
+Since 2026-09-11 the šifarnik's "Kategorije rada" tab administers the
+CATEGORIES and their per-scheme rules (`WorkCodeCategoryAdminService`): create,
+versioned edit (a change to a calculation value closes the current version and
+opens a new one), the derived weekend/"3" pairs with their mappings, and one
+step-2 rule row per scheme following exactly the discipline above — a closed
+scheme always gets its decision written, an open scheme only a deviation, and
+an in-force rule is closed and re-inserted, never edited. Creating a whole new
+SCHEME is still SQL as documented here.
 
 ### Add a category rule
 
@@ -761,6 +766,11 @@ optional `?locale=` parameter overrides it for preview.
 | `GET` | `/api/employees/{id}/allowed-work-code-categories?date=&locale=` | Selectable **source** categories |
 | `GET` | `/api/work-code-categories/active-work-code-categories?locale=` | Categories with `displayName` |
 | `PUT` | `/api/work-code-categories/{id}/translations/en` | Set/clear the English name |
+| `GET` | `/api/work-code-categories/admin` | Šifarnik: every version still shown |
+| `GET` | `/api/work-code-categories/{id}/admin` | Šifarnik: edit prefill + step-2 rules |
+| `POST` | `/api/work-code-categories` | Šifarnik: create (with pairs and rules) |
+| `PATCH` | `/api/work-code-categories/{id}` | Šifarnik: versioned edit |
+| `PUT` | `/api/work-code-categories/display-order` | Šifarnik: drag order (5, 10, 15…) |
 | `GET` | `/api/payroll-run-items/by-monthly-report/{id}/details?locale=` | Payroll detail, localized |
 
 The allowed-category endpoint returns **source** categories, each carrying the

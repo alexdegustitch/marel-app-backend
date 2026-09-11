@@ -44,8 +44,13 @@ public class WorkCodeCategoryService {
                 ? translations
                 : englishNames();
 
+        // Only the version of each code in force TODAY: a re-versioned
+        // category keeps its closed rows for history, and a dropdown offering
+        // both versions of one code would be offering the same category twice.
+        java.time.LocalDate today = java.time.LocalDate.now();
         return workCodeCategoryRepository.findByArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
                 .stream()
+                .filter(category -> category.isInForceOn(today))
                 .filter(category -> !baseOperationsOnly || Boolean.TRUE.equals(category.getBaseOperation()))
                 .map(category -> mapper.mapToDto(category, translations, englishNames))
                 .toList();

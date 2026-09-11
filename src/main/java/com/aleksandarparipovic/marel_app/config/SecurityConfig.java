@@ -216,6 +216,26 @@ public class SecurityConfig {
                             .authenticated()
 
                         /*
+                         * ADMINISTERING the categories — the šifarnik's create,
+                         * edit, reorder and its full listing. The same
+                         * capability that owns the šifarnici screen, NOT
+                         * WORK_RECORD_VIEW: changing what a category is worth
+                         * is a settings decision, and the accountant who may
+                         * open work records has no business re-versioning a
+                         * coefficient. Listed before the work-record block so
+                         * these paths never fall through to it.
+                         */
+                        .requestMatchers(
+                                "/api/work-code-categories/admin",
+                                "/api/work-code-categories/*/admin",
+                                "/api/work-code-categories/display-order")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+                        .requestMatchers(HttpMethod.POST, "/api/work-code-categories")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+                        .requestMatchers(HttpMethod.PATCH, "/api/work-code-categories/*")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+
+                        /*
                          * The shift-type DEFINITIONS the ShiftRing and every shift
                          * picker read. The shell shows the ring to everybody signed
                          * in, so this lookup must be open to them — refusing it here

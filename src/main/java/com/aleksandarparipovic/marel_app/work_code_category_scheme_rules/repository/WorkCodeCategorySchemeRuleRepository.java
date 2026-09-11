@@ -58,6 +58,25 @@ public interface WorkCodeCategorySchemeRuleRepository extends JpaRepository<Work
             @Param("from") LocalDate from,
             @Param("to") LocalDate to);
 
+    /**
+     * Every in-force rule for one SOURCE category on {@code date}, across all
+     * schemes — the šifarnik reads these to prefill a category's step-2 form,
+     * and closes them when the category is re-versioned.
+     */
+    @Query("""
+            SELECT r FROM WorkCodeCategorySchemeRule r
+            JOIN FETCH r.compensationScheme
+            LEFT JOIN FETCH r.effectiveCategory
+            WHERE r.sourceCategory.id = :sourceCategoryId
+              AND r.isActive = true
+              AND r.archivedAt IS NULL
+              AND r.validFrom <= :date
+              AND (r.validUntil IS NULL OR r.validUntil >= :date)
+            """)
+    List<WorkCodeCategorySchemeRule> findActiveForSourceCategoryAt(
+            @Param("sourceCategoryId") Long sourceCategoryId,
+            @Param("date") LocalDate date);
+
     /** All rules of one scheme, including inactive ones — administration screens. */
     @Query("""
             SELECT r FROM WorkCodeCategorySchemeRule r

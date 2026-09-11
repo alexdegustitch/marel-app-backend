@@ -135,7 +135,8 @@ public class PayrollSchemeScopeService {
                     "Ne mogu da odredim način obračuna bez zaposlenog i obračunskog perioda.");
         }
         return scopesFor(List.of(employeeId), periodStart, periodEnd,
-                workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc(),
+                workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
+                        .stream().filter(c -> c.isInForceDuring(periodStart, periodEnd)).toList(),
                 adjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull())
                 .get(employeeId);
     }
