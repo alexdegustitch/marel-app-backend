@@ -42,6 +42,12 @@ public enum DashboardInsightKey {
     /** Yesterday's products, by pieces made. */
     YESTERDAY_TOP_PRODUCTS,
 
+    /** Yesterday's production orders, by pieces made toward them. */
+    YESTERDAY_TOP_ORDERS,
+
+    /** Yesterday's best performers — same ranking as TOP_PERFORMERS, one day. */
+    YESTERDAY_TOP_PERFORMERS,
+
     /** The employees with the highest sustained performance over the window. */
     TOP_PERFORMERS,
 

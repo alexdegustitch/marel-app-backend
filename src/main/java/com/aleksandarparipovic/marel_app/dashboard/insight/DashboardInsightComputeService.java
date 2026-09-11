@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Missi
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OperationVolumeRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OrderVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.PerformerRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
@@ -88,6 +89,12 @@ public class DashboardInsightComputeService {
     /** What makes an un-normed operation worth naming. */
     private static final int NO_NORM_MIN_QUANTITY = 200;
 
+    /**
+     * The yesterday performers card ranks one day, so the monthly minimum would
+     * empty it — an hour of measured work is enough to be worth naming there.
+     */
+    private static final int YESTERDAY_PERFORMER_MIN_MINUTES = 60;
+
     /** Spread needs several people, each with enough time on the operation to compare. */
     private static final int SPREAD_MIN_EMPLOYEES = 3;
     private static final int SPREAD_MIN_EMPLOYEE_MINUTES = 120;
@@ -159,6 +166,10 @@ public class DashboardInsightComputeService {
                 operationVolume(yesterday, yesterday, true));
         repository.save(DashboardInsightKey.YESTERDAY_TOP_PRODUCTS, computedFor, 1,
                 productVolume(yesterday, yesterday));
+        repository.save(DashboardInsightKey.YESTERDAY_TOP_ORDERS, computedFor, 1,
+                orderVolume(yesterday, yesterday));
+        repository.save(DashboardInsightKey.YESTERDAY_TOP_PERFORMERS, computedFor, 1,
+                topPerformers(yesterday, yesterday, YESTERDAY_PERFORMER_MIN_MINUTES));
         repository.save(DashboardInsightKey.TOP_PERFORMERS, computedFor, t.activityWindowDays(),
                 topPerformers(activityFrom, computedFor, t.topPerformerMinHours() * 60));
         repository.save(DashboardInsightKey.MISSING_ENTRIES, computedFor, WINDOW_DAYS,
@@ -172,6 +183,38 @@ public class DashboardInsightComputeService {
         if (removed > 0) {
             log.info("[DashboardInsight] Uklonjeno {} starih snimaka.", removed);
         }
+    }
+
+    /** The "Šta se radilo" panel's live answer, for whichever window is asked. */
+    public record Activity(
+            int windowDays,
+            int topPerformerMinHours,
+            List<OperationVolumeRow> mostWorkedOperations,
+            List<OperationVolumeRow> leastWorkedOperations,
+            List<PerformerRow> topPerformers
+    ) {}
+
+    /**
+     * The activity lists computed NOW, over a window the caller may choose.
+     *
+     * <p>Live and not from the snapshot, because the window became personal: the
+     * global default lives in Parametri, each user may keep their own, and one
+     * morning snapshot cannot hold everybody's answer. These are three bounded
+     * aggregates over the fact table — cheap enough to answer on demand.
+     */
+    @Transactional(readOnly = true)
+    public Activity activity(LocalDate today, Integer requestedWindowDays) {
+        Thresholds t = currentThresholds();
+        int window = requestedWindowDays != null && requestedWindowDays >= 1 && requestedWindowDays <= 366
+                ? requestedWindowDays
+                : t.activityWindowDays();
+        LocalDate from = today.minusDays(window - 1L);
+        return new Activity(
+                window,
+                t.topPerformerMinHours(),
+                operationVolume(from, today, true),
+                operationVolume(from, today, false),
+                topPerformers(from, today, t.topPerformerMinHours() * 60));
     }
 
     // ---------------------------------------------------------------- norm fit
@@ -314,6 +357,36 @@ public class DashboardInsightComputeService {
                 """.formatted(most ? "DESC" : "ASC");
 
         return jdbc.query(sql, params(from, to), operationVolumeMapper());
+    }
+
+    /** Production orders by what was made toward them. */
+    private List<OrderVolumeRow> orderVolume(LocalDate from, LocalDate to) {
+        String sql = """
+                SELECT f.production_order_id,
+                       max(f.production_order_code)        AS order_code,
+                       max(po.name)                        AS order_name,
+                       sum(f.quantity)::bigint             AS quantity,
+                       sum(f.duration_min)::bigint         AS duration_min,
+                       count(DISTINCT f.product_id)::int   AS product_count,
+                       count(DISTINCT f.employee_id)::int  AS employee_count
+                FROM work_log_facts f
+                JOIN production_orders po ON po.id = f.production_order_id
+                WHERE f.work_date BETWEEN :from AND :to
+                  AND f.production_order_id IS NOT NULL
+                GROUP BY f.production_order_id
+                HAVING sum(f.quantity) > 0
+                ORDER BY sum(f.quantity) DESC
+                LIMIT :limit
+                """;
+
+        return jdbc.query(sql, params(from, to), (rs, i) -> new OrderVolumeRow(
+                rs.getLong("production_order_id"),
+                rs.getString("order_code"),
+                rs.getString("order_name"),
+                rs.getLong("quantity"),
+                rs.getLong("duration_min"),
+                rs.getInt("product_count"),
+                rs.getInt("employee_count")));
     }
 
     /** Products by what was made of them. */

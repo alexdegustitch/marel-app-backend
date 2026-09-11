@@ -75,6 +75,17 @@ public final class InsightRows {
             Integer employeeCount
     ) {}
 
+    /** How much was made toward one production order, for the yesterday card. */
+    public record OrderVolumeRow(
+            Long productionOrderId,
+            String orderCode,
+            String orderName,
+            Long quantity,
+            Long durationMin,
+            Integer productCount,
+            Integer employeeCount
+    ) {}
+
     /**
      * An employee's sustained performance.
      *

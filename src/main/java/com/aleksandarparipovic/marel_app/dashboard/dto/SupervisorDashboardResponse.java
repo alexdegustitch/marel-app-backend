@@ -6,6 +6,7 @@ import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.Missi
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OperationVolumeRow;
+import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.OrderVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.PerformerRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ProductVolumeRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.ScrapRow;
@@ -53,6 +54,9 @@ public record SupervisorDashboardResponse(
         Block<NonWorkingDayRow> upcomingNonWorkingDays,
 
         AbsenceBlock absences,
+
+        /** Whose previous month is fully entered and ready for payroll. */
+        ReadyRecordsBlock readyRecords,
 
         /**
          * How many employed people have no shift entered for today. The count only —
@@ -125,14 +129,10 @@ public record SupervisorDashboardResponse(
     ) {}
 
     /**
-     * Who is absent on a sick-leave code today.
-     *
-     * @param configured false when nobody has said which work codes mean sick leave.
-     *                   The card then says so, instead of reporting an empty list as
-     *                   though it were good news.
+     * Who is on sick leave or godišnji odmor today — recognised by the
+     * category's declared type (V39), not by a code list somebody maintains.
      */
     public record AbsenceBlock(
-            boolean configured,
             long total,
             List<AbsenceRow> rows
     ) {}
@@ -147,6 +147,29 @@ public record SupervisorDashboardResponse(
             Integer absenceMinutes,
             /** Days inside the window this employee was absent on such a code. */
             Integer daysInWindow
+    ) {}
+
+    /**
+     * How far the month before this one has been entered — whose karton is
+     * complete and can go to payroll.
+     *
+     * @param readyCount    employees whose every required day of the month holds
+     *                      a shift (and whose karton exists)
+     * @param employeeCount everybody employed in that month
+     */
+    public record ReadyRecordsBlock(
+            int year,
+            int month,
+            long readyCount,
+            long employeeCount,
+            List<ReadyRecordRow> rows
+    ) {}
+
+    /** One employee whose month is fully entered. */
+    public record ReadyRecordRow(
+            Long employeeId,
+            String fullName,
+            Long employeeRecordId
     ) {}
 
     /**
@@ -207,6 +230,8 @@ public record SupervisorDashboardResponse(
             List<OperationVolumeRow> leastWorkedOperations,
             List<OperationVolumeRow> yesterdayOperations,
             List<ProductVolumeRow> yesterdayProducts,
+            List<OrderVolumeRow> yesterdayOrders,
+            List<PerformerRow> yesterdayPerformers,
             List<PerformerRow> topPerformers,
             List<MissingEntryRow> missingEntries,
             List<SpreadRow> performanceSpread,
@@ -223,7 +248,8 @@ public record SupervisorDashboardResponse(
                     thresholds.activityWindowDays(), thresholds.topPerformerMinHours(),
                     yesterday,
                     List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), List.of(),
+                    List.of(), List.of(), List.of(), List.of());
         }
     }
 }

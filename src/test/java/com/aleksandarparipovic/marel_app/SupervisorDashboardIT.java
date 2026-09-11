@@ -83,31 +83,36 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("with no sick-leave code configured the card says so, it does not say nobody is out")
-    void unconfiguredAbsenceIsNotAnEmptyAnswer() {
+    @DisplayName("the absence card answers from the categories' own declaration, no setting needed")
+    void absenceCardAnswersByCategoryType() {
         SupervisorDashboardResponse board = dashboardService.load(1L);
 
-        assertThat(board.absences().configured()).isFalse();
-        assertThat(board.absences().total()).isZero();
-        assertThat(board.absences().rows()).isEmpty();
+        assertThat(board.absences()).isNotNull();
+        assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
     }
 
     @Test
-    @DisplayName("once a code is named the absence card starts answering from it")
-    void configuredAbsenceQueryRuns() {
-        String categoryNo = jdbc.queryForObject(
-                "SELECT category_no FROM work_code_categories ORDER BY id LIMIT 1", String.class);
-        assertThat(categoryNo).as("the seed data has at least one work code").isNotBlank();
+    @DisplayName("the old sick-leave code-list setting is archived, so nobody edits a dead knob")
+    void sickLeaveSettingIsArchived() {
+        Integer live = jdbc.queryForObject("""
+                SELECT count(*) FROM app_settings
+                WHERE setting_key = 'sick_leave_work_code_category_nos' AND archived_at IS NULL
+                """, Integer.class);
+        assertThat(live).isZero();
+    }
 
-        jdbc.update("""
-                UPDATE app_settings SET setting_value_text = ?
-                WHERE setting_key = 'sick_leave_work_code_category_nos'
-                """, categoryNo);
-
+    @Test
+    @DisplayName("a fully entered previous month reports its karton as ready for payroll")
+    void readyRecordsFollowTheEnteredDays() {
         SupervisorDashboardResponse board = dashboardService.load(1L);
 
-        assertThat(board.absences().configured()).isTrue();
-        assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
+        // The block answers for the PREVIOUS month, and its counts are sane.
+        var ready = board.readyRecords();
+        LocalDate previous = LocalDate.now().minusMonths(1);
+        assertThat(ready.year()).isEqualTo(previous.getYear());
+        assertThat(ready.month()).isEqualTo(previous.getMonthValue());
+        assertThat(ready.readyCount()).isLessThanOrEqualTo(ready.employeeCount());
+        assertThat(ready.rows()).hasSizeLessThanOrEqualTo(5);
     }
 
     @Test
