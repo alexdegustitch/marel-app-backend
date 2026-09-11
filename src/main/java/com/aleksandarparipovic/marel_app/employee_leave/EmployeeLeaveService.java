@@ -17,6 +17,7 @@ import com.aleksandarparipovic.marel_app.recalc_queue.RecalcQueueService;
 import com.aleksandarparipovic.marel_app.report_worker.DailyRecalcRequestedEvent;
 import com.aleksandarparipovic.marel_app.shift.Shift;
 import com.aleksandarparipovic.marel_app.shift.ShiftRepository;
+import com.aleksandarparipovic.marel_app.shift.ShiftTimeResolver;
 import com.aleksandarparipovic.marel_app.user.User;
 import com.aleksandarparipovic.marel_app.work_calendar_day.WorkCalendarDay;
 import com.aleksandarparipovic.marel_app.work_calendar_day.WorkCalendarDayEffectiveStatus;
@@ -106,6 +107,7 @@ public class EmployeeLeaveService {
     private final WorkShiftRepository workShiftRepository;
     private final WorkCodeCategoryRepository categoryRepository;
     private final ShiftRepository shiftRepository;
+    private final ShiftTimeResolver shiftTimeResolver;
     private final WorkCalendarDayRepository workCalendarDayRepository;
     private final AbsenceRecordRepository absenceRecordRepository;
     private final AbsenceLogWriter absenceLogWriter;
@@ -578,8 +580,11 @@ public class EmployeeLeaveService {
      */
     private void createLeaveShift(Employee employee, LocalDate date, Shift template,
                                   WorkCodeCategory category) {
-        OffsetDateTime startAt = LocalDateTime.of(date, template.getStartTime()).atZone(ZONE).toOffsetDateTime();
-        OffsetDateTime endAt = LocalDateTime.of(date, template.getEndTime()).atZone(ZONE).toOffsetDateTime();
+        // The worker's own hours for the day when they have them — a leave day
+        // must cost exactly the shift they would have worked, not the default.
+        ShiftTimeResolver.ResolvedShiftTimes times = shiftTimeResolver.resolve(employee.getId(), template, date);
+        OffsetDateTime startAt = LocalDateTime.of(date, times.startTime()).atZone(ZONE).toOffsetDateTime();
+        OffsetDateTime endAt = LocalDateTime.of(date, times.endTime()).atZone(ZONE).toOffsetDateTime();
         if (!endAt.isAfter(startAt)) {
             endAt = endAt.plusDays(1);
         }

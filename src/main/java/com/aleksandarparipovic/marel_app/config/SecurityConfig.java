@@ -249,6 +249,23 @@ public class SecurityConfig {
                             .authenticated()
 
                         /*
+                         * ADMINISTERING the shifts — the šifarnik's create, edit
+                         * and full listing, with the default-hours history. The
+                         * same capability that owns the šifarnici screen, NOT
+                         * WORK_RECORD_VIEW, for the same reason as the category
+                         * administration above. Listed before the work-record
+                         * block so these paths never fall through to it.
+                         */
+                        .requestMatchers(
+                                "/api/shifts/admin",
+                                "/api/shifts/*/default-history")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+                        .requestMatchers(HttpMethod.POST, "/api/shifts")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+                        .requestMatchers(HttpMethod.PATCH, "/api/shifts/*")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+
+                        /*
                          * THE WORK RECORDS — cards, months, shifts, hours, logs.
                          *
                          * `/api/me/**` is deliberately NOT in this list. A worker

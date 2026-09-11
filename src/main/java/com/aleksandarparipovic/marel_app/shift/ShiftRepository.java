@@ -10,4 +10,6 @@ import java.util.Optional;
 public interface ShiftRepository extends JpaRepository<Shift, Long> {
     List<Shift> findByIsActiveTrueAndArchivedAtIsNullOrderByStartTimeAsc();
     Optional<Shift> findFirstByShiftCodeAndIsActiveTrue(String shiftCode);
+    List<Shift> findAllByOrderByStartTimeAsc();
+    boolean existsByShiftCodeIgnoreCase(String shiftCode);
 }
