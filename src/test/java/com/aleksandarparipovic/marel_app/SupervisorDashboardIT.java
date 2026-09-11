@@ -35,6 +35,8 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
     @Autowired private DashboardInsightComputeService computeService;
     @Autowired private DashboardInsightRepository insightRepository;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private com.aleksandarparipovic.marel_app.auth.AuthService authService;
+    @Autowired private com.aleksandarparipovic.marel_app.role.RoleRepository roleRepository;
 
     @Test
     @DisplayName("every insight query runs against the real schema and stores a row")
@@ -81,8 +83,31 @@ class SupervisorDashboardIT extends AbstractIntegrationTest {
         // The claimed card is the caller's whole desk, so its cap is the guard
         // against the absurd rather than a page size.
         assertThat(board.claimedRequests().rows()).hasSizeLessThanOrEqualTo(25);
+        assertThat(board.registrationRequests().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.upcomingNonWorkingDays().rows()).hasSizeLessThanOrEqualTo(5);
         assertThat(board.absences().rows()).hasSizeLessThanOrEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("a fresh registration reaches the supervisor's board too")
+    void newRegistrationReachesTheBoard() {
+        var role = roleRepository.findAll().stream()
+                .filter(r -> !"developer".equalsIgnoreCase(r.getRoleName()))
+                .findFirst().orElseThrow();
+
+        var request = new com.aleksandarparipovic.marel_app.auth.dto.RegisterRequest();
+        request.setFirstName("Nova");
+        request.setLastName("Registracija");
+        request.setEmailAddress("nova.registracija@example.rs");
+        request.setPassword("Test1234");
+        request.setConfirmPassword("Test1234");
+        request.setRoleId(role.getId());
+        authService.register(request);
+
+        SupervisorDashboardResponse board = dashboardService.load(1L);
+        assertThat(board.registrationRequests().total()).isGreaterThanOrEqualTo(1);
+        assertThat(board.registrationRequests().rows())
+                .anyMatch(row -> "Nova Registracija".equals(row.fullName()));
     }
 
     @Test

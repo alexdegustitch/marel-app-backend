@@ -2,6 +2,7 @@ package com.aleksandarparipovic.marel_app.dashboard.dto;
 
 import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse.Block;
 import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse.NonWorkingDayRow;
+import com.aleksandarparipovic.marel_app.dashboard.dto.AdminDashboardResponse.RegistrationRequestRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.MissingEntryRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NoNormRow;
 import com.aleksandarparipovic.marel_app.dashboard.insight.dto.InsightRows.NormFitRow;
@@ -55,6 +56,14 @@ public record SupervisorDashboardResponse(
          * on the requests page.
          */
         Block<RequestRow> claimedRequests,
+
+        /**
+         * Account registrations waiting for a decision — the same queue the
+         * direktor's board shows, because the supervisor is who answers it.
+         * Counted INTO the "zahtevi na čekanju" tile on the screen, so the
+         * tile says everything waiting on this reader, not one kind of it.
+         */
+        Block<RegistrationRequestRow> registrationRequests,
 
         Block<NonWorkingDayRow> upcomingNonWorkingDays,
 
