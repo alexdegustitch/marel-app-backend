@@ -239,6 +239,9 @@ public class WorkCodeCategoryAdminService {
         applyValues(current, form);
         current.setCategoryName(form.categoryName());
         current.setNote(form.note());
+        // Cosmetic, like name and note — set in place, never a re-version.
+        current.setColor(form.color());
+        current.setPattern(form.pattern());
         categoryRepository.saveAndFlush(current);
 
         reconcileRules(current, decisions, effective);
@@ -370,6 +373,9 @@ public class WorkCodeCategoryAdminService {
             applyValues(pair, Normalized.mirroring(base, pair.getValidFrom()));
             pair.setCategoryName(base.getCategoryName() + nameSuffix);
             pair.setNote(base.getNote());
+            // Cosmetic, mirrored like name/note so a pair reads as its base.
+            pair.setColor(base.getColor());
+            pair.setPattern(normalizePattern(base.getPattern()));
             categoryRepository.saveAndFlush(pair);
             reconcileRules(pair, decisions, effective);
         }
@@ -662,6 +668,8 @@ public class WorkCodeCategoryAdminService {
                               boolean isFullDay,
                               boolean weekendPair,
                               boolean nightPair,
+                              String color,
+                              String pattern,
                               List<UpsertWorkCodeCategoryRequest.SchemeRuleInput> schemeRules) {
 
         /** A pair's values: its base's, dated its own way. Code and name differ. */
@@ -679,7 +687,11 @@ public class WorkCodeCategoryAdminService {
                     Boolean.TRUE.equals(base.getAffectsWeekendBonus()),
                     Boolean.TRUE.equals(base.getAffectsMonthlyBonus()),
                     Boolean.TRUE.equals(base.getIsFullDay()),
-                    false, false, List.of());
+                    false, false,
+                    // A derived pair (B/3) inherits the base's appearance, so a
+                    // category and its bonus pair read as one colour.
+                    base.getColor(), normalizePattern(base.getPattern()),
+                    List.of());
         }
     }
 
@@ -733,7 +745,21 @@ public class WorkCodeCategoryAdminService {
                 !Boolean.FALSE.equals(request.affectsMonthlyBonus()),
                 Boolean.TRUE.equals(request.isFullDay()),
                 weekendPair, nightPair,
+                blankToNull(request.color()),
+                normalizePattern(request.pattern()),
                 request.schemeRules() == null ? List.of() : request.schemeRules());
+    }
+
+    /** NONE unless the form sends a value we recognise; matches the DB CHECK. */
+    private static String normalizePattern(String value) {
+        if (value == null) {
+            return "NONE";
+        }
+        String upper = value.trim().toUpperCase(java.util.Locale.ROOT);
+        return switch (upper) {
+            case "CHECKER", "STRIPES" -> upper;
+            default -> "NONE";
+        };
     }
 
     /**
@@ -769,6 +795,10 @@ public class WorkCodeCategoryAdminService {
                 .basicWorkOperation(form.basicWorkOperation())
                 .allowsParallelWork(false)
                 .isFullDay(form.isFullDay())
+                // Cosmetic — carried onto every new version so the whole chain
+                // of a code reads as one colour.
+                .color(form.color())
+                .pattern(form.pattern())
                 .build();
         return category;
     }
@@ -953,6 +983,8 @@ public class WorkCodeCategoryAdminService {
                 c.getAffectsWeekendBonus(),
                 c.getAffectsMonthlyBonus(),
                 c.getIsFullDay(),
+                c.getColor(),
+                c.getPattern(),
                 c.getDisplayOrder(),
                 pairs.openMapping(c.getId(), MAPPING_WEEKEND) != null,
                 pairs.openMapping(c.getId(), MAPPING_NIGHT) != null,

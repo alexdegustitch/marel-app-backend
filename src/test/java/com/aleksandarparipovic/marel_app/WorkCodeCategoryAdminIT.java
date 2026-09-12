@@ -69,6 +69,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
                 false, null,
                 true, true, true, true, false,
                 false, false,
+                null, null,
                 List.of());
     }
 
@@ -78,7 +79,8 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
                 r.categoryNo(), r.categoryName(), r.type(), r.normMultiplier(), r.validFrom(),
                 r.isPaid(), r.affectsNorm(), r.note(), r.fixedHourlyRate(), r.hourlyRate(),
                 r.affectsMealAllowance(), r.basicWorkOperation(), r.affectsWeekendBonus(),
-                r.affectsMonthlyBonus(), r.isFullDay(), weekend, night, r.schemeRules());
+                r.affectsMonthlyBonus(), r.isFullDay(), weekend, night,
+                r.color(), r.pattern(), r.schemeRules());
     }
 
     private CompensationScheme scheme(String code) {
@@ -165,6 +167,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
                 base.fixedHourlyRate(), base.hourlyRate(), base.affectsMealAllowance(),
                 base.basicWorkOperation(), base.affectsWeekendBonus(), base.affectsMonthlyBonus(),
                 base.isFullDay(), true, false,
+                null, null,
                 List.of(
                         new UpsertWorkCodeCategoryRequest.SchemeRuleInput(
                                 standard.getId(), null, null, true, true, null),
@@ -205,7 +208,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         UpsertWorkCodeCategoryRequest corrected = new UpsertWorkCodeCategoryRequest(
                 code, "Ispravljen naziv", "WORK", 1.2, FROM,
                 true, true, "beleška", false, null,
-                true, true, true, true, false, false, false, List.of());
+                true, true, true, true, false, false, false, null, null, List.of());
         WorkCodeCategoryAdminDetailDto result = adminService.update(id, corrected);
 
         assertThat(result.category().id()).isEqualTo(id);
@@ -226,7 +229,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         UpsertWorkCodeCategoryRequest change = new UpsertWorkCodeCategoryRequest(
                 code, "Kategorija " + code, "WORK", 1.5, cutover,
                 true, true, null, false, null,
-                true, true, true, true, false, true, false, List.of());
+                true, true, true, true, false, true, false, null, null, List.of());
         WorkCodeCategoryAdminDetailDto result = adminService.update(firstId, change);
 
         Long secondId = result.category().id();
@@ -267,7 +270,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         UpsertWorkCodeCategoryRequest change = new UpsertWorkCodeCategoryRequest(
                 code, "Kategorija " + code, "WORK", 2.0, FROM.minusDays(1),
                 true, true, null, false, null,
-                true, true, true, true, false, false, false, List.of());
+                true, true, true, true, false, false, false, null, null, List.of());
         assertThatThrownBy(() -> adminService.update(id, change))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("važi od");
@@ -284,7 +287,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         UpsertWorkCodeCategoryRequest off = new UpsertWorkCodeCategoryRequest(
                 code, "Kategorija " + code, "WORK", 1.0, cutover,
                 true, true, null, false, null,
-                true, true, true, true, false, false, false, List.of());
+                true, true, true, true, false, false, false, null, null, List.of());
         WorkCodeCategoryAdminDetailDto result = adminService.update(id, off);
 
         assertThat(result.category().hasWeekendBonusPair()).isFalse();
@@ -310,7 +313,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         adminService.update(idA, new UpsertWorkCodeCategoryRequest(
                 a, "Kategorija " + a, "WORK", 1.3, FROM.plusMonths(1),
                 true, true, null, false, null,
-                true, true, true, true, false, false, false, List.of()));
+                true, true, true, true, false, false, false, null, null, List.of()));
         Long idA2 = open(a).getId();
 
         List<Long> order = adminService.listAll().stream()
@@ -337,7 +340,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         UpsertWorkCodeCategoryRequest fixedWithoutRate = new UpsertWorkCodeCategoryRequest(
                 code, "X", "WORK", 1.0, FROM, true, true, null,
                 true, null,
-                true, true, true, true, false, false, false, List.of());
+                true, true, true, true, false, false, false, null, null, List.of());
         assertThatThrownBy(() -> adminService.create(fixedWithoutRate))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("satnic");
@@ -345,7 +348,7 @@ class WorkCodeCategoryAdminIT extends AbstractIntegrationTest {
         UpsertWorkCodeCategoryRequest basicWorkOperationAbsence = new UpsertWorkCodeCategoryRequest(
                 code, "X", "ABSENCE", 1.0, FROM, true, true, null,
                 false, null,
-                true, true, true, true, false, false, false, List.of());
+                true, true, true, true, false, false, false, null, null, List.of());
         assertThatThrownBy(() -> adminService.create(basicWorkOperationAbsence))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("na poslu");

@@ -56,6 +56,14 @@ public record WorkCodeCategoryDto(
          * TRUE for a whole-day absence (GO, bolovanje, NO, ND). The calendar
          * draws such a day as its category alone, without shift times.
          */
-        Boolean isFullDay
+        Boolean isFullDay,
+        /**
+         * The swatch this category is drawn with on the karton's shift timeline
+         * — a CSS hex, or null for "not chosen" (the client then derives a
+         * stable colour from {@code no}). Cosmetic; nothing calculates on it.
+         */
+        String color,
+        /** How the timeline bar is filled: NONE | CHECKER | STRIPES. */
+        String pattern
 ) {
 }

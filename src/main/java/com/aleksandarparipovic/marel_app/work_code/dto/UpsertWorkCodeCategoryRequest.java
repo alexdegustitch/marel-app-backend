@@ -41,6 +41,13 @@ public record UpsertWorkCodeCategoryRequest(
         Boolean isFullDay,
         Boolean weekendBonusPair,
         Boolean nightShiftBonusPair,
+        /**
+         * Cosmetic appearance for the karton timeline — not a versioned value.
+         * {@code color} is a CSS hex or null; {@code pattern} is NONE | CHECKER
+         * | STRIPES (null is treated as NONE).
+         */
+        String color,
+        String pattern,
         List<SchemeRuleInput> schemeRules
 ) {
 
