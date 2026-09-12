@@ -102,6 +102,23 @@ public class WorkCodeCategory {
     @Builder.Default
     private Boolean affectsMonthlyBonus = true;
 
+    /**
+     * The swatch this category is drawn with on the karton's shift timeline —
+     * a CSS hex ('#3b82f6' or '#3b82f6cc'), or null for "not chosen", in which
+     * case the client falls back to a stable colour derived from the code.
+     *
+     * <p>Cosmetic like {@link #categoryName} and {@link #note}: changing it does
+     * NOT re-version the category (see V52 and WorkCodeCategoryAdminService).
+     * Nothing in the calculation reads it.
+     */
+    @Column(name = "color", length = 9)
+    private String color;
+
+    /** How the timeline bar is filled: NONE | CHECKER | STRIPES. Cosmetic. */
+    @Column(name = "pattern", nullable = false, length = 16)
+    @Builder.Default
+    private String pattern = "NONE";
+
     @Column(name = "display_order")
     private Integer displayOrder = 0;
 

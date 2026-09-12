@@ -38,7 +38,9 @@ public class WorkCodeCategoryMapper {
                 category.getAllowsParallelWork(),
                 category.getType(),
                 category.getSickLeaveKind(),
-                category.getIsFullDay()
+                category.getIsFullDay(),
+                category.getColor(),
+                category.getPattern()
         );
     }
 }

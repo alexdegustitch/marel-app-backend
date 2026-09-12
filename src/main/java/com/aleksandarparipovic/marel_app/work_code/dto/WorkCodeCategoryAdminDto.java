@@ -39,6 +39,8 @@ public record WorkCodeCategoryAdminDto(
         Boolean affectsWeekendBonus,
         Boolean affectsMonthlyBonus,
         Boolean isFullDay,
+        String color,
+        String pattern,
         Integer displayOrder,
         boolean hasWeekendBonusPair,
         boolean hasNightShiftBonusPair,
