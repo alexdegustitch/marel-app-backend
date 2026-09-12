@@ -163,7 +163,7 @@ public class WorkLogMapper {
         // OffsetDateTime startAt = dateUtil.parseOffsetDateTime(dto.getStartAt(), "startAt");
         // OffsetDateTime endAt = dateUtil.parseOffsetDateTime(dto.getEndAt(), "endAt");
         ZoneId zone = ZoneId.of("Europe/Belgrade");
-        StartEndResult time = dateUtil.buildStartEnd(workShift.getWorkDate(), dto.getStartAt(), dto.getEndAt(), workShift.getStartAt().toLocalTime(), zone);
+        StartEndResult time = dateUtil.buildStartEnd(workShift.getWorkDate(), dto.getStartAt(), dto.getEndAt(), workShift.getStartAt(), workShift.getEndAt(), zone);
 
         workLogValidator.validateTimeRange(time.start(), time.end());
 
@@ -210,7 +210,7 @@ public class WorkLogMapper {
         //WorkShift workShift = referenceProvider.getRequiredReference(WorkShift.class, dto.getWorkShiftId(), "workShiftId");
 
         ZoneId zone = ZoneId.of("Europe/Belgrade");
-        StartEndResult time = dateUtil.buildStartEnd(entity.getWorkShift().getWorkDate(), dto.getStartAt(), dto.getEndAt(), entity.getWorkShift().getStartAt().toLocalTime(), zone);
+        StartEndResult time = dateUtil.buildStartEnd(entity.getWorkShift().getWorkDate(), dto.getStartAt(), dto.getEndAt(), entity.getWorkShift().getStartAt(), entity.getWorkShift().getEndAt(), zone);
 
         workLogValidator.validateTimeRange(time.start(), time.end());
         entity.setStartAt(time.start());
