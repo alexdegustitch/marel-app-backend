@@ -62,7 +62,8 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         wl.is_active as isActive,
         wl.norm_multiplier_snapshot as normMultiplierSnapshot,
         wl.norm_multiplier_manual as normMultiplierManual,
-        wcc.allows_parallel_work as allowsParallelWork
+        wcc.allows_parallel_work as allowsParallelWork,
+        wl.performance_rate_manual as performanceRateManual
     FROM work_logs wl
     LEFT JOIN operations o ON wl.operation_id = o.id
     LEFT JOIN production_orders po ON wl.production_order_id = po.id
@@ -93,7 +94,8 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long>, JpaSpec
         wl.is_active as isActive,
         wl.norm_multiplier_snapshot as normMultiplierSnapshot,
         wl.norm_multiplier_manual as normMultiplierManual,
-        wcc.allows_parallel_work as allowsParallelWork
+        wcc.allows_parallel_work as allowsParallelWork,
+        wl.performance_rate_manual as performanceRateManual
     FROM work_logs wl
     LEFT JOIN operations o ON wl.operation_id = o.id
     LEFT JOIN production_orders po ON wl.production_order_id = po.id

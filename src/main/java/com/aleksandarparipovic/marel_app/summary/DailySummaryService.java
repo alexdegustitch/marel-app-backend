@@ -104,8 +104,14 @@ public class DailySummaryService {
             rawTotalMinutes += duration;
 
             BigDecimal perfRate = calculatePerformanceRate(log);
-            BigDecimal maxEfficiency = appSettingService.getMaxEfficiencyPercentAt(log.getStartAt());
-            BigDecimal approvedRate = perfRate.min(maxEfficiency);
+            // A manually typed efficiency is the paid rate, used exactly as entered:
+            // no ceiling. The same decision the recalc engine makes at
+            // WorkLogPerformanceCalculator.calculateApprovedPerformanceRate, kept in
+            // lockstep here so the live shift summary shows the same recognised hours
+            // the daily/monthly reports will. The measured rate stays untouched.
+            BigDecimal approvedRate = log.getPerformanceRateManual() != null
+                    ? log.getPerformanceRateManual()
+                    : perfRate.min(appSettingService.getMaxEfficiencyPercentAt(log.getStartAt()));
 
             BigDecimal durationWeight = BigDecimal.valueOf(duration);
             weightedRateSum = weightedRateSum.add(perfRate.multiply(durationWeight));

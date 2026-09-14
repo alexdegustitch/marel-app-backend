@@ -340,8 +340,27 @@ public class MonthlyRecalcService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(4, RoundingMode.HALF_UP);
 
-        BigDecimal performanceCoefficient = totalShiftMinutes > 0
-                ? totalWeightedNormMinutes.divide(BigDecimal.valueOf(totalShiftMinutes), 6, RoundingMode.HALF_UP)
+        // The efficiency's denominator is the WORKED minutes summed across the
+        // month's categories — the same denominator the daily report uses — NOT the
+        // covered clock time (total_shift_minutes). The two are equal for ordinary
+        // work and diverge only for PARALLEL work, where several operations share
+        // the same clock minutes: dividing 6 h of work by a 4 h covered shift read
+        // as 150 %, while dividing by the 6 h actually worked credits each operation
+        // against its own norm and reads at its true per-norm efficiency (e.g. 100 %),
+        // the very figure the daily card shows.
+        //
+        // Owner decision (2026-09-15): parallel work still earns its recognised
+        // hours (total_weighted_norm_minutes, unchanged, so the base pay stands) but
+        // no efficiency bonus on top for the overlap. Because covered == worked for
+        // everything except overlap, this changes parallel months only. NOTE this
+        // figure feeds the payroll bonus (PayrollRunItemService: bonusAmount =
+        // amount × performance_coefficient), so a parallel month's bonus drops with it.
+        int workedCategoryMinutes = monthlyCategories.stream()
+                .filter(mc -> !isAbsenceCategory(mc))
+                .mapToInt(mc -> safeInt(mc.getTotalMinutes()))
+                .sum();
+        BigDecimal performanceCoefficient = workedCategoryMinutes > 0
+                ? totalWeightedNormMinutes.divide(BigDecimal.valueOf(workedCategoryMinutes), 6, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
 
         report.setTotalShiftMinutes(totalShiftMinutes);

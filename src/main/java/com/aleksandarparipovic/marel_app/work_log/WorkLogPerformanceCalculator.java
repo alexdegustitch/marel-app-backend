@@ -74,8 +74,19 @@ public class WorkLogPerformanceCalculator {
      * <p>Note this moves the figure in BOTH directions, which is why it cannot be
      * expressed as another ceiling: 35 against a norm of 40 is 87.5 % and becomes
      * 100, and 50 against the same norm is 125 % and also becomes 100.
+     *
+     * <p><b>A manually typed efficiency wins over everything here.</b> When a
+     * supervisor has entered {@code performance_rate_manual} it is the paid rate,
+     * used exactly as typed: the ceiling does not apply and full-performance
+     * crediting does not apply, because both are automatic policies and this is an
+     * explicit decision made over them. The measured rate
+     * ({@link #calculatePerformanceRate}) is left untouched, so the row keeps
+     * showing what was measured beside what was decided.
      */
     public BigDecimal calculateApprovedPerformanceRate(WorkLog log, boolean creditFullPerformance) {
+        if (log.getPerformanceRateManual() != null) {
+            return log.getPerformanceRateManual();
+        }
         BigDecimal rate = creditFullPerformance
                 ? BigDecimal.valueOf(100)
                 : calculatePerformanceRate(log);

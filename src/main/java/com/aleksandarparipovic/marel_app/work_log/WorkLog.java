@@ -155,6 +155,33 @@ public class WorkLog {
     @Column(name = "approved_performance_rate", precision = 38, scale = 2)
     private BigDecimal approvedPerformanceRate;
 
+    /**
+     * The efficiency percentage somebody typed over the one the program measured,
+     * or null when nobody did.
+     *
+     * <p><b>Deliberately not written into {@link #performanceRate} or
+     * {@link #approvedPerformanceRate} above.</b> Those are derived — the recalc
+     * engine recomputes the paid rate on every recalculation — so a hand-entered
+     * value stored there would be erased by the next recalculation. Kept apart,
+     * {@code performanceRate} stays the measured figure the row shows as the
+     * default, and the override survives.
+     *
+     * <p>The effective PAID rate is this when present and the measured/capped rate
+     * otherwise; see {@code WorkLogPerformanceCalculator.calculateApprovedPerformanceRate},
+     * which is the only place that decision is made. Used exactly as typed: not
+     * capped at {@code max_efficiency_percent}, and it overrides full-performance
+     * crediting.
+     */
+    @Column(name = "performance_rate_manual", precision = 38, scale = 2)
+    private BigDecimal performanceRateManual;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "performance_rate_manual_by")
+    private User performanceRateManualBy;
+
+    @Column(name = "performance_rate_manual_at")
+    private OffsetDateTime performanceRateManualAt;
+
     @Column(name = "paid_minutes", precision = 38, scale = 2)
     private BigDecimal paidMinutes;
 

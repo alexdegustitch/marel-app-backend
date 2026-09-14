@@ -1565,8 +1565,16 @@ public class PayrollRunItemService {
         }
 
         BigDecimal hourlyRate = item.getHourlyRate() != null ? item.getHourlyRate() : BigDecimal.ZERO;
-        BigDecimal performanceCoeff = item.getPerformanceCoefficient() != null
-                ? item.getPerformanceCoefficient() : BigDecimal.ZERO;
+        // The bonus rides the APPROVED (capped) coefficient, never the raw one.
+        // The base amount below is already built from approved-weighted minutes and
+        // the payslip shows the approved rate; paying the bonus on the uncapped
+        // performance_coefficient let it climb past max_efficiency_percent while the
+        // page said otherwise (most visibly on parallel work). Read from the monthly
+        // report so it is the same figure the header shows, fresh regardless of
+        // whether the item's own columns were just repopulated. Stored onto each
+        // category below, so the hourly-rate recalc path reuses the capped value too.
+        BigDecimal performanceCoeff = mr.getApprovedPerformanceCoefficient() != null
+                ? mr.getApprovedPerformanceCoefficient() : BigDecimal.ZERO;
         OffsetDateTime now = OffsetDateTime.now();
 
         for (PayrollRunItemCategory cat : itemCategories) {

@@ -31,6 +31,9 @@ public class WorkLogMapper {
     /** Matches work_logs.norm_multiplier_manual and the report rows' own column. */
     private static final int COEFFICIENT_SCALE = 2;
 
+    /** Matches work_logs.performance_rate_manual (numeric(38,2)). */
+    private static final int PERFORMANCE_RATE_SCALE = 2;
+
     private final WorkLogValidator workLogValidator;
     private final EntityReferenceProvider referenceProvider;
     private final DateUtil dateUtil;
@@ -80,7 +83,8 @@ public class WorkLogMapper {
                 workLog.getIsActive(),
                 workLog.getNormMultiplierSnapshot(),
                 workLog.getNormMultiplierManual(),
-                workLog.getWorkCode() == null ? null : workLog.getWorkCode().getAllowsParallelWork()
+                workLog.getWorkCode() == null ? null : workLog.getWorkCode().getAllowsParallelWork(),
+                workLog.getPerformanceRateManual()
         );
     }
 
@@ -149,6 +153,69 @@ public class WorkLogMapper {
     }
 
     /**
+     * Write, keep or clear the efficiency somebody typed over the measured one.
+     *
+     * <p>The exact counterpart of {@link #applyManualCoefficient}, one field over:
+     * the effective PAID rate is the manual value when present and the measured
+     * rate otherwise (resolved in {@code WorkLogPerformanceCalculator}), so the
+     * three cases are the same:
+     *
+     * <ul>
+     *   <li><b>Nothing sent</b> — the override, if any, is removed and the log goes
+     *       back to what the program measures.</li>
+     *   <li><b>The measured value sent back</b> — not an override at all. The
+     *       measured rate the client already computed rides in on
+     *       {@code dto.performanceRate}; a manual value equal to it is stored as
+     *       none, so typing the measured figure is another way to undo.</li>
+     *   <li><b>The same override sent back</b> — the value, the author and the
+     *       moment all stay; rewriting them would credit the last Save rather than
+     *       the person who decided.</li>
+     * </ul>
+     */
+    private void applyManualEfficiency(WorkLog log, WorkLogFormDto dto) {
+        BigDecimal typed = dto.getPerformanceRateManual();
+        BigDecimal scaled = typed == null ? null : typed.setScale(PERFORMANCE_RATE_SCALE, RoundingMode.HALF_UP);
+
+        if (scaled != null && scaled.signum() < 0) {
+            throw new IllegalArgumentException("Učinak ne može biti negativan.");
+        }
+
+        // Same as the measured value: that is the default, not a decision to depart from it.
+        BigDecimal measured = dto.getPerformanceRate();
+        if (scaled != null && measured != null
+                && scaled.compareTo(measured.setScale(PERFORMANCE_RATE_SCALE, RoundingMode.HALF_UP)) == 0) {
+            scaled = null;
+        }
+
+        BigDecimal current = log.getPerformanceRateManual();
+
+        if (scaled == null) {
+            if (current == null) {
+                return;
+            }
+            log.setPerformanceRateManual(null);
+            log.setPerformanceRateManualBy(null);
+            log.setPerformanceRateManualAt(null);
+            return;
+        }
+
+        if (current != null && current.compareTo(scaled) == 0) {
+            return;
+        }
+
+        Long authorId = currentUserService.getCurrentUserId();
+        if (authorId == null) {
+            throw new IllegalStateException(
+                    "Učinak može ručno da izmeni samo prijavljeni korisnik.");
+        }
+
+        log.setPerformanceRateManual(scaled);
+        log.setPerformanceRateManualBy(referenceProvider.getRequiredReference(
+                User.class, authorId, "performanceRateManualBy"));
+        log.setPerformanceRateManualAt(OffsetDateTime.now());
+    }
+
+    /**
      * @param resolution the already-validated compensation-scheme resolution for
      *                   this log's employee, work date and source category. It is
      *                   passed in rather than resolved here so a batch of logs on
@@ -192,6 +259,9 @@ public class WorkLogMapper {
         // replaced, with a name and a moment attached.
         applyManualCoefficient(workLog, dto, resolution);
 
+        // Same for an efficiency typed over the measured one.
+        applyManualEfficiency(workLog, dto);
+
         return workLog;
     }
 
@@ -229,6 +299,7 @@ public class WorkLogMapper {
         // a correct one.
         compensationSnapshot.apply(entity, resolution);
         applyManualCoefficient(entity, dto, resolution);
+        applyManualEfficiency(entity, dto);
 
         if (dto.getIsActive() != null) {
             entity.setIsActive(dto.getIsActive());

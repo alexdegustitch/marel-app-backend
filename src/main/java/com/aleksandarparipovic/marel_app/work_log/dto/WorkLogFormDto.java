@@ -31,4 +31,12 @@ public class WorkLogFormDto {
      * coefficient a person is allowed to decide, and who decided it is recorded.
      */
     private BigDecimal normMultiplierManual;
+
+    /**
+     * The efficiency percentage somebody typed over the measured one, or null to
+     * go back to it. Read from the request the same way as the manual coefficient:
+     * it becomes the log's paid rate (used exactly as typed), and who decided it is
+     * recorded. A value equal to {@link #performanceRate} is treated as no override.
+     */
+    private BigDecimal performanceRateManual;
 }

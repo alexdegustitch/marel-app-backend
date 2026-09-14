@@ -47,4 +47,11 @@ public interface WorkLogDto {
     BigDecimal getNormMultiplierManual();
 
     Boolean getAllowsParallelWork();
+
+    /**
+     * Non-null only when somebody typed an efficiency over the measured one. When
+     * present it is the log's paid rate; {@link #getPerformanceRate()} still holds
+     * the measured value, so a screen can show "80 %, ručno, obračunato 70 %".
+     */
+    BigDecimal getPerformanceRateManual();
 }

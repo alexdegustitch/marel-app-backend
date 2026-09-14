@@ -35,4 +35,5 @@ public class WorkLogDtoImpl implements WorkLogDto {
     private final java.math.BigDecimal normMultiplierSnapshot;
     private final java.math.BigDecimal normMultiplierManual;
     private final Boolean allowsParallelWork;
+    private final java.math.BigDecimal performanceRateManual;
 }
