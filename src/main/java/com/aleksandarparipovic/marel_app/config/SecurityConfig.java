@@ -394,6 +394,17 @@ public class SecurityConfig {
                          */
                         .requestMatchers("/api/production-orders/*/recipients/**").authenticated()
                         /*
+                         * The public notes wall. Everyone signed in may read AND
+                         * write it — that is the whole point, it is the company's
+                         * shared margin on the order — so it is carved out as
+                         * `authenticated()` ABOVE the MANAGE catch-all, which would
+                         * otherwise refuse a POST from anyone without
+                         * PRODUCTION_ORDER_MANAGE (the supervisor, the accountant).
+                         * Who may edit or delete a given note — its author, or a
+                         * moderator — is decided in OrderNoteService, not by a URL.
+                         */
+                        .requestMatchers("/api/production-orders/*/notes/**").authenticated()
+                        /*
                          * `search-all` is a READ done with POST — it carries the
                          * paging and filter payload, and it is the ONLY call the
                          * order list screen makes. Listing it by name is not a
@@ -423,6 +434,8 @@ public class SecurityConfig {
                          * VIEW/MANAGE split exists for.
                          */
                         .requestMatchers("/api/sample-orders/*/recipients/**").authenticated()
+                        /* The notes wall, same rule as production orders above. */
+                        .requestMatchers("/api/sample-orders/*/notes/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/sample-orders/search-all")
                             .access(permission(AppPermission.SAMPLE_ORDER_VIEW))
                         .requestMatchers(HttpMethod.GET, "/api/sample-orders/**")
