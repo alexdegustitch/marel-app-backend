@@ -207,6 +207,32 @@ public class PayrollChangeRequestService {
                 .stream().map(this::toResponse).toList();
     }
 
+    /**
+     * One request a link points at — the destination a notification carries.
+     *
+     * <p>Narrowed exactly like {@link #search}: whoever ANSWERS these may read
+     * any, everybody else only their own. A request the reader may not see is
+     * reported ABSENT rather than refused, so an id in a link never confirms the
+     * existence of somebody else's request. The requests screen only needs the
+     * request's status from this — enough to open the tab and group it points at,
+     * whatever that status is.
+     */
+    @Transactional(readOnly = true)
+    public PayrollChangeRequestResponse getForReader(Long requestId) {
+        PayrollChangeRequest request = requestRepository.findDetailById(requestId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Zahtev nije pronađen: " + requestId));
+
+        if (!permissionService.hasPermission(AppPermission.PAYROLL_CHANGE_REQUEST_PROCESS)) {
+            Long me = currentUserService.getCurrentUserId();
+            if (me == null || !me.equals(request.getRequestedBy().getId())) {
+                throw new EntityNotFoundException("Zahtev nije pronađen: " + requestId);
+            }
+        }
+
+        return toResponse(request);
+    }
+
     // ── Internals ───────────────────────────────────────────────────────────
 
     private PayrollChangeRequest loadPending(Long requestId) {
