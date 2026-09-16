@@ -55,6 +55,19 @@ public class PayrollChangeRequestController {
         return ResponseEntity.ok(service.forPayrollRunItem(payrollRunItemId));
     }
 
+    /**
+     * One request a link points at — what a notification opens.
+     *
+     * <p>Open to both readers and narrowed by the service, exactly like the list:
+     * whoever answers these may read any, everybody else only their own. The
+     * screen uses it to land on the request's own tab and status group whatever
+     * the status is, so a decided request opens as readily as a waiting one.
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<PayrollChangeRequestResponse> getOne(@PathVariable Long id) {
+        return ResponseEntity.ok(service.getForReader(id));
+    }
+
     @PostMapping
     @PreAuthorize("@perm.has('PAYROLL_CHANGE_REQUEST_CREATE')")
     public ResponseEntity<PayrollChangeRequestResponse> create(
