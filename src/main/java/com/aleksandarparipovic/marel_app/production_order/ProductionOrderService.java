@@ -729,6 +729,15 @@ public class ProductionOrderService {
                 .toList();
     }
 
+    /**
+     * The ids of the active orders that list {@code productId}, so the karton
+     * order picker can float those orders to the top when a product is chosen
+     * first. The membership is decided in one indexed query, server-side.
+     */
+    List<Long> getActiveOrderIdsForProduct(Long productId){
+        return productionOrderRepository.findActiveOrderIdsByProduct(productId);
+    }
+
     public Page<ProductionOrderCardRow> searchAll(SearchRequest request) {
         // Both pseudo-filters are lifted out BEFORE the criteria builder runs:
         // neither is a column, and a generic field named "attention" would reach

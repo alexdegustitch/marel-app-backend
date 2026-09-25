@@ -20,6 +20,28 @@ public interface ProductionOrderRepository extends JpaRepository<ProductionOrder
     List<ProductionOrder> findByIsActiveIsTrueOrderByNameAsc();
 
     /**
+     * The ids of the active orders that list one product — what the karton order
+     * picker floats to the top when a product is chosen first.
+     *
+     * <p>The reverse of "pick an order, its products first": here the product is
+     * chosen and the orders carrying it come first. Decided in the database over
+     * the indexed {@code product_id} join, with the same soft-delete guard used
+     * everywhere ({@code isActive} and {@code archivedAt is null} on the line, and
+     * an active order), so only the small id list crosses the wire and the browser
+     * never scans the whole catalogue. The picker keeps its own (name) order
+     * within each group; this answers only which orders belong on top.
+     */
+    @Query("""
+            select distinct li.productionOrder.id
+            from ProductionOrderLineItem li
+            where li.product.id = :productId
+              and li.isActive = true
+              and li.archivedAt is null
+              and li.productionOrder.isActive = true
+            """)
+    List<Long> findActiveOrderIdsByProduct(@Param("productId") Long productId);
+
+    /**
      * The ids the morning reminder job walks — every order still open. Ids
      * rather than entities, because the job re-loads each order inside its own
      * per-order transaction; holding a detached list of entities across those
