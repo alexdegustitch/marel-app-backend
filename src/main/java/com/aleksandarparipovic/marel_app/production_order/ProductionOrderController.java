@@ -42,6 +42,18 @@ public class ProductionOrderController {
         return ResponseEntity.ok(productionOrderOptionDtos);
     }
 
+    /**
+     * The ids of the active orders that list {@code productId}, so the karton
+     * order picker can float those orders to the top when a product is chosen
+     * first — the mirror of "pick an order, its products first". A GET under
+     * {@code /api/production-orders}, so the {@code PRODUCTION_ORDER_VIEW} rule
+     * already guards it, exactly like the plain option list it reorders.
+     */
+    @GetMapping("/ids-by-product")
+    ResponseEntity<List<Long>> getActiveOrderIdsForProduct(@RequestParam Long productId){
+        return ResponseEntity.ok(productionOrderService.getActiveOrderIdsForProduct(productId));
+    }
+
     @PostMapping("/search-all")
     ResponseEntity<Page<ProductionOrderCardRow>> searchAll(@RequestBody SearchRequest request) {
         return ResponseEntity.ok(productionOrderService.searchAll(request));
