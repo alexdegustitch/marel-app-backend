@@ -51,5 +51,19 @@ public class PayrollRunItemDetailResponse {
      * plausible-looking total nobody questions.
      */
     private final boolean missingHourlyRate;
+
+    /**
+     * The employee's FINISHED (LOCKED) payroll months from the five before
+     * this one, oldest first, each with its applied ocena or null — the
+     * payslip draws a fixed six-month chart beside the director's note, with
+     * the current month's own mark (on the summary) as the last column. A
+     * month missing from the list had no finished obračun, and the chart
+     * leaves its slot blank.
+     *
+     * <p>Empty, not absent, when there is no history; a handover snapshot
+     * written before the field existed simply has none, and the client reads
+     * it with a fallback.
+     */
+    private final List<PayrollMarkHistoryDto> markHistory;
 }
 

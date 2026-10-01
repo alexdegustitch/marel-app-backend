@@ -233,6 +233,87 @@ class PerformanceMarkOnPayrollIT extends AbstractIntegrationTest {
         assertThat(reload(scenario.item().getId()).getHourlyRate()).isEqualByComparingTo("0.00");
     }
 
+    // ── the history on the detail response ──────────────────────────────────
+
+    /**
+     * The fixture builds a fresh employee per scenario, so the earlier months are
+     * re-pointed at the current month's employee — the history query reads
+     * {@code payroll_run_items.employee_id} and nothing else.
+     */
+    private void reassignTo(com.aleksandarparipovic.marel_app.employee.Employee employee, Long itemId) {
+        PayrollRunItem item = reload(itemId);
+        item.setEmployee(employee);
+        itemRepository.saveAndFlush(item);
+    }
+
+    /** Finishes a month AFTER its mark was set — a LOCKED item refuses mark writes. */
+    private void lock(Long itemId) {
+        PayrollRunItem item = reload(itemId);
+        item.setStatus("LOCKED");
+        itemRepository.saveAndFlush(item);
+    }
+
+    @Test
+    @DisplayName("the history carries every LOCKED month of the window, marked or not, and nothing else")
+    void detailCarriesMarkHistory() {
+        var current = fixture.scenario().hourlyRate("420.00").build();
+        // Window for 2026-09: April–August. March is one month too old.
+        var march = fixture.scenario().period(java.time.YearMonth.of(2026, 3)).build();
+        var may = fixture.scenario().period(java.time.YearMonth.of(2026, 5)).build();
+        var june = fixture.scenario().period(java.time.YearMonth.of(2026, 6)).build();
+        var july = fixture.scenario().period(java.time.YearMonth.of(2026, 7)).build();
+        var august = fixture.scenario().period(java.time.YearMonth.of(2026, 8)).build();
+        for (var scenario : java.util.List.of(march, may, june, july, august)) {
+            reassignTo(current.employee(), scenario.item().getId());
+        }
+
+        // June carries an APPLIED legacy typed multiplier — the pre-šifarnik
+        // kind. Signed in full, as the V58 attribution CHECKs insist.
+        User signer = userRepository.findAll().get(0);
+        PayrollRunItem juneItem = reload(june.item().getId());
+        juneItem.setPerformanceMark(new BigDecimal("1.50"));
+        juneItem.setPerformanceMarkBy(signer);
+        juneItem.setPerformanceMarkAt(OffsetDateTime.now());
+        juneItem.setPerformanceMarkApplied(true);
+        juneItem.setPerformanceMarkAppliedBy(signer);
+        juneItem.setPerformanceMarkAppliedAt(OffsetDateTime.now());
+        itemRepository.saveAndFlush(juneItem);
+
+        // July's šifarnik mark goes in force (the admin holds APPLY); March gets
+        // one too, but falls outside the six-month window.
+        PerformanceMark julyMark = sifarnikMark("-45.00", PerformanceMarkAmountUnit.RSD_PER_HOUR,
+                LocalDate.of(2026, 1, 1), null);
+        service.setPerformanceMark(july.item().getId(), julyMark.getId());
+        PerformanceMark marchMark = sifarnikMark("-45.00", PerformanceMarkAmountUnit.RSD_PER_HOUR,
+                LocalDate.of(2026, 1, 1), null);
+        service.setPerformanceMark(march.item().getId(), marchMark.getId());
+
+        // August's is chosen by an EDIT-only supervisor and never applied — the
+        // finished month is still listed, with a null mark (an empty column).
+        PerformanceMark augustMark = sifarnikMark("10.00", PerformanceMarkAmountUnit.PERCENT,
+                LocalDate.of(2026, 1, 1), null);
+        signedInAs("supervisor");
+        service.setPerformanceMark(august.item().getId(), augustMark.getId());
+        signedInAs("admin");
+
+        // Everything but May is finished. May stays DRAFT with no finished
+        // obračun, so its slot on the chart has no month under it.
+        for (Long id : java.util.List.of(march.item().getId(), june.item().getId(),
+                july.item().getId(), august.item().getId())) {
+            lock(id);
+        }
+
+        var detail = service.getDetails(current.monthlyReport().getId());
+
+        assertThat(detail.getMarkHistory())
+                .extracting(h -> h.getPeriod())
+                .containsExactly(LocalDate.of(2026, 6, 1), LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 8, 1));
+        assertThat(detail.getMarkHistory().get(0).getMark()).isEqualByComparingTo("1.50");
+        assertThat(detail.getMarkHistory().get(1).getMark()).isEqualByComparingTo(julyMark.getMark());
+        assertThat(detail.getMarkHistory().get(2).getMark()).isNull();
+    }
+
     // ── taking away ─────────────────────────────────────────────────────────
 
     @Test

@@ -1101,6 +1101,23 @@ public class PayrollRunItemService {
                 && !Boolean.TRUE.equals(item.getHourlyRateOverridden())
                 && item.effectiveHourlyRate().compareTo(BigDecimal.ZERO) == 0;
 
+        // The 5 months before this one, oldest first — the order the chart draws
+        // them in. Only LOCKED months come back, each with its applied ocena or
+        // null; the current month's own mark is on the summary and NOT repeated.
+        List<com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollMarkHistoryDto> markHistory =
+                item.getEmployee() == null || item.getPeriod() == null
+                        ? List.of()
+                        : payrollRunItemRepository
+                                .findLockedMarkHistoryBetween(item.getEmployee().getId(),
+                                        item.getPeriod().minusMonths(5), item.getPeriod())
+                                .stream()
+                                .map(r -> new com.aleksandarparipovic.marel_app.payroll_run_item.dto
+                                        .PayrollMarkHistoryDto(r.getPeriod(), r.getMark()))
+                                .sorted(java.util.Comparator.comparing(
+                                        com.aleksandarparipovic.marel_app.payroll_run_item.dto
+                                                .PayrollMarkHistoryDto::getPeriod))
+                                .toList();
+
         return new PayrollRunItemDetailResponse(
                 summary,
                 categories,
@@ -1108,7 +1125,8 @@ public class PayrollRunItemService {
                 permissions,
                 locale,
                 partialView,
-                missingHourlyRate
+                missingHourlyRate,
+                markHistory
         );
     }
 
@@ -1201,7 +1219,9 @@ public class PayrollRunItemService {
                 full.isPartialView(),
                 // A missing rate is a fact about the payroll, not about who is
                 // reading it — it travels onto one's own payslip like any other.
-                full.isMissingHourlyRate());
+                full.isMissingHourlyRate(),
+                // One's own marks, like every other figure on one's own payslip.
+                full.getMarkHistory());
     }
 
     /**
