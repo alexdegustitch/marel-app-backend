@@ -116,6 +116,7 @@ public class PayrollRunItemService {
                     .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                     .build();
     private final com.aleksandarparipovic.marel_app.user.UserRepository userRepository;
+    private final com.aleksandarparipovic.marel_app.performance_mark.PerformanceMarkRepository performanceMarkRepository;
     private final com.aleksandarparipovic.marel_app.employee_payroll_run_item_update.EmployeePayrollRunItemUpdateService payrollRunItemUpdateService;
     private final WorkCodeCategoryNameResolver workCodeCategoryNameResolver;
     private final PayrollAdjustmentCategoryNameResolver payrollAdjustmentCategoryNameResolver;
@@ -3235,50 +3236,72 @@ public class PayrollRunItemService {
     // which is what makes it safe for the person who knows the work to give one
     // without also holding the payroll.
 
-    /** The rate a mark is applied to, and what "vrati" returns to. */
-    private static final BigDecimal MARK_MIN = BigDecimal.ZERO;
-    private static final BigDecimal MARK_MAX = new BigDecimal("2");
-
     /**
-     * Records the mark, or takes it away when {@code mark} is null.
+     * Records the mark — a šifarnik version chosen by id — or takes it away
+     * when {@code markId} is null.
      *
-     * <p>Changes NOTHING about what the employee is paid. If the mark was in
-     * force, it stops being — the rate goes back to its base and the
-     * administrator has to apply the new mark deliberately. Silently
-     * re-multiplying by an edited mark would let a supervisor move somebody's
-     * pay through a control that is supposed to be an opinion.
+     * <p>The chosen version must be IN FORCE on the first day of the payroll
+     * month ({@code period}): that is the whole point of referencing a dated
+     * row, the month pins what the ocena was worth. Choosing one always clears
+     * the LEGACY typed multiplier (V58's CHECK refuses a row carrying both).
+     *
+     * <p>When the CHOOSER also holds PAYROLL_MARK_APPLY, the chosen mark goes
+     * in force in the same breath — the owner's rule: picking an ocena IS the
+     * decision, and a second click would be the same person deciding twice.
+     * A chooser with only PAYROLL_MARK_EDIT still moves no money: the mark is
+     * recorded unapplied and whoever holds APPLY puts it in force, so the
+     * two-person split survives exactly where it existed — a supervisor's
+     * opinion never pays anybody by itself.
      */
     @Transactional
-    public PayrollRunItemDetailResponse setPerformanceMark(Long id, BigDecimal mark) {
+    public PayrollRunItemDetailResponse setPerformanceMark(Long id, Long markId) {
         PayrollRunItem item = loadEditableItem(id);
         markHumanDecision(id);
 
-        if (mark == null) {
+        if (markId == null) {
             boolean wasApplied = Boolean.TRUE.equals(item.getPerformanceMarkApplied());
             item.setPerformanceMark(null);
+            item.setPerformanceMarkRef(null);
             item.setPerformanceMarkBy(null);
             item.setPerformanceMarkAt(null);
             clearAppliedMark(item);
             if (wasApplied) {
-                // The rate was the base times the mark; with no mark left it is
-                // the base again.
+                // The rate was the adjusted one; with no mark left it is the
+                // base again.
                 applyDerivedHourlyRate(item);
                 recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
             }
         } else {
-            BigDecimal value = mark.setScale(2, RoundingMode.HALF_UP);
-            if (value.compareTo(MARK_MIN) < 0 || value.compareTo(MARK_MAX) > 0) {
-                throw new IllegalArgumentException(
-                        "Ocena mora biti između 0 i 2 (uneto: " + mark + ").");
+            com.aleksandarparipovic.marel_app.performance_mark.PerformanceMark mark =
+                    performanceMarkRepository.findById(markId)
+                            .orElseThrow(() -> new IllegalArgumentException("Ocena ne postoji: " + markId));
+            LocalDate monthStart = item.getPeriod() != null
+                    ? item.getPeriod()
+                    : item.getMonthlyReport() != null ? item.getMonthlyReport().getStartDate() : null;
+            if (mark.getArchivedAt() != null
+                    || monthStart == null
+                    || mark.getValidFrom().isAfter(monthStart)
+                    || (mark.getValidTo() != null && mark.getValidTo().isBefore(monthStart))) {
+                throw new ConflictException(
+                        "Izabrana ocena ne važi za ovaj mesec. Osvežite stranicu i izaberite ocenu iz ponuđene liste.");
             }
 
             boolean wasApplied = Boolean.TRUE.equals(item.getPerformanceMarkApplied());
-            item.setPerformanceMark(value);
+            item.setPerformanceMarkRef(mark);
+            // The šifarnik reference replaces the legacy typed multiplier.
+            item.setPerformanceMark(null);
             item.setPerformanceMarkBy(requireCurrentUser());
             item.setPerformanceMarkAt(OffsetDateTime.now());
-            // A NEW mark is not the applied one. The administrator applies it.
+            // The OLD mark's force never survives a new choice.
             clearAppliedMark(item);
-            if (wasApplied) {
+
+            boolean chooserMayApply = permissionService.hasPermission(AppPermission.PAYROLL_MARK_APPLY);
+            if (chooserMayApply) {
+                item.setPerformanceMarkApplied(true);
+                item.setPerformanceMarkAppliedBy(requireCurrentUser());
+                item.setPerformanceMarkAppliedAt(OffsetDateTime.now());
+            }
+            if (chooserMayApply || wasApplied) {
                 applyDerivedHourlyRate(item);
                 recalculateCategoriesForHourlyRate(id, item.getHourlyRate());
             }
@@ -3303,7 +3326,7 @@ public class PayrollRunItemService {
         PayrollRunItem item = loadEditableItem(id);
         markHumanDecision(id);
 
-        if (item.getPerformanceMark() == null) {
+        if (!item.hasPerformanceMark()) {
             throw new ConflictException("Ovom obračunu nije dodeljena ocena, pa nema šta da se primeni.");
         }
         if (Boolean.TRUE.equals(item.getPerformanceMarkApplied())) {

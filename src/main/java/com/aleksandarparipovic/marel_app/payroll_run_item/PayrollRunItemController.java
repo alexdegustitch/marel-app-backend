@@ -38,7 +38,8 @@ public class PayrollRunItemController {
     // a mark by sending the right JSON.
 
     /**
-     * Gives the mark, or takes it away with a null body value.
+     * Gives the mark — chosen from the performance-marks šifarnik by id — or
+     * takes it away with a null body value.
      *
      * <p>Changes no figure. The rate only moves when somebody APPLIES the mark,
      * which is the endpoint below and a different permission.
@@ -49,7 +50,7 @@ public class PayrollRunItemController {
             @PathVariable Long id,
             @RequestBody PerformanceMarkRequest request
     ) {
-        return ResponseEntity.ok(payrollRunItemService.setPerformanceMark(id, request.mark()));
+        return ResponseEntity.ok(payrollRunItemService.setPerformanceMark(id, request.markId()));
     }
 
     /** Puts the mark in force: the hourly rate becomes the base times the mark. */
@@ -67,11 +68,12 @@ public class PayrollRunItemController {
     }
 
     /**
-     * A record rather than a bare BigDecimal, so that {@code null} can arrive as
-     * a real value — {@code {"mark": null}} means "take the mark away", which a
-     * plain body could not express.
+     * A record rather than a bare id, so that {@code null} can arrive as a real
+     * value — {@code {"markId": null}} means "take the mark away", which a
+     * plain body could not express. The id is a performance_marks šifarnik row
+     * (a dated version), no longer a typed 0–2 multiplier.
      */
-    public record PerformanceMarkRequest(java.math.BigDecimal mark) {
+    public record PerformanceMarkRequest(Long markId) {
     }
 
     @GetMapping("/last-activity")

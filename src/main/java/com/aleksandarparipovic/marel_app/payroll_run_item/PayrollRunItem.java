@@ -172,14 +172,27 @@ public class PayrollRunItem {
     // ── Performance mark (ocena) ────────────────────────────────────────────
 
     /**
-     * The ocena, between 0 and 2.
+     * LEGACY typed ocena, between 0 and 2, multiplying the base rate.
      *
-     * <p>Given by a supervisor or an administrator; it changes NOTHING on its
-     * own. Multiplying the rate by it is {@link #performanceMarkApplied}, which
-     * is a separate decision by a separate person — the administrator.
+     * <p>Kept readable for months calculated before the šifarnik existed; new
+     * marks are {@link #performanceMarkRef}, and V58's CHECK refuses a row
+     * carrying both, so the derivation never has to pick a winner.
      */
     @Column(name = "performance_mark")
     private BigDecimal performanceMark;
+
+    /**
+     * The šifarnik VERSION chosen as this month's ocena (V58).
+     *
+     * <p>Given by a supervisor or an administrator; it changes NOTHING on its
+     * own. Putting it in force is {@link #performanceMarkApplied}, which is a
+     * separate decision by a separate person — the administrator. The service
+     * only accepts a version valid on the payroll month's first day
+     * ({@code period}), so the reference pins exactly what the mark was worth.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "performance_mark_id")
+    private com.aleksandarparipovic.marel_app.performance_mark.PerformanceMark performanceMarkRef;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "performance_mark_by")
@@ -220,10 +233,35 @@ public class PayrollRunItem {
         return base != null ? base : BigDecimal.ZERO;
     }
 
-    /** The base, multiplied by the mark when — and only when — it is applied. */
+    /** Whether ANY ocena is on the item — chosen from the šifarnik or legacy typed. */
+    public boolean hasPerformanceMark() {
+        return performanceMarkRef != null || performanceMark != null;
+    }
+
+    /**
+     * The base, adjusted by the mark when — and only when — it is applied.
+     *
+     * <p>A šifarnik mark ADJUSTS the base (PERCENT: base × (1 + amount/100),
+     * RSD_PER_HOUR: base + amount; the sign carries the direction), floored at
+     * zero — the legacy multiplier could already reach exactly 0 and no lower,
+     * and a negative hourly rate is not a rate. A legacy typed mark keeps its
+     * old semantics, base × mark, so frozen months re-derive unchanged.
+     */
     public BigDecimal effectiveHourlyRate() {
         BigDecimal base = baseHourlyRate();
-        if (!Boolean.TRUE.equals(performanceMarkApplied) || performanceMark == null) {
+        if (!Boolean.TRUE.equals(performanceMarkApplied)) {
+            return base.setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        if (performanceMarkRef != null) {
+            BigDecimal amount = performanceMarkRef.getAmount();
+            BigDecimal adjusted = switch (performanceMarkRef.getAmountUnit()) {
+                case PERCENT -> base.add(base.multiply(amount)
+                        .divide(new BigDecimal("100"), 6, java.math.RoundingMode.HALF_UP));
+                case RSD_PER_HOUR -> base.add(amount);
+            };
+            return adjusted.max(BigDecimal.ZERO).setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+        if (performanceMark == null) {
             return base.setScale(2, java.math.RoundingMode.HALF_UP);
         }
         return base.multiply(performanceMark).setScale(2, java.math.RoundingMode.HALF_UP);
