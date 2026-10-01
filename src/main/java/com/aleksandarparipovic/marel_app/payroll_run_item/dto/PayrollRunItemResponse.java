@@ -82,8 +82,16 @@ public class PayrollRunItemResponse {
 
     // ── The performance mark, and what it is doing to the rate ──────────────
 
-    /** The ocena, 0–2. Null when nobody gave one — the screen shows a dash. */
+    /** LEGACY typed ocena, 0–2 multiplier. Only on months marked before the šifarnik. */
     private final BigDecimal performanceMark;
+    /** The chosen šifarnik version's id; null on legacy or unmarked months. */
+    private final Long performanceMarkId;
+    /** The chosen ocena itself (e.g. 3), read off the šifarnik version. */
+    private final BigDecimal performanceMarkValue;
+    /** What the chosen ocena does to the rate: the signed amount … */
+    private final BigDecimal performanceMarkAmount;
+    /** … and how to read it: PERCENT or RSD_PER_HOUR. */
+    private final String performanceMarkAmountUnit;
     /** Who gave it, so the number is attributable without opening the audit log. */
     private final String performanceMarkByName;
     /** Whether hourlyRate above is currently the base multiplied by the mark. */
@@ -160,6 +168,11 @@ public class PayrollRunItemResponse {
         this.hourlyRateSystem = item.getHourlyRateSystem();
         this.hourlyRateOverridden = item.getHourlyRateOverridden();
         this.performanceMark = item.getPerformanceMark();
+        com.aleksandarparipovic.marel_app.performance_mark.PerformanceMark markRef = item.getPerformanceMarkRef();
+        this.performanceMarkId = markRef != null ? markRef.getId() : null;
+        this.performanceMarkValue = markRef != null ? markRef.getMark() : null;
+        this.performanceMarkAmount = markRef != null ? markRef.getAmount() : null;
+        this.performanceMarkAmountUnit = markRef != null ? markRef.getAmountUnit().name() : null;
         this.performanceMarkByName = item.getPerformanceMarkBy() != null
                 ? item.getPerformanceMarkBy().getFullName() : null;
         this.performanceMarkApplied = Boolean.TRUE.equals(item.getPerformanceMarkApplied());

@@ -266,6 +266,21 @@ public class SecurityConfig {
                             .access(permission(AppPermission.APP_SETTING_MANAGE))
 
                         /*
+                         * The performance-marks šifarnik (ocene) — what a mark
+                         * does to the hourly rate, versioned. The PICKER is the
+                         * payroll capability (choosing a mark for somebody's
+                         * month, mirroring the controller), listed first so it
+                         * never falls through to the settings gate; everything
+                         * else is the same capability that owns the šifarnici
+                         * screen, like the category and shift administration
+                         * above.
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/performance-marks/options")
+                            .access(permission(AppPermission.PAYROLL_MARK_EDIT))
+                        .requestMatchers("/api/performance-marks/**")
+                            .access(permission(AppPermission.APP_SETTING_MANAGE))
+
+                        /*
                          * THE WORK RECORDS — cards, months, shifts, hours, logs.
                          *
                          * `/api/me/**` is deliberately NOT in this list. A worker

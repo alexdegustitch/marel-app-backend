@@ -168,4 +168,81 @@ class HourlyRateDerivationTest {
                     .isEqualTo(2);
         }
     }
+
+    // ── A mark chosen from the šifarnik (V58) ───────────────────────────────
+
+    private static PayrollRunItem withChosenMark(BigDecimal system, BigDecimal manual,
+                                                 String amount,
+                                                 com.aleksandarparipovic.marel_app.performance_mark.PerformanceMarkAmountUnit unit,
+                                                 boolean applied) {
+        PayrollRunItem item = item(system, manual, null, applied);
+        item.setPerformanceMarkRef(com.aleksandarparipovic.marel_app.performance_mark.PerformanceMark.builder()
+                .mark(rsd("3"))
+                .amount(rsd(amount))
+                .amountUnit(unit)
+                .build());
+        return item;
+    }
+
+    @Nested
+    @DisplayName("a mark chosen from the šifarnik")
+    class ChosenMark {
+
+        private static final com.aleksandarparipovic.marel_app.performance_mark.PerformanceMarkAmountUnit PERCENT =
+                com.aleksandarparipovic.marel_app.performance_mark.PerformanceMarkAmountUnit.PERCENT;
+        private static final com.aleksandarparipovic.marel_app.performance_mark.PerformanceMarkAmountUnit RSD_PER_HOUR =
+                com.aleksandarparipovic.marel_app.performance_mark.PerformanceMarkAmountUnit.RSD_PER_HOUR;
+
+        @Test
+        @DisplayName("changes nothing while only GIVEN, exactly like the legacy mark")
+        void chosenAloneChangesNothing() {
+            assertThat(withChosenMark(rsd("500.00"), null, "-40.00", RSD_PER_HOUR, false).effectiveHourlyRate())
+                    .isEqualByComparingTo("500.00");
+        }
+
+        @Test
+        @DisplayName("RSD_PER_HOUR adds the signed amount to the base")
+        void rsdPerHourAdds() {
+            assertThat(withChosenMark(rsd("500.00"), null, "-40.00", RSD_PER_HOUR, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("460.00");
+            assertThat(withChosenMark(rsd("500.00"), null, "25.00", RSD_PER_HOUR, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("525.00");
+        }
+
+        @Test
+        @DisplayName("PERCENT moves the base by the signed share of itself")
+        void percentScales() {
+            // -40 % of 500 → 300.00; +10 % → 550.00.
+            assertThat(withChosenMark(rsd("500.00"), null, "-40.00", PERCENT, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("300.00");
+            assertThat(withChosenMark(rsd("500.00"), null, "10.00", PERCENT, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("550.00");
+        }
+
+        @Test
+        @DisplayName("adjusts the TYPED rate when there is one, not the system's")
+        void adjustsTheTypedRate() {
+            assertThat(withChosenMark(rsd("500.00"), rsd("620.00"), "-40.00", RSD_PER_HOUR, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("580.00");
+        }
+
+        @Test
+        @DisplayName("floors at zero — a deduction larger than the rate pays 0, never a negative hour")
+        void floorsAtZero() {
+            // V57 left this open for the apply seam; the answer is the legacy
+            // mark's own floor — 0 was always reachable (mark 0), nothing lower.
+            assertThat(withChosenMark(rsd("400.00"), null, "-500.00", RSD_PER_HOUR, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("0.00");
+            assertThat(withChosenMark(rsd("400.00"), null, "-150.00", PERCENT, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("0.00");
+        }
+
+        @Test
+        @DisplayName("rounds the percent adjustment to cents half-up")
+        void percentRoundsToCents() {
+            // 333.33 × (1 + 0.075) = 358.329775 → 358.33.
+            assertThat(withChosenMark(rsd("333.33"), null, "7.50", PERCENT, true).effectiveHourlyRate())
+                    .isEqualByComparingTo("358.33");
+        }
+    }
 }
