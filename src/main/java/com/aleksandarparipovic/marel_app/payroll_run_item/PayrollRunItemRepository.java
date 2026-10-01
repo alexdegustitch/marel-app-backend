@@ -62,6 +62,46 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
             """)
     List<PayrollRunItem> findLockedByEmployeeId(@Param("employeeId") Long employeeId);
 
+    /**
+     * One employee's FINISHED payroll months in {@code [from, period)}, with the
+     * ocena each of them applied — what the payslip's mini chart plots beside the
+     * current month's own mark.
+     *
+     * <p>LOCKED only: a month still being prepared is not a finished obračun, and
+     * its mark could yet change under the chart. A LOCKED month whose mark was
+     * never applied is still RETURNED, with {@code mark} null — the chart draws it
+     * as an empty column, which is a different statement from the month not
+     * existing at all. {@code COALESCE} reads the šifarnik version's mark and
+     * falls back to the legacy typed 0–2 multiplier (V58's CHECK guarantees at
+     * most one of the two); {@code DISTINCT ON} takes the latest item where a
+     * month somehow holds more than one, same as
+     * {@link #findByEmployee_IdAndPeriod} taking the highest id.
+     */
+    @Query(value = """
+        SELECT DISTINCT ON (pri.period)
+               pri.period AS period,
+               CASE WHEN pri.performance_mark_applied
+                    THEN COALESCE(pm.mark, pri.performance_mark)
+               END        AS mark
+        FROM payroll_run_items pri
+        LEFT JOIN performance_marks pm ON pm.id = pri.performance_mark_id
+        WHERE pri.employee_id = :employeeId
+          AND pri.period >= :from
+          AND pri.period < :period
+          AND pri.archived_at IS NULL
+          AND pri.status = 'LOCKED'
+        ORDER BY pri.period DESC, pri.id DESC
+        """, nativeQuery = true)
+    List<AppliedMarkHistoryRow> findLockedMarkHistoryBetween(@Param("employeeId") Long employeeId,
+                                                             @Param("from") LocalDate from,
+                                                             @Param("period") LocalDate period);
+
+    /** Projection for {@link #findLockedMarkHistoryBetween}. {@code getMark()} is null for a month without an applied ocena. */
+    interface AppliedMarkHistoryRow {
+        LocalDate getPeriod();
+        java.math.BigDecimal getMark();
+    }
+
     /** Returns summary (id, employeeId, employeeName, month, year) for all items in a given year. */
     @Query(value = """
         SELECT
