@@ -13,4 +13,10 @@ public interface PayrollAdjustmentCategoryRepository extends JpaRepository<Payro
     java.util.Optional<PayrollAdjustmentCategory> findByCode(String code);
 
     List<PayrollAdjustmentCategory> findByIsActiveTrueAndArchivedAtIsNull();
+
+    /**
+     * The set payroll initialisation seeds on every item — excludes carrier
+     * categories for hand-added lines (seed_on_init = false, e.g. CUSTOM).
+     */
+    List<PayrollAdjustmentCategory> findByIsActiveTrueAndArchivedAtIsNullAndSeedOnInitTrue();
 }

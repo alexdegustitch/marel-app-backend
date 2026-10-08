@@ -83,9 +83,11 @@ public class PayrollRunInitializationService {
 
             txService.createPayrollRunItemCategories(items, activeWorkCategories, scopes);
 
-            // Phase 5: create adjustments for each active adjustment category
+            // Phase 5: create adjustments for each active adjustment category.
+            // Seeded set only: carrier categories for hand-added lines (CUSTOM)
+            // stay out, or every payslip would print an empty "Ručna stavka".
             List<PayrollAdjustmentCategory> activeAdjCategories =
-                    payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
+                    payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullAndSeedOnInitTrue();
             txService.createPayrollAdjustments(items, activeAdjCategories, scopes, userId);
 
             txService.populatePreviousMonthData(items);
@@ -124,14 +126,19 @@ public class PayrollRunInitializationService {
         List<WorkCodeCategory> activeWorkCategories =
                 workCodeCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByDisplayOrderAscIdAsc()
                         .stream().filter(c -> c.isInForceDuring(mr.getStartDate(), mr.getEndDate())).toList();
-        List<PayrollAdjustmentCategory> activeAdjCategories = payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
+        // The scope answers "may this employee's payslip carry this line" and must
+        // know every category, carriers included; only the seeded set becomes rows.
+        List<PayrollAdjustmentCategory> allAdjCategoriesForScope =
+                payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull();
+        List<PayrollAdjustmentCategory> activeAdjCategories =
+                payrollAdjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNullAndSeedOnInitTrue();
 
         Map<Long, PayrollSchemeScope> scopes = payrollSchemeScopeService.scopesFor(
                 items.stream().map(i -> i.getEmployee().getId()).toList(),
                 mr.getStartDate(),
                 mr.getEndDate(),
                 activeWorkCategories,
-                activeAdjCategories);
+                allAdjCategoriesForScope);
 
         txService.createPayrollRunItemCategories(items, activeWorkCategories, scopes);
         txService.createPayrollAdjustments(items, activeAdjCategories, scopes, userId);

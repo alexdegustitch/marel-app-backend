@@ -1311,6 +1311,8 @@ public class PayrollRunItemService {
     private static final String CAT_CODE_BONUS         = "MONTHLY_BONUS";
     private static final String CAT_CODE_FIXED_SALARY  = "FIXED_SALARY";
     private static final String CAT_CODE_PHONE_CURRENT_MONTH = "PHONE_CURRENT_MONTH";
+    /** The carrier for hand-added lines (V62): never seeded, named by the person. */
+    private static final String CUSTOM_CATEGORY_CODE   = "CUSTOM";
     private static final String SECTION_SETTLEMENTS    = "SETTLEMENTS";
     private static final String SECTION_ADDITIONS      = "ADDITIONS";
 
@@ -1531,10 +1533,15 @@ public class PayrollRunItemService {
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
         requireOpenForThisCaller(item);
 
-        PayrollAdjustmentCategory cat = payrollAdjustmentCategoryRepository
-                .findById(req.getCategoryId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "PayrollAdjustmentCategory not found: " + req.getCategoryId()));
+        // No category named — the normal case — means the CUSTOM carrier: the
+        // line is whatever its name says it is, and nothing else claims to know.
+        PayrollAdjustmentCategory cat = req.getCategoryId() == null
+                ? payrollAdjustmentCategoryRepository.findByCode(CUSTOM_CATEGORY_CODE)
+                        .orElseThrow(() -> new IllegalStateException(
+                                "Šifarnik nema CUSTOM stavku — nedostaje migracija V62."))
+                : payrollAdjustmentCategoryRepository.findById(req.getCategoryId())
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "PayrollAdjustmentCategory not found: " + req.getCategoryId()));
 
         if (!SECTION_SETTLEMENTS.equals(cat.getSectionCode())) {
             throw new ConflictException(
@@ -1561,6 +1568,10 @@ public class PayrollRunItemService {
         String name = req.getDisplayName() != null ? req.getDisplayName().trim() : "";
         if (name.length() > 120) {
             throw new ConflictException("Naziv stavke može imati najviše 120 znakova.");
+        }
+        // A carrier has no name worth printing; the typed name is the identity.
+        if (name.isEmpty() && CUSTOM_CATEGORY_CODE.equals(cat.getCode())) {
+            throw new ConflictException("Unesite naziv stavke.");
         }
 
         PayrollAdjustment adj = new PayrollAdjustment();

@@ -108,4 +108,12 @@ public class PayrollAdjustmentCategory {
     /** A manual line that must be filled in before the item can be locked. */
     @Column(name = "required_manual_input", nullable = false)
     private Boolean requiredManualInput = false;
+
+    /**
+     * Whether payroll initialisation creates this category's row on every item.
+     * FALSE marks a CARRIER for hand-added lines (the CUSTOM category): usable
+     * through the custom-line door, never printed as an empty system row.
+     */
+    @Column(name = "seed_on_init", nullable = false)
+    private Boolean seedOnInit = true;
 }
