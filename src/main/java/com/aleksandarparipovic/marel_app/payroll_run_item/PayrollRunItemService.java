@@ -1572,10 +1572,8 @@ public class PayrollRunItemService {
         if (name.length() > 120) {
             throw new ConflictException("Naziv stavke može imati najviše 120 znakova.");
         }
-        // A carrier has no name worth printing; the typed name is the identity.
-        if (name.isEmpty() && CUSTOM_CATEGORY_CODE.equals(cat.getCode())) {
-            throw new ConflictException("Unesite naziv stavke.");
-        }
+        // An empty name is allowed — owner's call (2026-10-09): the line then
+        // shows the carrier's own name, the same fallback every renamed row has.
 
         PayrollAdjustment adj = new PayrollAdjustment();
         adj.setPayrollRunItem(item);

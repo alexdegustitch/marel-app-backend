@@ -1,6 +1,5 @@
 package com.aleksandarparipovic.marel_app;
 
-import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustment;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentRepository;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategory;
@@ -20,16 +19,16 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A hand-made settlement line needs no named category (V62).
  *
  * <p>Before V62 a person adding a line picked one of the named SETTLEMENTS
  * categories and renamed it, so a second "Rata" that was actually an advance
- * still CLAIMED to be an instalment. Now the request simply omits the category,
- * the server hangs the line off the CUSTOM carrier, and the typed name is the
- * whole identity — which is why the name is compulsory there.
+ * still CLAIMED to be an instalment. Now the request simply omits the category
+ * and the server hangs the line off the CUSTOM carrier. The typed name is
+ * optional — owner's call — and an empty one falls back to the carrier's own
+ * name, like any renamed row cleared back to default.
  *
  * <p>The carrier itself must never surface as a system row: seed_on_init is
  * FALSE, so initialisation skips it, while the scheme scope still has to know
@@ -76,19 +75,23 @@ class CustomSettlementLineIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("on the carrier the typed name is the identity, so an empty one is refused")
-    void emptyNameOnCarrierIsRefused() {
+    @DisplayName("an empty name is allowed — the line falls back to the carrier's own name")
+    void emptyNameFallsBackToTheCarriersName() {
         var scenario = fixture.scenario().build();
 
-        assertThatThrownBy(() ->
-                payrollRunItemService.addCustomSettlementLine(scenario.item().getId(), line("  ", "100.00")))
-                .isInstanceOf(ConflictException.class)
-                .hasMessageContaining("Unesite naziv stavke");
+        payrollRunItemService.addCustomSettlementLine(scenario.item().getId(), line("  ", "100.00"));
 
         assertThat(adjustmentRepository
                 .findByItemIdAndSectionCode(scenario.item().getId(), "SETTLEMENTS").stream()
                 .filter(a -> Boolean.TRUE.equals(a.getIsCustom())))
-                .isEmpty();
+                .singleElement()
+                .satisfies(a -> {
+                    // NULL, not "": the stored nothing is what keeps the category-name
+                    // fallback (translations included) working, exactly like a rename
+                    // cleared back to default.
+                    assertThat(a.getDisplayName()).isNull();
+                    assertThat(a.getAmount()).isEqualByComparingTo("100.00");
+                });
     }
 
     @Test

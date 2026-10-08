@@ -21,10 +21,9 @@ public class CustomAdjustmentCreateRequest {
     private Long categoryId;
 
     /**
-     * What the line says on the payslip. Required on the CUSTOM carrier — a
-     * hand-made line IS its name. On a named category: empty, or exactly the
-     * category's own name, stores nothing — the line then shows the category
-     * name, translations included, like any system row.
+     * What the line says on the payslip. Optional everywhere — empty, or
+     * exactly the category's own name, stores nothing, and the line then shows
+     * the category's name, translations included, like any system row.
      */
     private String displayName;
 
