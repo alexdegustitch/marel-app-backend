@@ -13,10 +13,9 @@ import java.time.OffsetDateTime;
 import java.util.Map;
 
 @Entity
-@Table(
-    name = "payroll_adjustments",
-    uniqueConstraints = @UniqueConstraint(columnNames = {"payroll_run_item_id", "payroll_adjustment_category_id"})
-)
+// One row per (item, category) is enforced by a PARTIAL unique index over the
+// non-custom rows (V59) — not expressible as a JPA @UniqueConstraint.
+@Table(name = "payroll_adjustments")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -66,6 +65,34 @@ public class PayrollAdjustment {
 
     @Column(name = "note")
     private String note;
+
+    /**
+     * The name THIS line shows, typed by whoever put it there. NULL means the
+     * category's name, resolved with translations exactly as before. A typed
+     * name is a verbatim label and prints the same in every document language.
+     */
+    @Column(name = "display_name")
+    private String displayName;
+
+    /**
+     * TRUE for a line a person added by hand on one payroll — a second
+     * "Isplaćeno" with its own name — as opposed to the row-per-category set the
+     * initialisation creates. Never flipped after insert. Custom rows sit
+     * outside the one-row-per-category rule and outside every per-category
+     * calculator lookup; they are reached by id and summed by section.
+     */
+    @Column(name = "is_custom", nullable = false)
+    @Builder.Default
+    private Boolean isCustom = false;
+
+    /**
+     * Where THIS line sits inside its section on THIS payroll. NULL means the
+     * category's own sort_order — the šifarnik is the default, the line is the
+     * decision, and reordering one month never rearranges another. (The LIVE
+     * order; sort_order_snapshot stays the number frozen at lock time.)
+     */
+    @Column(name = "sort_order")
+    private Integer sortOrder;
 
     @Column(name = "is_applied", nullable = false)
     private Boolean isApplied = true;

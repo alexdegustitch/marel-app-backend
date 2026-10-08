@@ -32,10 +32,15 @@ public interface PayrollAdjustmentRepository extends JpaRepository<PayrollAdjust
     @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory WHERE a.id = :id")
     Optional<PayrollAdjustment> findByIdWithCategory(@Param("id") Long id);
 
-    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.calculationKey = :calculationKey")
+    // Both per-category lookups exclude CUSTOM rows, and must keep doing so:
+    // a hand-added line may repeat a category (V59 made the unique index
+    // partial), so without the filter a second "Isplaćeno" would make these
+    // Optionals non-unique — and worse, let a calculator write over a figure a
+    // person typed. The system's own row is the only one a category addresses.
+    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.calculationKey = :calculationKey AND a.isCustom = false")
     Optional<PayrollAdjustment> findByItemIdAndCalculationKey(@Param("itemId") Long itemId, @Param("calculationKey") String calculationKey);
 
-    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.code = :code")
+    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.code = :code AND a.isCustom = false")
     Optional<PayrollAdjustment> findByItemIdAndCategoryCode(@Param("itemId") Long itemId, @Param("code") String code);
 
     @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.sectionCode = :sectionCode")

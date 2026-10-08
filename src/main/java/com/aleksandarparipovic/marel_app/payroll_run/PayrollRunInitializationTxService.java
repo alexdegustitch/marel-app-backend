@@ -165,7 +165,11 @@ public class PayrollRunInitializationTxService {
         List<PayrollAdjustment> existing = payrollAdjustmentRepository
                 .findByPayrollRunItem_IdIn(items.stream().map(PayrollRunItem::getId).toList());
 
+        // Custom rows do not count as "the category's row": a hand-added second
+        // "Isplaćeno" must not stop a re-run from creating the system line the
+        // calculators address.
         Set<String> existingKeys = existing.stream()
+                .filter(a -> !Boolean.TRUE.equals(a.getIsCustom()))
                 .map(a -> a.getPayrollRunItem().getId() + ":" + a.getPayrollAdjustmentCategory().getId())
                 .collect(Collectors.toSet());
 

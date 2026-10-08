@@ -30,6 +30,14 @@ public class AdjustmentPatchDto {
     private String note;
 
     /**
+     * Rename the line on the payslip — null means no change, blank clears the
+     * typed name and the line goes back to showing its category's name
+     * (translations included). A typed name is a verbatim label: it prints the
+     * same in every document language.
+     */
+    private String displayName;
+
+    /**
      * A delta to add on top of the system figure — the bonus correction.
      *
      * <p>Not an override: the system value stays visible and the two are summed.

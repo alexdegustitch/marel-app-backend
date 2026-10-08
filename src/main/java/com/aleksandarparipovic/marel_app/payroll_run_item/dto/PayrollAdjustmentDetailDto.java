@@ -19,13 +19,23 @@ public class PayrollAdjustmentDetailDto {
     /** The master (default-locale) name. Unchanged. */
     private final String categoryName;
     /**
-     * The name to display, in the requested locale, falling back to
+     * The name to display: the line's own typed name when somebody gave it one,
+     * else the category's name in the requested locale, falling back to
      * {@link #categoryName}.
      *
-     * <p>Always resolved through payroll_adjustment_category_id. The adjustment
-     * row itself stores no name, translated or otherwise.
+     * <p>A typed name wins over the translation ON PURPOSE — it is a verbatim
+     * label a person wrote for this one line, and there is nothing to translate
+     * it from. It prints the same in every document language.
      */
     private final String categoryDisplayName;
+    /**
+     * The line's own typed name, exactly as stored — null when the line shows
+     * its category's name. Sent beside the resolved name so the screen can tell
+     * "renamed" from "default" (the rename field prefills from this).
+     */
+    private final String displayName;
+    /** A line a person added by hand on this payroll. Only these may be deleted. */
+    private final boolean isCustom;
     private final String sectionCode;
     private final Integer sectionOrder;
     private final Integer sortOrder;
@@ -150,12 +160,18 @@ public class PayrollAdjustmentDetailDto {
 
         this.categoryCode = cat.getCode();
         this.categoryName = cat.getName();
+        this.displayName = a.getDisplayName();
+        this.isCustom = Boolean.TRUE.equals(a.getIsCustom());
         String translated = translations == null ? null : translations.get(cat.getId());
         this.categoryDisplayName =
-                translated != null && !translated.isBlank() ? translated : this.categoryName;
+                this.displayName != null && !this.displayName.isBlank()
+                        ? this.displayName
+                        : (translated != null && !translated.isBlank() ? translated : this.categoryName);
         this.sectionCode = cat.getSectionCode();
         this.sectionOrder = cat.getSectionOrder();
-        this.sortOrder = cat.getSortOrder();
+        // The line's own place when somebody arranged this payroll, else the
+        // šifarnik default — the same fallback displayName follows.
+        this.sortOrder = a.getSortOrder() != null ? a.getSortOrder() : cat.getSortOrder();
         this.impactCode = cat.getImpactCode();
         this.inputType = cat.getInputType();
         this.isManual = cat.getIsManual();

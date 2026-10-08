@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.payroll_run_item;
 
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.CustomAdjustmentCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemDetailResponse;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemPatchRequest;
@@ -167,6 +168,44 @@ public class PayrollRunItemController {
             @PathVariable Long id,
             @RequestBody PayrollRunItemPatchRequest request) {
         return ResponseEntity.ok(payrollRunItemService.patch(id, request));
+    }
+
+    /**
+     * Add a hand-made SETTLEMENTS line — a second "Isplaćeno" with its own name.
+     * The service refuses anything outside SETTLEMENTS, a locked or handed-over
+     * month, and a line the caller's field access does not cover.
+     */
+    @PostMapping("/{id}/adjustments")
+    public ResponseEntity<Void> addCustomSettlementLine(
+            @PathVariable Long id,
+            @Valid @RequestBody CustomAdjustmentCreateRequest request) {
+        payrollRunItemService.addCustomSettlementLine(id, request);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Arrange the SETTLEMENTS lines of one payroll, top to bottom. Payroll's
+     * own roles only — the service refuses a restricted caller.
+     */
+    @PatchMapping("/{id}/adjustments/order")
+    public ResponseEntity<Void> reorderSettlementLines(
+            @PathVariable Long id,
+            @RequestBody ReorderRequest request) {
+        payrollRunItemService.reorderSettlementLines(id, request.orderedIds());
+        return ResponseEntity.noContent().build();
+    }
+
+    /** The visible settlement lines, top to bottom, each id at most once. */
+    public record ReorderRequest(List<Long> orderedIds) {
+    }
+
+    /** Remove a hand-made line. Only custom rows; system lines are switched off instead. */
+    @DeleteMapping("/{id}/adjustments/{adjustmentId}")
+    public ResponseEntity<Void> deleteCustomSettlementLine(
+            @PathVariable Long id,
+            @PathVariable Long adjustmentId) {
+        payrollRunItemService.deleteCustomSettlementLine(id, adjustmentId);
+        return ResponseEntity.noContent().build();
     }
 
     /**
