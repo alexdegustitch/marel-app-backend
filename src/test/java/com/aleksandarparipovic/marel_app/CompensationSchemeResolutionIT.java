@@ -43,6 +43,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional
 class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
 
+    @Autowired private com.aleksandarparipovic.marel_app.support.PayrollScenarioFixture fixture;
+
     @Autowired private WorkCategoryResolutionService resolutionService;
     @Autowired private CompensationSchemeRepository schemeRepository;
     @Autowired private EmployeeCompensationSchemeHistoryRepository historyRepository;
@@ -280,12 +282,10 @@ class CompensationSchemeResolutionIT extends AbstractIntegrationTest {
     @DisplayName("an inactive scheme cannot be used even when a period points at it")
     void inactiveSchemeIsRejected() {
         Employee employee = anEmployee();
-        CompensationScheme retired = schemeRepository.saveAndFlush(CompensationScheme.builder()
+        CompensationScheme retired = fixture.activeScheme(CompensationScheme.builder()
                 .code("IT-RETIRED-" + COUNTER.incrementAndGet())
                 .name("Retired scheme")
-                .allowUnmappedCategories(true)
-                .isActive(true)
-                .build());
+                .allowUnmappedCategories(true));
 
         historyRepository.saveAndFlush(EmployeeCompensationSchemeHistory.builder()
                 .employee(employee)

@@ -24,6 +24,23 @@ public class PayrollAdjustmentCategoryService {
     private final PayrollAdjustmentRepository payrollAdjustmentRepository;
     private final CompensationSchemeRepository compensationSchemeRepository;
     private final PayrollAdjustmentCategorySchemeRuleRepository ruleRepository;
+    private final PayrollAdjustmentSectionRepository sectionRepository;
+
+    /**
+     * Sections are a CLOSED set (V63): an unknown code is a refusal with the
+     * known ones listed, never a row created on the fly — a section carries a
+     * direction the money formula computes with.
+     */
+    private PayrollAdjustmentSection requireSection(String sectionCode) {
+        return sectionRepository.findByCode(sectionCode != null ? sectionCode : "")
+                .orElseThrow(() -> new ConflictException(
+                        "Nepoznata sekcija \"" + sectionCode + "\". Postojeće: "
+                                + sectionRepository.findAll().stream()
+                                        .map(PayrollAdjustmentSection::getCode)
+                                        .sorted()
+                                        .collect(java.util.stream.Collectors.joining(", "))
+                                + "."));
+    }
 
     @Transactional(readOnly = true)
     public List<PayrollAdjustmentCategoryResponse> findAll() {
@@ -46,6 +63,7 @@ public class PayrollAdjustmentCategoryService {
         PayrollAdjustmentCategory entity = new PayrollAdjustmentCategory();
         entity.setCode(request.getCode());
         entity.setName(request.getName());
+        entity.setSection(requireSection(request.getSectionCode()));
         entity.setSectionCode(request.getSectionCode());
         entity.setSectionOrder(request.getSectionOrder());
         entity.setSortOrder(request.getSortOrder());
@@ -74,6 +92,7 @@ public class PayrollAdjustmentCategoryService {
                 .orElseThrow(() -> new IllegalArgumentException("PayrollAdjustmentCategory not found"));
         entity.setCode(request.getCode());
         entity.setName(request.getName());
+        entity.setSection(requireSection(request.getSectionCode()));
         entity.setSectionCode(request.getSectionCode());
         entity.setSectionOrder(request.getSectionOrder());
         entity.setSortOrder(request.getSortOrder());

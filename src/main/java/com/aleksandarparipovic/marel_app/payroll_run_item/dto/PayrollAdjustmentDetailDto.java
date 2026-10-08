@@ -167,8 +167,10 @@ public class PayrollAdjustmentDetailDto {
                 this.displayName != null && !this.displayName.isBlank()
                         ? this.displayName
                         : (translated != null && !translated.isBlank() ? translated : this.categoryName);
-        this.sectionCode = cat.getSectionCode();
-        this.sectionOrder = cat.getSectionOrder();
+        // The section itself is the source since V63; the field names on the
+        // wire stay what the frontend and the frozen documents know.
+        this.sectionCode = cat.getSection().getCode();
+        this.sectionOrder = cat.getSection().getSortOrder();
         // The line's own place when somebody arranged this payroll, else the
         // šifarnik default — the same fallback displayName follows.
         this.sortOrder = a.getSortOrder() != null ? a.getSortOrder() : cat.getSortOrder();

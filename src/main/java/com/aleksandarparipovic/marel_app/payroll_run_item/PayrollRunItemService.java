@@ -28,6 +28,7 @@ import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCa
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustment;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentRepository;
 import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategory;
+import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentSection;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustment;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentCategory;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentCategoryRepository;
@@ -83,8 +84,6 @@ public class PayrollRunItemService {
     private static final String DEFAULT_CURRENCY = "RSD";
     private static final int DEFAULT_CALC_VERSION = 1;
 
-    // impact codes
-    private static final String IMPACT_GROSS_PLUS = "GROSS_PLUS";
 
     private final PayrollRunItemRepository payrollRunItemRepository;
     private final PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
@@ -1451,7 +1450,8 @@ public class PayrollRunItemService {
                     .findByPayrollRunItemIdWithCategory(id)
                     .stream()
                     .filter(a -> Boolean.TRUE.equals(a.getIsApplied())
-                            && IMPACT_GROSS_PLUS.equals(a.getPayrollAdjustmentCategory().getImpactCode())
+                            && PayrollAdjustmentSection.DIRECTION_PLUS.equals(
+                                    a.getPayrollAdjustmentCategory().getSection().getDirection())
                             && !CAT_CODE_FIXED_SALARY.equals(a.getPayrollAdjustmentCategory().getCode()))
                     .map(a -> a.getAmount() != null ? a.getAmount() : BigDecimal.ZERO)
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -1543,7 +1543,10 @@ public class PayrollRunItemService {
                         .orElseThrow(() -> new IllegalArgumentException(
                                 "PayrollAdjustmentCategory not found: " + req.getCategoryId()));
 
-        if (!SECTION_SETTLEMENTS.equals(cat.getSectionCode())) {
+        // Data, not a hardcoded section: the šifarnik says where hand-made
+        // lines may go — today that is SETTLEMENTS, and opening another
+        // section is an UPDATE, not a code change.
+        if (!Boolean.TRUE.equals(cat.getSection().getAllowsManualLines())) {
             throw new ConflictException(
                     "Ručno se dodaju samo stavke razduženja.");
         }
@@ -1601,7 +1604,7 @@ public class PayrollRunItemService {
         // a new line lands where the eye expects it, and dragging it elsewhere
         // is a separate decision.
         int bottom = payrollAdjustmentRepository
-                .findByItemIdAndSectionCode(item.getId(), SECTION_SETTLEMENTS).stream()
+                .findByItemIdAndSectionCode(item.getId(), cat.getSection().getCode()).stream()
                 .mapToInt(this::effectiveSortOrder)
                 .max().orElse(0);
         adj.setSortOrder(bottom + 10);

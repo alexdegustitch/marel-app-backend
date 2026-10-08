@@ -51,6 +51,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Transactional
 class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
 
+    @Autowired private com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentSectionRepository adjustmentSectionRepository;
+
     @Autowired private WorkCategoryResolutionService resolutionService;
     @Autowired private PayrollSchemeScopeService scopeService;
     @Autowired private com.aleksandarparipovic.marel_app.support.PayrollScenarioFixture fixture;
@@ -83,6 +85,7 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
         PayrollAdjustmentCategory c = new PayrollAdjustmentCategory();
         c.setCode("IT-SEZ-ADJ-" + suffix + "-" + n);
         c.setName("Stavka " + suffix + " " + n);
+        c.setSection(adjustmentSectionRepository.findByCode("ADDITIONS").orElseThrow());
         c.setSectionCode("ADDITIONS");
         c.setSectionOrder(0);
         c.setSortOrder(0);
@@ -115,13 +118,11 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
     @DisplayName("a seasonal-worker scheme this codebase has never heard of works end to end, as data only")
     void aBrandNewSchemeNeedsNoCode() {
         // ── Step 1: the scheme. Closed, and paying no bonus. ────────────────
-        CompensationScheme seasonal = schemeRepository.saveAndFlush(CompensationScheme.builder()
+        CompensationScheme seasonal = fixture.activeScheme(CompensationScheme.builder()
                 .code("IT-SEASONAL-" + COUNTER.incrementAndGet())
                 .name("Sezonski radnik")
                 .allowUnmappedCategories(false)
-                .allowsPerformanceBonus(false)
-                .isActive(true)
-                .build());
+                .allowsPerformanceBonus(false));
 
         // ── Step 2: work-category rules. ───────────────────────────────────
         WorkCodeCategory worked = category("RAD", 1.3d);       // what a supervisor picks
@@ -224,12 +225,12 @@ class NewCompensationSchemeIsDataOnlyIT extends AbstractIntegrationTest {
         // behaviour comes from the data and not from a name somewhere.
         WorkCodeCategory shared = category("DELJENA", 1.4d);
 
-        CompensationScheme open = schemeRepository.saveAndFlush(CompensationScheme.builder()
+        CompensationScheme open = fixture.activeScheme(CompensationScheme.builder()
                 .code("IT-OPEN-" + COUNTER.incrementAndGet()).name("Otvorena")
-                .allowUnmappedCategories(true).allowsPerformanceBonus(true).isActive(true).build());
-        CompensationScheme closed = schemeRepository.saveAndFlush(CompensationScheme.builder()
+                .allowUnmappedCategories(true).allowsPerformanceBonus(true));
+        CompensationScheme closed = fixture.activeScheme(CompensationScheme.builder()
                 .code("IT-CLOSED-" + COUNTER.incrementAndGet()).name("Zatvorena")
-                .allowUnmappedCategories(false).allowsPerformanceBonus(false).isActive(true).build());
+                .allowUnmappedCategories(false).allowsPerformanceBonus(false));
 
         Employee onOpen = anEmployee();
         historyRepository.saveAndFlush(EmployeeCompensationSchemeHistory.builder()

@@ -23,7 +23,7 @@ public interface PayrollAdjustmentRepository extends JpaRepository<PayrollAdjust
      */
     boolean existsByPayrollAdjustmentCategory_Id(Long payrollAdjustmentCategoryId);
 
-    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory WHERE a.payrollRunItem.id = :itemId")
+    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c JOIN FETCH c.section WHERE a.payrollRunItem.id = :itemId")
     List<PayrollAdjustment> findByPayrollRunItemIdWithCategory(@Param("itemId") Long itemId);
 
     @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory")
@@ -43,6 +43,6 @@ public interface PayrollAdjustmentRepository extends JpaRepository<PayrollAdjust
     @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.code = :code AND a.isCustom = false")
     Optional<PayrollAdjustment> findByItemIdAndCategoryCode(@Param("itemId") Long itemId, @Param("code") String code);
 
-    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c WHERE a.payrollRunItem.id = :itemId AND c.sectionCode = :sectionCode")
+    @Query("SELECT a FROM PayrollAdjustment a JOIN FETCH a.payrollAdjustmentCategory c JOIN FETCH c.section s WHERE a.payrollRunItem.id = :itemId AND s.code = :sectionCode")
     List<PayrollAdjustment> findByItemIdAndSectionCode(@Param("itemId") Long itemId, @Param("sectionCode") String sectionCode);
 }

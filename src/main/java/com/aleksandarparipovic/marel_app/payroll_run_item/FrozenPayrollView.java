@@ -69,10 +69,13 @@ public class FrozenPayrollView {
 
                 if (allowed.canView()) {
                     // Counted into the totals, so the figures add up against the
-                    // rows this reader can actually read.
+                    // rows this reader can actually read. The frozen record kept
+                    // the pre-V63 vocabulary (impact + section), so it is
+                    // translated to a direction on the way in.
                     visibleLines.add(new PayrollTotals.Line(
-                            text(line.get("impactCode")),
-                            text(line.get("sectionCode")),
+                            PayrollTotals.legacyDirection(
+                                    text(line.get("impactCode")),
+                                    text(line.get("sectionCode"))),
                             Boolean.TRUE.equals(line.get("isApplied")),
                             decimal(line.get("amount"))));
                 } else {

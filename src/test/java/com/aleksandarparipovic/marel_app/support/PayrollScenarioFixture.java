@@ -119,6 +119,7 @@ public class PayrollScenarioFixture {
     private final PayrollRunItemCategoryRepository payrollRunItemCategoryRepository;
     private final PayrollAdjustmentRepository adjustmentRepository;
     private final PayrollAdjustmentCategoryRepository adjustmentCategoryRepository;
+    private final com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentSectionRepository adjustmentSectionRepository;
     private final PayrollAdjustmentCategorySchemeRuleRepository adjustmentRuleRepository;
     private final AppSettingRepository appSettingRepository;
     private final DailyReportRepository dailyReportRepository;
@@ -528,6 +529,12 @@ public class PayrollScenarioFixture {
                 PayrollAdjustmentCategory category = new PayrollAdjustmentCategory();
                 category.setCode(code);
                 category.setName((String) row[1]);
+                // The section row comes from V63's seed — the closed set the
+                // formula computes with. The legacy columns below stay verbatim
+                // Q12 until the contract migration retires them.
+                category.setSection(adjustmentSectionRepository.findByCode((String) row[2])
+                        .orElseThrow(() -> new AssertionError(
+                                "V63 seeded no section " + row[2] + " — the catalogue and the seed drifted")));
                 category.setSectionCode((String) row[2]);
                 category.setSectionOrder((Integer) row[3]);
                 category.setSortOrder((Integer) row[4]);
@@ -680,14 +687,40 @@ public class PayrollScenarioFixture {
                                            boolean allowUnmappedCategories,
                                            boolean allowsPerformanceBonus) {
         return schemeRepository.findByCode(code).orElseGet(() ->
-                schemeRepository.saveAndFlush(CompensationScheme.builder()
+                activeScheme(CompensationScheme.builder()
                         .code(code)
                         .name(name)
                         .allowUnmappedCategories(allowUnmappedCategories)
                         .allowsPerformanceBonus(allowsPerformanceBonus)
+                        .note("Created by PayrollScenarioFixture")));
+    }
+
+    /**
+     * Save a NEW scheme the only way the database accepts one: born inactive,
+     * given a D6 matrix row for every active payslip line, then activated —
+     * the choreography V41 and V62 perform in SQL. The activation trigger
+     * refuses an active scheme with a hole in the matrix, and since V62 there
+     * is always at least one active category no test created itself (CUSTOM),
+     * so inserting straight to {@code is_active = true} stopped being possible.
+     */
+    public CompensationScheme activeScheme(CompensationScheme.CompensationSchemeBuilder builder) {
+        CompensationScheme scheme = schemeRepository.saveAndFlush(builder.isActive(false).build());
+        for (PayrollAdjustmentCategory category
+                : adjustmentCategoryRepository.findByIsActiveTrueAndArchivedAtIsNull()) {
+            if (ruleFor(scheme, category) == null) {
+                adjustmentRuleRepository.saveAndFlush(PayrollAdjustmentCategorySchemeRule.builder()
+                        .compensationScheme(scheme)
+                        .payrollAdjustmentCategory(category)
+                        .isAllowed(true)
+                        .calculationMode("INHERIT")
+                        .validFrom(LocalDate.of(2020, 1, 1))
                         .isActive(true)
-                        .note("Created by PayrollScenarioFixture")
-                        .build()));
+                        .note("Fixture: matrix row required before activation")
+                        .build());
+            }
+        }
+        scheme.setIsActive(true);
+        return schemeRepository.saveAndFlush(scheme);
     }
 
     /**

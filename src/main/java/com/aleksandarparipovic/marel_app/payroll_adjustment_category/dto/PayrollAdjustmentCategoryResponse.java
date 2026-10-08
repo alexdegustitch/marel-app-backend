@@ -47,8 +47,8 @@ public class PayrollAdjustmentCategoryResponse {
         this.code = c.getCode();
         this.name = c.getName();
         this.nameEn = nameEn;
-        this.sectionCode = c.getSectionCode();
-        this.sectionOrder = c.getSectionOrder();
+        this.sectionCode = c.getSection().getCode();
+        this.sectionOrder = c.getSection().getSortOrder();
         this.sortOrder = c.getSortOrder();
         this.impactCode = c.getImpactCode();
         this.inputType = c.getInputType();

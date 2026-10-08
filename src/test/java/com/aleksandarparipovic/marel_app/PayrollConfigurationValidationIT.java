@@ -72,11 +72,13 @@ class PayrollConfigurationValidationIT extends AbstractIntegrationTest {
         // rule anywhere. The resolver throws for every employee on every scheme.
         entityManager.createNativeQuery("""
                 INSERT INTO payroll_adjustment_categories
-                    (code, name, section_code, section_order, sort_order, impact_code,
+                    (code, name, section_id, section_code, section_order, sort_order, impact_code,
                      is_manual, allow_negative, is_active, visible_in_ui, visible_in_pdf,
                      show_name, allow_override, override_target, editable_input,
                      allow_total_override, show_when_zero)
-                VALUES ('IT_NEW_CATEGORY', 'Nova stavka', 'ADDITIONS', 1, 999, 'GROSS_PLUS',
+                VALUES ('IT_NEW_CATEGORY', 'Nova stavka',
+                        (SELECT id FROM payroll_adjustment_sections WHERE code = 'ADDITIONS'),
+                        'ADDITIONS', 1, 999, 'GROSS_PLUS',
                         TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, FALSE, 'AMOUNT', 'AMOUNT',
                         FALSE, TRUE)
                 """).executeUpdate();

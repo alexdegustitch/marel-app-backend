@@ -45,6 +45,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional
 class PayrollSchemeScopeIT extends AbstractIntegrationTest {
 
+    @Autowired private com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentSectionRepository adjustmentSectionRepository;
+
     @Autowired private PayrollSchemeScopeService scopeService;
     @Autowired private CompensationSchemeRepository schemeRepository;
     @Autowired private EmployeeCompensationSchemeHistoryRepository historyRepository;
@@ -84,6 +86,7 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
         PayrollAdjustmentCategory c = new PayrollAdjustmentCategory();
         c.setCode("IT-SCOPE-ADJ-" + n);
         c.setName("Stavka " + n);
+        c.setSection(adjustmentSectionRepository.findByCode("ADDITIONS").orElseThrow());
         c.setSectionCode("ADDITIONS");
         c.setSectionOrder(0);
         c.setSortOrder(0);
@@ -147,6 +150,7 @@ class PayrollSchemeScopeIT extends AbstractIntegrationTest {
         PayrollAdjustmentCategory orphan = new PayrollAdjustmentCategory();
         orphan.setCode("IT-ORPHAN-" + n);
         orphan.setName("Bez pravila " + n);
+        orphan.setSection(adjustmentSectionRepository.findByCode("ADDITIONS").orElseThrow());
         orphan.setSectionCode("ADDITIONS");
         orphan.setSectionOrder(0);
         orphan.setSortOrder(0);

@@ -26,11 +26,23 @@ public class PayrollAdjustmentCategory {
     @Column(name = "name")
     private String name;
 
-    /** UI/PDF section: ADDITIONS, SETTLEMENTS, INFO */
+    /**
+     * The section this category's lines sit in — and, through its direction,
+     * what they do to the totals. Since V63 this is the one source the code
+     * reads; the three legacy columns below stay only until the contract
+     * migration retires them.
+     */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "section_id", nullable = false)
+    private PayrollAdjustmentSection section;
+
+    /** @deprecated superseded by {@link #section}; unread since V63, dropped by the contract migration. */
+    @Deprecated
     @Column(name = "section_code")
     private String sectionCode;
 
-    /** Order of the section */
+    /** @deprecated superseded by {@link #section}; unread since V63, dropped by the contract migration. */
+    @Deprecated
     @Column(name = "section_order")
     private Integer sectionOrder;
 
@@ -38,7 +50,12 @@ public class PayrollAdjustmentCategory {
     @Column(name = "sort_order")
     private Integer sortOrder;
 
-    /** How it affects totals: GROSS_PLUS, DEDUCTION_MINUS, PAYMENT_MINUS, BALANCE_PLUS, INFO_ONLY */
+    /**
+     * @deprecated no calculation reads this since V63 — {@code PayrollTotals}
+     * computes with the section's {@code direction}. Still SERVED on DTOs
+     * (šifarnik display, frozen documents) until the contract migration.
+     */
+    @Deprecated
     @Column(name = "impact_code")
     private String impactCode;
 

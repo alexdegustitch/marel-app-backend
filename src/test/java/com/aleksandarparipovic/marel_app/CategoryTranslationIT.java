@@ -37,6 +37,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Transactional
 class CategoryTranslationIT extends AbstractIntegrationTest {
 
+    @Autowired private com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentSectionRepository adjustmentSectionRepository;
+
     @Autowired private WorkCodeCategoryRepository categoryRepository;
     @Autowired private WorkCodeCategoryTranslationRepository categoryTranslationRepository;
     @Autowired private WorkCodeCategoryNameResolver categoryNameResolver;
@@ -77,6 +79,7 @@ class CategoryTranslationIT extends AbstractIntegrationTest {
         PayrollAdjustmentCategory category = new PayrollAdjustmentCategory();
         category.setCode("IT-ADJ-" + n);
         category.setName(serbianName);
+        category.setSection(adjustmentSectionRepository.findByCode("ADDITIONS").orElseThrow());
         category.setSectionCode("ADDITIONS");
         category.setSectionOrder(0);
         category.setSortOrder(0);

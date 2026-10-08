@@ -34,16 +34,34 @@ public record PayrollTotals(
         BigDecimal currentBalanceAmount,
         BigDecimal netPayableAmount) {
 
-    private static final String IMPACT_GROSS_PLUS = "GROSS_PLUS";
-    private static final String SECTION_SETTLEMENTS = "SETTLEMENTS";
+    private static final String DIRECTION_PLUS = "PLUS";
+    private static final String DIRECTION_MINUS = "MINUS";
 
     /**
-     * One line, reduced to what the formula actually reads.
+     * One line, reduced to what the formula actually reads: its section's
+     * direction (PLUS, MINUS or NONE).
      *
      * <p>Lets the same arithmetic run over a REPLAYED handover, where there are
-     * no entities left — only what the record kept.
+     * no entities left — only what the record kept. A record frozen before V63
+     * kept the old vocabulary instead; {@link #legacyDirection} translates it.
      */
-    public record Line(String impactCode, String sectionCode, boolean applied, BigDecimal amount) {}
+    public record Line(String direction, boolean applied, BigDecimal amount) {}
+
+    /**
+     * The old vocabulary, restated as a direction — for documents frozen before
+     * sections carried one. GROSS_PLUS was the only impact the plus side ever
+     * summed, and SETTLEMENTS the only section the minus side did; V63's guard
+     * proved the two never met on one line, so the order here cannot matter.
+     */
+    public static String legacyDirection(String impactCode, String sectionCode) {
+        if ("GROSS_PLUS".equals(impactCode)) {
+            return DIRECTION_PLUS;
+        }
+        if ("SETTLEMENTS".equalsIgnoreCase(sectionCode)) {
+            return DIRECTION_MINUS;
+        }
+        return "NONE";
+    }
 
     public static PayrollTotals of(Collection<PayrollRunItemCategory> categories,
                                    Collection<PayrollAdjustment> adjustments,
@@ -55,8 +73,7 @@ public record PayrollTotals(
 
         List<Line> lines = adjustments.stream()
                 .map(a -> new Line(
-                        a.getPayrollAdjustmentCategory().getImpactCode(),
-                        a.getPayrollAdjustmentCategory().getSectionCode(),
+                        a.getPayrollAdjustmentCategory().getSection().getDirection(),
                         Boolean.TRUE.equals(a.getIsApplied()),
                         a.getAmount()))
                 .toList();
@@ -71,20 +88,20 @@ public record PayrollTotals(
 
         BigDecimal base = categoriesSum != null ? categoriesSum : BigDecimal.ZERO;
 
-        // Summed by IMPACT, not by section, so a category moved between sections
-        // for display cannot change what somebody is paid.
+        // One question per side, both answered by the section's direction. The
+        // old formula asked two different vocabularies (impact on the plus side,
+        // section on the minus side); V63 proved them impact-homogeneous per
+        // section and refuses any database where they are not, so this is the
+        // same arithmetic with the drift-prone half of the vocabulary gone.
         BigDecimal earningsSum = lines.stream()
-                .filter(l -> l.applied() && IMPACT_GROSS_PLUS.equals(l.impactCode()))
+                .filter(l -> l.applied() && DIRECTION_PLUS.equals(l.direction()))
                 .map(l -> l.amount() != null ? l.amount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal totalNetEarnings = base.add(earningsSum).setScale(2, RoundingMode.HALF_UP);
 
-        // Still filtered by SECTION, deliberately: switching this side to impact
-        // codes would pull in lines that reach no total today, and making one of
-        // them start reducing somebody's pay is a business decision.
         BigDecimal previouslyPaid = lines.stream()
-                .filter(l -> l.applied() && SECTION_SETTLEMENTS.equalsIgnoreCase(l.sectionCode()))
+                .filter(l -> l.applied() && DIRECTION_MINUS.equals(l.direction()))
                 .map(l -> l.amount() != null ? l.amount() : BigDecimal.ZERO)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
