@@ -31,6 +31,10 @@ public class PayrollAdjustmentResponse {
     private final BigDecimal amount;
     private final Boolean isOverridden;
     private final String note;
+    /** The line's own typed name — null when it shows its category's name. */
+    private final String displayName;
+    /** A line a person added by hand on this payroll. */
+    private final Boolean isCustom;
     private final Boolean isApplied;
 
     private final Long createdById;
@@ -62,6 +66,8 @@ public class PayrollAdjustmentResponse {
         this.amount = a.getAmount();
         this.isOverridden = a.getIsOverridden();
         this.note = a.getNote();
+        this.displayName = a.getDisplayName();
+        this.isCustom = a.getIsCustom();
         this.isApplied = a.getIsApplied();
 
         this.createdById = a.getCreatedBy() != null ? a.getCreatedBy().getId() : null;

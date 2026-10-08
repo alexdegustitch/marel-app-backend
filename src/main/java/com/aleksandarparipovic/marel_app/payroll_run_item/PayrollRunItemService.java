@@ -27,12 +27,14 @@ import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCa
 import com.aleksandarparipovic.marel_app.monthly_report_category.MonthlyReportCategoryRepository;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustment;
 import com.aleksandarparipovic.marel_app.payroll_adjustment.PayrollAdjustmentRepository;
+import com.aleksandarparipovic.marel_app.payroll_adjustment_category.PayrollAdjustmentCategory;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustment;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentCategory;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentCategoryRepository;
 import com.aleksandarparipovic.marel_app.payroll_time_adjustment.PayrollTimeAdjustmentRepository;
 import com.aleksandarparipovic.marel_app.payroll_run.PayrollRun;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.AdjustmentPatchDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.CustomAdjustmentCreateRequest;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollAdjustmentDetailDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollAdjustmentSectionDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemCategoryDetailDto;
@@ -1506,6 +1508,211 @@ public class PayrollRunItemService {
         return getDetails(item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null);
     }
 
+    // ─── Custom settlement lines ─────────────────────────────────────────────
+
+    /**
+     * Add a hand-made SETTLEMENTS line — a second "Isplaćeno" with its own name
+     * and its own figure.
+     *
+     * <p>Lives here and not in PayrollAdjustmentService because adding a line
+     * moves the month's totals, and this service is where the totals are
+     * recomputed and where the patch's own guards (locked, handed over,
+     * per-line field access) already live. The generic adjustments endpoint
+     * keeps refusing duplicates; only this door makes custom rows.
+     *
+     * <p>SETTLEMENTS only, by design and not only by the user's ask: every
+     * category in that section is MANUAL, so a custom row there is never
+     * addressed by a calculator — the per-category lookups exclude custom rows,
+     * and nothing recalculates what a person typed.
+     */
+    @Transactional
+    public void addCustomSettlementLine(Long id, CustomAdjustmentCreateRequest req) {
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+        requireOpenForThisCaller(item);
+
+        PayrollAdjustmentCategory cat = payrollAdjustmentCategoryRepository
+                .findById(req.getCategoryId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "PayrollAdjustmentCategory not found: " + req.getCategoryId()));
+
+        if (!SECTION_SETTLEMENTS.equals(cat.getSectionCode())) {
+            throw new ConflictException(
+                    "Ručno se dodaju samo stavke razduženja.");
+        }
+        if (!Boolean.TRUE.equals(cat.getIsActive())) {
+            throw new ConflictException(
+                    "Stavka " + cat.getName() + " više nije aktivna.");
+        }
+        // The same two answers the patch would demand of this line: the scheme
+        // must include the category, and a restricted reader must hold the pen
+        // for it.
+        PayrollSchemeScope scope = scopeFor(item);
+        if (!scope.allowsAdjustmentCategory(cat.getId())) {
+            throw new ConflictException(
+                    "Ova stavka obračuna nije predviđena za način obračuna ovog zaposlenog.");
+        }
+        if (payrollVisibilityPolicy.isRestrictedUser()
+                && !fieldAccessService.accessTo(cat.getCode()).canEdit()) {
+            throw new ConflictException(
+                    "Nemate pravo da menjate stavku " + cat.getCode() + " na obračunu.");
+        }
+
+        String name = req.getDisplayName() != null ? req.getDisplayName().trim() : "";
+        if (name.length() > 120) {
+            throw new ConflictException("Naziv stavke može imati najviše 120 znakova.");
+        }
+
+        PayrollAdjustment adj = new PayrollAdjustment();
+        adj.setPayrollRunItem(item);
+        adj.setPayrollAdjustmentCategory(cat);
+        adj.setIsCustom(true);
+        // Null when the typed name is the category's own or empty — the line
+        // then shows the category name exactly as a system row would,
+        // translations included.
+        adj.setDisplayName(name.isEmpty() || name.equals(cat.getName()) ? null : name);
+        adj.setSystemAmount(BigDecimal.ZERO);
+        adj.setAmount(req.getAmount() != null
+                ? req.getAmount().setScale(2, RoundingMode.HALF_UP)
+                : BigDecimal.ZERO);
+        // A person made this line; zero or not, its figure is an answer.
+        adj.setHasManualInput(true);
+        adj.setStatus("MANUAL");
+        adj.setIsApplied(true);
+        adj.setNote(req.getNote() != null && !req.getNote().isBlank() ? req.getNote().trim() : null);
+        Long userId = currentUserService.getCurrentUserId();
+        if (userId != null) {
+            adj.setCreatedBy(referenceProvider.getRequiredReference(
+                    com.aleksandarparipovic.marel_app.user.User.class, userId, "createdBy"));
+        }
+        adj.setCreatedAt(OffsetDateTime.now());
+        // At the bottom of the section, under whatever order this payroll has —
+        // a new line lands where the eye expects it, and dragging it elsewhere
+        // is a separate decision.
+        int bottom = payrollAdjustmentRepository
+                .findByItemIdAndSectionCode(item.getId(), SECTION_SETTLEMENTS).stream()
+                .mapToInt(this::effectiveSortOrder)
+                .max().orElse(0);
+        adj.setSortOrder(bottom + 10);
+        payrollAdjustmentRepository.save(adj);
+
+        markHumanDecision(id);
+        recalculateSummaryTotals(item);
+        item.setUpdatedAt(OffsetDateTime.now());
+        payrollRunItemRepository.save(item);
+        propagateToNextMonthItem(item);
+    }
+
+    /**
+     * Arrange the SETTLEMENTS lines of one payroll, top to bottom.
+     *
+     * <p>Payroll's own roles only: the order of a payslip is the document's
+     * shape, not a figure a per-line grant covers. Writes the LINES' order —
+     * 10, 20, 30 … in the given sequence — never the šifarnik's, so March can
+     * be arranged without rearranging February, and NULL stays the default
+     * (Rata, Telefon za prethodni mesec, Isplaćeno, Isplaćeno drugi deo).
+     *
+     * <p>A line the screen was not showing (hidden zero) is simply not listed
+     * and keeps its own place; the ids sent must all be this item's settlement
+     * lines, each at most once.
+     */
+    @Transactional
+    public void reorderSettlementLines(Long id, List<Long> orderedIds) {
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+        requireOpenForThisCaller(item);
+        if (payrollVisibilityPolicy.isRestrictedUser()) {
+            throw new ConflictException("Nemate pravo da menjate redosled stavki obračuna.");
+        }
+        if (orderedIds == null || orderedIds.isEmpty()) {
+            return;
+        }
+        if (new java.util.HashSet<>(orderedIds).size() != orderedIds.size()) {
+            throw new IllegalArgumentException("Ista stavka je navedena više puta.");
+        }
+
+        Map<Long, PayrollAdjustment> byId = payrollAdjustmentRepository
+                .findByItemIdAndSectionCode(id, SECTION_SETTLEMENTS).stream()
+                .collect(java.util.stream.Collectors.toMap(PayrollAdjustment::getId, a -> a));
+
+        int order = 10;
+        for (Long adjId : orderedIds) {
+            PayrollAdjustment adj = byId.get(adjId);
+            if (adj == null) {
+                throw new IllegalArgumentException(
+                        "PayrollAdjustment " + adjId + " is not a settlement line of PayrollRunItem " + id);
+            }
+            adj.setSortOrder(order);
+            adj.setUpdatedAt(OffsetDateTime.now());
+            payrollAdjustmentRepository.save(adj);
+            order += 10;
+        }
+
+        // No figure moved, so nothing recalculates — but somebody did arrange
+        // this month, and the activity trail should say who.
+        markHumanDecision(id);
+        item.setUpdatedAt(OffsetDateTime.now());
+        payrollRunItemRepository.save(item);
+    }
+
+    /** The place a line effectively occupies: its own, else its category's. */
+    private int effectiveSortOrder(PayrollAdjustment a) {
+        if (a.getSortOrder() != null) {
+            return a.getSortOrder();
+        }
+        Integer cat = a.getPayrollAdjustmentCategory().getSortOrder();
+        return cat != null ? cat : 0;
+    }
+
+    /**
+     * Remove a hand-made line. ONLY a custom row: the system's row-per-category
+     * set is the payroll's shape, and taking a row out of it would make this
+     * month render with fewer lines than every other — switching it off
+     * (is_applied) or zeroing it is how a system line goes quiet.
+     */
+    @Transactional
+    public void deleteCustomSettlementLine(Long id, Long adjustmentId) {
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+        requireOpenForThisCaller(item);
+
+        PayrollAdjustment adj = payrollAdjustmentRepository.findByIdWithCategory(adjustmentId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "PayrollAdjustment not found: " + adjustmentId));
+        if (!adj.getPayrollRunItem().getId().equals(id)) {
+            throw new IllegalArgumentException(
+                    "PayrollAdjustment " + adjustmentId + " does not belong to PayrollRunItem " + id);
+        }
+        if (!Boolean.TRUE.equals(adj.getIsCustom())) {
+            throw new ConflictException(
+                    "Sistemska stavka obračuna se ne briše — isključite je ili postavite na nulu.");
+        }
+        if (payrollVisibilityPolicy.isRestrictedUser()
+                && !fieldAccessService.accessTo(adj.getPayrollAdjustmentCategory().getCode()).canEdit()) {
+            throw new ConflictException("Nemate pravo da menjate stavku "
+                    + adj.getPayrollAdjustmentCategory().getCode() + " na obračunu.");
+        }
+
+        payrollAdjustmentRepository.delete(adj);
+
+        markHumanDecision(id);
+        recalculateSummaryTotals(item);
+        item.setUpdatedAt(OffsetDateTime.now());
+        payrollRunItemRepository.save(item);
+        propagateToNextMonthItem(item);
+    }
+
+    /** The two guards patch() opens with, for the other doors that move money. */
+    private void requireOpenForThisCaller(PayrollRunItem item) {
+        if (STATUS_LOCKED.equals(item.getStatus())) {
+            throw new ConflictException("Obračun je zaključan i više se ne menja.");
+        }
+        if (STATUS_APPROVED.equals(item.getStatus()) && payrollVisibilityPolicy.isRestrictedUser()) {
+            throw new ConflictException(
+                    "Obračun je predat i više se ne menja. Vratite ga na doradu da biste ga menjali.");
+        }
+    }
+
     /**
      * Populates {@link PayrollRunItemCategory} rows from the corresponding
      * {@link MonthlyReportCategory} rows for the same monthly report.
@@ -2104,6 +2311,15 @@ public class PayrollRunItemService {
         if (patch.getNote() != null) {
             adj.setNote(patch.getNote());
         }
+        if (patch.getDisplayName() != null) {
+            // Blank clears the typed name — the line goes back to showing its
+            // category's name, translations included.
+            String name = patch.getDisplayName().trim();
+            if (name.length() > 120) {
+                throw new ConflictException("Naziv stavke može imati najviše 120 znakova.");
+            }
+            adj.setDisplayName(name.isEmpty() ? null : name);
+        }
     }
 
     /**
@@ -2125,7 +2341,10 @@ public class PayrollRunItemService {
     private static boolean changesTheLine(AdjustmentPatchDto patch) {
         return touchesAValue(patch)
                 || Boolean.TRUE.equals(patch.getClearOverride())
-                || patch.getIsApplied() != null;
+                || patch.getIsApplied() != null
+                // A rename carries no number, but it rewrites what the payslip
+                // SAYS a figure is — a line somebody may not edit keeps its name.
+                || patch.getDisplayName() != null;
     }
 
     private static boolean touchesAValue(AdjustmentPatchDto patch) {
