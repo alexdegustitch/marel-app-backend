@@ -75,8 +75,8 @@ class CustomSettlementLineIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("an empty name is allowed — the line falls back to the carrier's own name")
-    void emptyNameFallsBackToTheCarriersName() {
+    @DisplayName("an empty name is allowed, and the line shows NOTHING — not the carrier's name")
+    void emptyNameStaysBlank() {
         var scenario = fixture.scenario().build();
 
         payrollRunItemService.addCustomSettlementLine(scenario.item().getId(), line("  ", "100.00"));
@@ -86,12 +86,18 @@ class CustomSettlementLineIT extends AbstractIntegrationTest {
                 .filter(a -> Boolean.TRUE.equals(a.getIsCustom())))
                 .singleElement()
                 .satisfies(a -> {
-                    // NULL, not "": the stored nothing is what keeps the category-name
-                    // fallback (translations included) working, exactly like a rename
-                    // cleared back to default.
                     assertThat(a.getDisplayName()).isNull();
                     assertThat(a.getAmount()).isEqualByComparingTo("100.00");
                 });
+
+        // What the payslip and the PDF actually print: an unnamed hand-made line
+        // must NOT fall back to "Ručna stavka" — owner's call, it stays blank.
+        var detail = payrollRunItemService.getDetails(scenario.monthlyReport().getId());
+        var blankLine = detail.getAdjustments().stream()
+                .flatMap(section -> section.getAdjustments().stream())
+                .filter(com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollAdjustmentDetailDto::isCustom)
+                .findFirst().orElseThrow();
+        assertThat(blankLine.getCategoryDisplayName()).isEmpty();
     }
 
     @Test

@@ -163,10 +163,16 @@ public class PayrollAdjustmentDetailDto {
         this.displayName = a.getDisplayName();
         this.isCustom = Boolean.TRUE.equals(a.getIsCustom());
         String translated = translations == null ? null : translations.get(cat.getId());
+        // A hand-made line WITHOUT a typed name says nothing — owner's call
+        // (2026-10-09): falling back to the carrier's name would print "Ručna
+        // stavka" on the payslip, and an unnamed line is meant to stay blank.
+        // System rows keep the usual fallback: typed > translation > category.
         this.categoryDisplayName =
                 this.displayName != null && !this.displayName.isBlank()
                         ? this.displayName
-                        : (translated != null && !translated.isBlank() ? translated : this.categoryName);
+                        : Boolean.TRUE.equals(a.getIsCustom())
+                                ? ""
+                                : (translated != null && !translated.isBlank() ? translated : this.categoryName);
         // The section itself is the source since V63; the field names on the
         // wire stay what the frontend and the frozen documents know.
         this.sectionCode = cat.getSection().getCode();
