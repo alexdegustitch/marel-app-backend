@@ -1677,13 +1677,18 @@ public class PayrollRunItemService {
     }
 
     /**
-     * Remove a hand-made line. ONLY a custom row: the system's row-per-category
-     * set is the payroll's shape, and taking a row out of it would make this
-     * month render with fewer lines than every other — switching it off
-     * (is_applied) or zeroing it is how a system line goes quiet.
+     * Remove a line from this payroll — ANY line, system or hand-made.
+     *
+     * <p>An ARCHIVE, not a delete (owner's call, 2026-10-09): the row keeps its
+     * figures and its audit trail, but stops existing for everything that reads
+     * this payroll — the totals, the screen, the PDF and every calculator, all
+     * of which go through repository reads that exclude archived rows. And
+     * because the row stays, the partial unique index and the initialisation's
+     * existence check keep a re-run from quietly recreating the line somebody
+     * decided to take off.
      */
     @Transactional
-    public void deleteCustomSettlementLine(Long id, Long adjustmentId) {
+    public void archiveAdjustmentLine(Long id, Long adjustmentId) {
         PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
         requireOpenForThisCaller(item);
@@ -1695,9 +1700,8 @@ public class PayrollRunItemService {
             throw new IllegalArgumentException(
                     "PayrollAdjustment " + adjustmentId + " does not belong to PayrollRunItem " + id);
         }
-        if (!Boolean.TRUE.equals(adj.getIsCustom())) {
-            throw new ConflictException(
-                    "Sistemska stavka obračuna se ne briše — isključite je ili postavite na nulu.");
+        if (adj.getArchivedAt() != null) {
+            return; // already off this payroll — nothing left to decide
         }
         if (payrollVisibilityPolicy.isRestrictedUser()
                 && !fieldAccessService.accessTo(adj.getPayrollAdjustmentCategory().getCode()).canEdit()) {
@@ -1705,7 +1709,16 @@ public class PayrollRunItemService {
                     + adj.getPayrollAdjustmentCategory().getCode() + " na obračunu.");
         }
 
-        payrollAdjustmentRepository.delete(adj);
+        adj.setArchivedAt(OffsetDateTime.now());
+        adj.setIsApplied(false);
+        Long userId = currentUserService.getCurrentUserId();
+        if (userId != null) {
+            adj.setEditedBy(referenceProvider.getRequiredReference(
+                    com.aleksandarparipovic.marel_app.user.User.class, userId, "editedBy"));
+        }
+        adj.setEditedAt(OffsetDateTime.now());
+        adj.setUpdatedAt(OffsetDateTime.now());
+        payrollAdjustmentRepository.save(adj);
 
         markHumanDecision(id);
         recalculateSummaryTotals(item);

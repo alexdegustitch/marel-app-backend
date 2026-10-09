@@ -199,12 +199,16 @@ public class PayrollRunItemController {
     public record ReorderRequest(List<Long> orderedIds) {
     }
 
-    /** Remove a hand-made line. Only custom rows; system lines are switched off instead. */
+    /**
+     * Remove any line from this payroll — an archive, not a delete: the row
+     * stops reaching the totals, the screen, the PDF and the calculators, but
+     * keeps its figures and its audit trail, and never comes back by re-run.
+     */
     @DeleteMapping("/{id}/adjustments/{adjustmentId}")
-    public ResponseEntity<Void> deleteCustomSettlementLine(
+    public ResponseEntity<Void> archiveAdjustmentLine(
             @PathVariable Long id,
             @PathVariable Long adjustmentId) {
-        payrollRunItemService.deleteCustomSettlementLine(id, adjustmentId);
+        payrollRunItemService.archiveAdjustmentLine(id, adjustmentId);
         return ResponseEntity.noContent().build();
     }
 

@@ -137,13 +137,20 @@ public class PayrollAdjustmentService {
         if (payrollRunItemId == null || adjustmentCategoryId == null) {
             return;
         }
-        boolean exists = payrollAdjustmentRepository
-                .findByPayrollRunItemIdWithCategory(payrollRunItemId).stream()
-                .anyMatch(a -> a.getPayrollAdjustmentCategory().getId().equals(adjustmentCategoryId));
+        // The UNFILTERED read, on purpose: an archived row still owns its
+        // (item, category) slot in the partial unique index, so the live-rows
+        // query would say "free" and the insert would then hit the constraint.
+        List<PayrollAdjustment> matches = payrollAdjustmentRepository
+                .findByPayrollRunItem_IdIn(List.of(payrollRunItemId)).stream()
+                .filter(a -> !Boolean.TRUE.equals(a.getIsCustom()))
+                .filter(a -> a.getPayrollAdjustmentCategory().getId().equals(adjustmentCategoryId))
+                .toList();
 
-        if (exists) {
-            throw new ConflictException(
-                    "Ova stavka već postoji na ovom obračunu. Izmenite postojeću umesto dodavanja nove.");
+        if (!matches.isEmpty()) {
+            boolean allArchived = matches.stream().allMatch(a -> a.getArchivedAt() != null);
+            throw new ConflictException(allArchived
+                    ? "Ova stavka je uklonjena sa ovog obračuna i ne može se ponovo dodati."
+                    : "Ova stavka već postoji na ovom obračunu. Izmenite postojeću umesto dodavanja nove.");
         }
     }
 
