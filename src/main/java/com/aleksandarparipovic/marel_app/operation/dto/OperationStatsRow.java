@@ -12,10 +12,12 @@ import lombok.Getter;
 @AllArgsConstructor
 public class OperationStatsRow {
     private long total;
-    /** Operations with no norm in force ({@code minNorm} is null). */
+    /** Operations with no norm in force ({@code minNorm} is null); standalone ones never count — they have no norm to miss. */
     private long withoutNorm;
     /** Operations not assigned a work code category. */
     private long withoutCategory;
     /** Distinct products those live operations belong to. */
     private long products;
+    /** Standalone (osnovne) operations — the ones belonging to no product. */
+    private long standalone;
 }

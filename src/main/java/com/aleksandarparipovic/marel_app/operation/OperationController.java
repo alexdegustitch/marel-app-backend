@@ -59,6 +59,18 @@ public class OperationController {
         return ResponseEntity.ok(operationService.copyTypeOperationsToProduct(request));
     }
 
+    /**
+     * The standalone (osnovne) operations a karton row may pick from — no
+     * product, no order; bolovanje, godišnji odmor and the like. Dated the
+     * same way as the per-product options.
+     */
+    @GetMapping("/standalone-options")
+    public ResponseEntity<List<OperationBasicInfoDto>> getStandaloneOptions(
+            @RequestParam LocalDate date
+    ) {
+        return ResponseEntity.ok(operationService.getStandaloneOperations(date));
+    }
+
     @GetMapping("/active-operations-for-product/id={id}&date={date}")
     public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(@PathVariable Long id, @PathVariable LocalDate date){
         List<OperationBasicInfoDto> operationBasicInfoDtos = operationService.getAllOperationsForProduct(id, date);

@@ -66,7 +66,8 @@ public class ProductRepositoryImpl implements ProductRepositoryCustom {
                     root.get("catalogNumber"),
                     root.get("subtype"),
                     typeJoin.get("name"),
-                    familyJoin.get("name")
+                    familyJoin.get("name"),
+                    root.get("virtual")
             );
             query.select(cb.construct(
                     projectionType,
@@ -79,7 +80,8 @@ public class ProductRepositoryImpl implements ProductRepositoryCustom {
                     root.get("catalogNumber"),
                     root.get("subtype"),
                     typeJoin.get("name"),
-                    familyJoin.get("name")
+                    familyJoin.get("name"),
+                    root.get("virtual")
             ));
         } else {
             throw new UnsupportedOperationException("Unsupported projection type: " + projectionType.getName());

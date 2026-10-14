@@ -14,7 +14,7 @@ public class ProductMapper {
      * differing only in subtype used to render as identical options.
      */
     public ProductOptionDto toDtoOption(Product p){
-        return new ProductOptionDto(p.getId(), effectiveDisplayName(p));
+        return new ProductOptionDto(p.getId(), effectiveDisplayName(p), p.isVirtual());
     }
 
     public ProductBaseRow toBaseRow(Product p) {
@@ -38,7 +38,8 @@ public class ProductMapper {
                 p.getSubtype(),
                 p.getSupervisorName(),
                 p.getDisplayName(),
-                effectiveDisplayName(p)
+                effectiveDisplayName(p),
+                p.isVirtual()
         );
     }
 

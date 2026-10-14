@@ -277,7 +277,7 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
           SELECT 1
           FROM work_logs wl
           JOIN operations o ON o.id = wl.operation_id
-          JOIN products p ON p.id = o.product_id
+          LEFT JOIN products p ON p.id = o.product_id
           LEFT JOIN production_orders po ON po.id = wl.production_order_id
           WHERE wl.work_shift_id = ws.id
             AND wl.is_active = true

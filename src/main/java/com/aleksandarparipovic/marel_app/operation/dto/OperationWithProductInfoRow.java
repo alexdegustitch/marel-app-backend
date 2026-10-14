@@ -26,6 +26,9 @@ public class OperationWithProductInfoRow {
     // The norm in force was entered without a date on purpose ("privremena").
     // When true, normDate is null and the grid reads "Privremena" in its place.
     private final boolean normTemporary;
+    // An OSNOVNA operation — no product; the grid shows a badge where the
+    // product band would be.
+    private final boolean standalone;
 
 
 }

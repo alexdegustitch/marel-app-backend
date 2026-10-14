@@ -2,7 +2,6 @@ package com.aleksandarparipovic.marel_app.operation.dto;
 
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -10,8 +9,14 @@ import java.time.LocalDate;
 @Data
 public class OperationCreateRequest {
 
-    @NotNull
+    /** Required for a product operation; must be absent for a standalone one. */
     private Long productId;
+
+    /**
+     * TRUE creates an OSNOVNA (standalone) operation: no product, no norm
+     * fields, category required. The service refuses mixtures out loud.
+     */
+    private Boolean standalone;
 
     @NotBlank
     private String operationName;

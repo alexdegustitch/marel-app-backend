@@ -12,7 +12,7 @@ public class OperationMapper {
     public OperationDto toDto(Operation o) {
         OperationDto dto = new OperationDto();
         dto.setId(o.getId());
-        dto.setProductId(o.getProduct().getId());
+        dto.setProductId(o.getProduct() == null ? null : o.getProduct().getId());
         dto.setOperationName(o.getOpName());
         dto.setMinNorm(o.getMinNorm());
         dto.setMaxNorm(o.getMaxNorm());

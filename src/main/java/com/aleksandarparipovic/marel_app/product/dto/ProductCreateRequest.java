@@ -33,4 +33,7 @@ public class ProductCreateRequest {
 
     @Size(max = 255, message = "Prikazni naziv je predugačak.")
     private String displayName;
+
+    /** TRUE marks an INTERNI proizvod — never allowed on an order line item. */
+    private Boolean virtual;
 }

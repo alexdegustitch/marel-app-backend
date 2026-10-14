@@ -30,9 +30,18 @@ public class Operation {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "product_id", nullable = false)
+    /** NULL on a standalone operation — the two facts are tied by a DB check. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_id")
     private Product product;
+
+    /**
+     * An OSNOVNA operation: logged on kartoni but belonging to no product
+     * (bolovanje, godišnji odmor, neplaćeno odsustvo, neradni dan). Carries no
+     * norm and must carry a work code category — the DB checks say so too.
+     */
+    @Column(name = "is_standalone", nullable = false)
+    private boolean standalone = false;
 
     // Optional default work code category for this operation (FK ON DELETE SET NULL).
     @ManyToOne(fetch = FetchType.LAZY)
