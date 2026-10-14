@@ -33,6 +33,15 @@ public class PayrollFieldAccessService {
     public static final String FIELD_TOTAL_NET_EARNINGS = "TOTAL_NET_EARNINGS";
     public static final String FIELD_HOURLY_RATE = "HOURLY_RATE";
 
+    /**
+     * The three above as a set: every other code in the table names an
+     * adjustment category. An answer about the LINES must not be swayed by a
+     * grant on one of these — a supervisor whose only grant is the hourly rate
+     * (seeded by V54) has no adjustment line to change.
+     */
+    public static final java.util.Set<String> ITEM_FIELDS =
+            java.util.Set.of(FIELD_NET_PAYABLE, FIELD_TOTAL_NET_EARNINGS, FIELD_HOURLY_RATE);
+
     private final PayrollFieldAccessRepository repository;
     private final PayrollVisibilityPolicy visibilityPolicy;
     private final CurrentUserService currentUserService;

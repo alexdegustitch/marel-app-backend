@@ -2809,9 +2809,14 @@ public class PayrollRunItemService {
         // and within an open one a restricted reader may still have no line of
         // their own. Both have to hold.
         boolean openForEditing = item != null && STATUS_DRAFT.equals(item.getStatus());
+        // Only the adjustment-line grants count here: an item-field grant such
+        // as the seeded hourly rate has its own flag below, and every line
+        // write would still be refused (refuseUneditableLine), so counting it
+        // would offer an edit mode with nothing editable in it.
         boolean mayChangeSomething = !payrollVisibilityPolicy.isRestrictedUser()
-                || fieldAccessService.accessForCurrentUser().values().stream()
-                        .anyMatch(PayrollFieldAccessService.Access::canEdit);
+                || fieldAccessService.accessForCurrentUser().entrySet().stream()
+                        .anyMatch(e -> !PayrollFieldAccessService.ITEM_FIELDS.contains(e.getKey())
+                                && e.getValue().canEdit());
 
         /*
          * The two guards patch() applies, answered here so the screen and the
