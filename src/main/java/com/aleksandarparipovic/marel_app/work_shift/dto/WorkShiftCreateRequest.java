@@ -41,5 +41,12 @@ public class WorkShiftCreateRequest {
     @NotNull
     @Positive
     private Long supervisorId;
+
+    /**
+     * TRUE asks for the shift's pauza to be drawn right away: one log on the
+     * standalone "Pauza" operation, in the window ShiftBreakResolver answers
+     * for this employee, shift and date. Absent/false = no break is written.
+     */
+    private Boolean includeBreak;
 }
 

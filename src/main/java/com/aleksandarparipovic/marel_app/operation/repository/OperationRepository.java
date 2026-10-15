@@ -115,6 +115,21 @@ where o.id = :id
     List<Operation> findStandaloneActiveOrArchivedAfterDate(@Param("dateTime") OffsetDateTime dateTime);
 
     /**
+     * The live standalone operation of this name, if there is one. At most one
+     * can exist — uq_operations_standalone_op_name_ci is case-insensitive over
+     * exactly the standalone rows — so an Optional tells the whole truth.
+     * Used by {@code BreakLogWriter} to find "Pauza" without an id in Java.
+     */
+    @Query("""
+            SELECT o FROM Operation o
+            WHERE o.standalone = true
+              AND lower(o.opName) = lower(:name)
+              AND o.active = true
+              AND o.archivedAt IS NULL
+            """)
+    Optional<Operation> findStandaloneByName(@Param("name") String name);
+
+    /**
      * The live operations carrying a given work code category, by CODE.
      *
      * <p>Used to find the one operation that exists so a neradni dan has

@@ -51,6 +51,7 @@ public class WorkShiftService {
     private final EntityReferenceProvider referenceProvider;
     private final RecalcQueueService recalcQueueService;
     private final ApplicationEventPublisher eventPublisher;
+    private final BreakLogWriter breakLogWriter;
     private final DailyReportRepository dailyReportRepository;
     private final com.aleksandarparipovic.marel_app.daily_report_category.DailyReportCategoryRepository dailyReportCategoryRepository;
     private final com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository payrollRunItemRepository;
@@ -488,6 +489,24 @@ public class WorkShiftService {
     }
 
     public WorkShiftBasicInfoDto createShift(WorkShiftCreateRequest request) {
+        WorkShiftBasicInfoDto created = doCreateShift(request);
+
+        // The pauza, when the form asked for one. AFTER the shift exists in
+        // every branch (plain create, merge, trim): the log hangs off the row
+        // that actually ended up in the database. Idempotent, so a MERGE into
+        // a shift already carrying its break writes nothing twice.
+        if (Boolean.TRUE.equals(request.getIncludeBreak())) {
+            WorkShift shift = repository.findById(created.id())
+                    .orElseThrow(() -> new EntityNotFoundException("Work shift not found: " + created.id()));
+            breakLogWriter.ensureBreakLog(shift).ifPresent(breakLog -> {
+                recalcQueueService.enqueueDailyJob(shift, "BREAK_LOG");
+                eventPublisher.publishEvent(new DailyRecalcRequestedEvent(DailyRecalcRequestedEvent.Type.DAILY));
+            });
+        }
+        return created;
+    }
+
+    private WorkShiftBasicInfoDto doCreateShift(WorkShiftCreateRequest request) {
         LocalDate workDate = LocalDate.parse(request.getWorkDate());
 
         Shift shift = shiftRepository.findById(request.getShiftType())

@@ -258,7 +258,12 @@ public class SecurityConfig {
                          */
                         .requestMatchers(
                                 "/api/shifts/admin",
-                                "/api/shifts/*/default-history")
+                                "/api/shifts/*/default-history",
+                                // The default PAUZA is administered beside the
+                                // default hours, behind the same door.
+                                "/api/shifts/*/default-break-history",
+                                "/api/shifts/*/default-break",
+                                "/api/shifts/*/default-break/close")
                             .access(permission(AppPermission.APP_SETTING_MANAGE))
                         .requestMatchers(HttpMethod.POST, "/api/shifts")
                             .access(permission(AppPermission.APP_SETTING_MANAGE))
