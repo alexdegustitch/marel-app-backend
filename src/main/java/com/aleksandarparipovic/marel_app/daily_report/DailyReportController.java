@@ -64,7 +64,16 @@ public class DailyReportController {
 
     @PostMapping({"", "/create"})
     public ResponseEntity<DailyReportCreateResponse> create(@Valid @RequestBody DailyReportCreateRequest request) {
-        return ResponseEntity.ok(dailyReportService.create(request));
+        try {
+            return ResponseEntity.ok(dailyReportService.create(request));
+        } catch (org.springframework.dao.DataIntegrityViolationException raced) {
+            // The recalc worker built the day's row in the instant between the
+            // service's find and its insert (uq_daily). The row the caller
+            // wanted therefore EXISTS — handing it back is the honest answer,
+            // and it is read here, outside the transaction the refusal killed.
+            return ResponseEntity.ok(dailyReportService.findCreateResponseByWorkShiftId(request.getWorkShiftId())
+                    .orElseThrow(() -> raced));
+        }
     }
 
     @PutMapping("/{id}")
