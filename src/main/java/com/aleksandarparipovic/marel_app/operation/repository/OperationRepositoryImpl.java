@@ -69,7 +69,8 @@ public class OperationRepositoryImpl implements OperationRepositoryCustom {
                     joinManager.join("workCodeCategory", JoinType.LEFT).get("id"),
                     productCountExpression,
                     productJoin(joinManager, cb).get("catalogNumber"),
-                    root.get("temporary")
+                    root.get("temporary"),
+                    root.get("standalone")
             ));
         } else {
             throw new UnsupportedOperationException("Unsupported projection type " + projectionType.getName());

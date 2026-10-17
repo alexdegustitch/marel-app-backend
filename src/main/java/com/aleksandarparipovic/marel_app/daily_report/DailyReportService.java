@@ -139,8 +139,23 @@ public class DailyReportService {
         }
     }
 
+    /**
+     * Find-or-create, on purpose. The caller (shift creation) only needs the
+     * day's row to EXIST; the recalculation fills it in. The recalc worker
+     * races this request — a shift created with its pauza enqueues the day
+     * immediately, and the worker regularly built the report first, which made
+     * this plain insert die on uq_daily and the whole creation read as failed.
+     * An existing row — found up front, or discovered through the very
+     * constraint that refused the insert — is therefore the same success.
+     */
     @Transactional
     public DailyReportCreateResponse create(DailyReportCreateRequest request) {
+        DailyReport existing = dailyReportRepository
+                .findByWorkShiftId(request.getWorkShiftId())
+                .orElse(null);
+        if (existing != null) {
+            return new DailyReportCreateResponse(existing.getId());
+        }
         DailyReport entity = DailyReport.builder()
                 .employee(referenceProvider.getRequiredReference(Employee.class, request.getEmployeeId(), "employeeId"))
                 .workShift(referenceProvider.getRequiredReference(WorkShift.class, request.getWorkShiftId(), "workShiftId"))
@@ -168,6 +183,13 @@ public class DailyReportService {
 
         DailyReport created = dailyReportRepository.save(entity);
         return new DailyReportCreateResponse(created.getId());
+    }
+
+    /** The lost-race read: the row uq_daily said exists, by its shift. */
+    @Transactional(readOnly = true)
+    public java.util.Optional<DailyReportCreateResponse> findCreateResponseByWorkShiftId(Long workShiftId) {
+        return dailyReportRepository.findByWorkShiftId(workShiftId)
+                .map(report -> new DailyReportCreateResponse(report.getId()));
     }
 
     @Transactional

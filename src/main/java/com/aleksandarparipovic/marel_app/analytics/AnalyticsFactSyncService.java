@@ -98,20 +98,22 @@ public class AnalyticsFactSyncService {
         BigDecimal approvedRate =
                 performanceCalculator.calculateApprovedPerformanceRate(log, creditFullPerformance);
         ProductionOrder order = log.getProductionOrder();
+        // Standalone operations carry no product; the facts row says so too.
+        var product = log.getOperation().getProduct();
 
         return new MapSqlParameterSource()
                 .addValue("workLogId", log.getId())
                 .addValue("workShiftId", workShift.getId())
                 .addValue("employeeId", workShift.getEmployee().getId())
                 .addValue("operationId", log.getOperation().getId())
-                .addValue("productId", log.getOperation().getProduct().getId())
+                .addValue("productId", product == null ? null : product.getId())
                 .addValue("productionOrderId", order != null ? order.getId() : null)
                 .addValue("shiftTypeId", workShift.getShift().getId())
                 .addValue("workDate", workShift.getWorkDate())
                 .addValue("monthStart", workShift.getWorkDate().withDayOfMonth(1))
                 .addValue("shiftCode", workShift.getShift().getShiftCode())
                 .addValue("operationStartTime", log.getStartAt().toLocalTime())
-                .addValue("productName", log.getOperation().getProduct().getProductName())
+                .addValue("productName", product == null ? null : product.getProductName())
                 .addValue("operationName", log.getOperation().getOpName())
                 .addValue("productionOrderCode", order != null ? order.getCode() : null)
                 .addValue("note", log.getNote())

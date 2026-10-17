@@ -36,10 +36,11 @@ select new com.aleksandarparipovic.marel_app.operation.dto.OperationWithProductN
     p.displayName,
     p.catalogNumber,
     wcc.id,
-    o.temporary
+    o.temporary,
+    o.standalone
 )
 from Operation o
-join o.product p
+left join o.product p
 left join o.workCodeCategory wcc
 where o.id = :id
 """)
@@ -74,20 +75,59 @@ where o.id = :id
                                     Sort sort);
 
     /**
-     * The board's four figures in one query, over the same population the
+     * The board's figures in one query, over the same population the
      * search grid shows: live operations, whatever the state of their product.
+     *
+     * <p>The product is LEFT-joined so standalone operations stay in every
+     * count; "without a norm" skips them on purpose — a standalone operation
+     * never has a norm to miss.
      */
     @Query("""
             select new com.aleksandarparipovic.marel_app.operation.dto.OperationStatsRow(
                 count(o),
-                coalesce(sum(case when o.minNorm is null then 1 else 0 end), 0),
+                coalesce(sum(case when o.minNorm is null and o.standalone = false then 1 else 0 end), 0),
                 coalesce(sum(case when o.workCodeCategory is null then 1 else 0 end), 0),
-                count(distinct o.product.id)
+                count(distinct p.id),
+                coalesce(sum(case when o.standalone = true then 1 else 0 end), 0)
             )
             from Operation o
+            left join o.product p
             where o.archivedAt is null
             """)
     OperationStatsRow getStats();
+
+    /**
+     * The standalone (osnovne) operations a karton row may pick from — the
+     * counterpart of {@link #findActiveOrArchivedAfterDate} for rows that
+     * belong to no product: live ones, plus ones archived after the karton's
+     * date so an old shift can still show what was picked back then.
+     */
+    @Query("""
+            SELECT o
+            FROM Operation o
+            WHERE o.standalone = true
+              AND (
+                o.archivedAt IS NULL
+                OR o.archivedAt > :dateTime
+              )
+            ORDER BY o.opName ASC
+            """)
+    List<Operation> findStandaloneActiveOrArchivedAfterDate(@Param("dateTime") OffsetDateTime dateTime);
+
+    /**
+     * The live standalone operation of this name, if there is one. At most one
+     * can exist — uq_operations_standalone_op_name_ci is case-insensitive over
+     * exactly the standalone rows — so an Optional tells the whole truth.
+     * Used by {@code BreakLogWriter} to find "Pauza" without an id in Java.
+     */
+    @Query("""
+            SELECT o FROM Operation o
+            WHERE o.standalone = true
+              AND lower(o.opName) = lower(:name)
+              AND o.active = true
+              AND o.archivedAt IS NULL
+            """)
+    Optional<Operation> findStandaloneByName(@Param("name") String name);
 
     /**
      * The live operations carrying a given work code category, by CODE.
@@ -133,7 +173,7 @@ where o.id = :id
                    o.opName as opName,
                    p.productName as productName
             from Operation o
-            join o.product p
+            left join o.product p
             where o.archivedAt is null
               and (lower(o.opName) like lower(concat('%', :q, '%'))
                 or lower(coalesce(o.description, '')) like lower(concat('%', :q, '%')))
@@ -157,7 +197,7 @@ where o.id = :id
                    o.product_id   AS productId,
                    p.product_name AS productName
             FROM operations o
-            JOIN products p ON p.id = o.product_id
+            LEFT JOIN products p ON p.id = o.product_id
             WHERE o.archived_at IS NULL
               AND (CAST(:productId AS bigint) IS NULL OR o.product_id = :productId)
               AND EXISTS (

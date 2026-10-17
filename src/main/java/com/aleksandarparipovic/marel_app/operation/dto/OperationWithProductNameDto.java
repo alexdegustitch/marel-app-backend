@@ -25,4 +25,6 @@ public class OperationWithProductNameDto {
     // The norm in force was entered without a date on purpose ("privremena").
     // Lets the edit form show the box already ticked.
     private Boolean normTemporary;
+    /** An OSNOVNA operation — no product, no norm; the page hides both. */
+    private Boolean standalone;
 }

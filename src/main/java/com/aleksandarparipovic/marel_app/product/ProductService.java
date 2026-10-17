@@ -90,6 +90,7 @@ public class ProductService {
                 .subtype(blankToNull(request.getSubtype()))
                 .supervisorName(blankToNull(request.getSupervisorName()))
                 .displayName(blankToNull(request.getDisplayName()))
+                .virtual(Boolean.TRUE.equals(request.getVirtual()))
                 .active(true)
                 .build();
 
@@ -154,6 +155,11 @@ public class ProductService {
         }
         if (request.getDisplayName() != null) {
             product.setDisplayName(blankToNull(request.getDisplayName()));
+        }
+        if (request.getVirtual() != null) {
+            // Marking a product internal does not touch the orders it is
+            // already on — the guard refuses NEW line items only.
+            product.setVirtual(request.getVirtual());
         }
 
         return productMapper.toBaseRow(productRepository.save(product));

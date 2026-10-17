@@ -193,7 +193,7 @@ public class AnalyticsQueryRepository {
                     f.note AS note
                 FROM work_log_facts f
                 JOIN employees e ON e.id = f.employee_id
-                JOIN products p ON p.id = f.product_id
+                LEFT JOIN products p ON p.id = f.product_id
                 JOIN operations o ON o.id = f.operation_id
                 WHERE f.note IS NOT NULL
                 """);

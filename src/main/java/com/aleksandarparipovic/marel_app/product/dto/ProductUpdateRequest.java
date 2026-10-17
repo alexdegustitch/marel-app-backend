@@ -42,4 +42,7 @@ public class ProductUpdateRequest {
 
     @Size(max = 255, message = "Prikazni naziv je predugačak.")
     private String displayName;
+
+    /** Null = leave it; TRUE/FALSE flips the INTERNI proizvod flag. */
+    private Boolean virtual;
 }

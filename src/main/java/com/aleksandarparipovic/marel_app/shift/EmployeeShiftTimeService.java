@@ -36,6 +36,7 @@ public class EmployeeShiftTimeService {
     private final EmployeeRepository employeeRepository;
     private final ShiftRepository shiftRepository;
     private final ShiftTimeResolver shiftTimeResolver;
+    private final ShiftBreakResolver shiftBreakResolver;
     private final CurrentUserService currentUserService;
 
     @Transactional(readOnly = true)
@@ -51,13 +52,19 @@ public class EmployeeShiftTimeService {
         return shiftRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByStartTimeAsc().stream()
                 .map(shift -> {
                     var resolved = shiftTimeResolver.resolve(employeeId, shift, date);
+                    // The pauza rides along so the karton learns both windows
+                    // in the one request it already makes.
+                    var resolvedBreak = shiftBreakResolver.resolve(employeeId, shift.getId(), date).orElse(null);
                     return new EffectiveShiftTimeDto(
                             shift.getId(),
                             shift.getShiftCode(),
                             shift.getName(),
                             resolved.startTime(),
                             resolved.endTime(),
-                            resolved.employeeOwn());
+                            resolved.employeeOwn(),
+                            resolvedBreak == null ? null : resolvedBreak.startTime(),
+                            resolvedBreak == null ? null : resolvedBreak.endTime(),
+                            resolvedBreak == null ? null : resolvedBreak.employeeOwn());
                 })
                 .toList();
     }

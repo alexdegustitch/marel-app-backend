@@ -18,5 +18,7 @@ public record ProductBaseRow(
         /** The stored override, or null when the name is derived. */
         String displayName,
         /** What to actually show: displayName, else productName [+ " " + subtype]. */
-        String effectiveDisplayName
+        String effectiveDisplayName,
+        /** An INTERNI proizvod — internal work holder, never on an order. */
+        Boolean virtual
 ) {}

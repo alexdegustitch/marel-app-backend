@@ -333,6 +333,10 @@ public class SampleOrderService {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Proizvod nije pronađen (id=" + productId + ")"));
+        if (product.isVirtual()) {
+            throw new IllegalArgumentException(
+                    "Interni proizvod „" + product.getProductName() + "“ ne može na nalog");
+        }
 
         SampleOrderLineItem lineItem = new SampleOrderLineItem();
         lineItem.setSampleOrder(order);

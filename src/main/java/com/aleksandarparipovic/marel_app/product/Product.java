@@ -56,6 +56,14 @@ public class Product {
     @Column(name = "display_name")
     private String displayName;
 
+    /**
+     * An INTERNI proizvod — a holder for internal work (Higijena and the like)
+     * logged on kartoni. Never allowed on an order line item; order pickers
+     * filter it out, the karton keeps it.
+     */
+    @Column(name = "is_virtual", nullable = false)
+    private boolean virtual = false;
+
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
 

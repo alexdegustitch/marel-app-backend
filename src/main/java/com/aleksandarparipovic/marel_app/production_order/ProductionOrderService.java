@@ -174,6 +174,10 @@ public class ProductionOrderService {
                 Product product = productRepository.findById(itemReq.productId())
                         .orElseThrow(() -> new EntityNotFoundException(
                                 "Proizvod nije pronađen (id=" + itemReq.productId() + ")"));
+                if (product.isVirtual()) {
+                    throw new IllegalArgumentException(
+                            "Interni proizvod „" + product.getProductName() + "“ ne može na nalog");
+                }
 
                 int totalQty = itemReq.quantities() == null ? 0 :
                         itemReq.quantities().stream()
@@ -576,6 +580,10 @@ public class ProductionOrderService {
                 Product product = productRepository.findById(itemReq.productId())
                         .orElseThrow(() -> new EntityNotFoundException(
                                 "Proizvod nije pronađen (id=" + itemReq.productId() + ")"));
+                if (product.isVirtual()) {
+                    throw new IllegalArgumentException(
+                            "Interni proizvod „" + product.getProductName() + "“ ne može na nalog");
+                }
 
                 int totalQty = itemReq.quantities() == null ? 0 :
                         itemReq.quantities().stream()

@@ -41,7 +41,9 @@ public final class OperationFieldMapper implements EntityFieldMapper<Operation> 
                      * whose join simply found nothing. The reference itself says
                      * whether the operation carries a category.
                      */
-                    Map.entry("workCodeCategoryId", (root, cb,jm)->root.get("workCodeCategory").get("id"))
+                    Map.entry("workCodeCategoryId", (root, cb,jm)->root.get("workCodeCategory").get("id")),
+                    // The board's "Osnovne" tile — EQ true/false over the flag.
+                    Map.entry("standalone", (root, cb,jm)->root.get("standalone"))
             );
 
     private static Join<Operation, Product> productJoin(

@@ -13,5 +13,9 @@ public record EffectiveShiftTimeDto(
         String name,
         LocalTime startTime,
         LocalTime endTime,
-        boolean employeeOwn
+        boolean employeeOwn,
+        /** The pauza window, when one is configured — all three null otherwise. */
+        LocalTime breakStartTime,
+        LocalTime breakEndTime,
+        Boolean breakEmployeeOwn
 ) {}

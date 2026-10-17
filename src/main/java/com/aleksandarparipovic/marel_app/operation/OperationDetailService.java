@@ -351,6 +351,10 @@ public class OperationDetailService {
     @Transactional(readOnly = true)
     public List<OperationOrderUsageRow> getProductionOrders(Long operationId) {
         Operation operation = requireOperation(operationId);
+        if (operation.getProduct() == null) {
+            // Standalone: no product, so no order can carry it.
+            return List.of();
+        }
         return productionOrderLineItemRepository
                 .findOrderRowsByProductId(operation.getProduct().getId(), null,
                         JpaSort.unsafe(Sort.Direction.DESC, "po.orderDate")
@@ -398,6 +402,9 @@ public class OperationDetailService {
     public Page<OperationOrderUsageRow> getProductionOrders(
             Long operationId, String query, String sortBy, String direction, int page, int size) {
         Operation operation = requireOperation(operationId);
+        if (operation.getProduct() == null) {
+            return Page.empty(PageRequest.of(Math.max(0, page), clampSize(size)));
+        }
         Page<com.aleksandarparipovic.marel_app.product.dto.ProductProductionOrderRow> rows =
                 productionOrderLineItemRepository.findOrderPageByProductId(
                         operation.getProduct().getId(),
@@ -454,6 +461,9 @@ public class OperationDetailService {
     public Page<ProductSampleOrderRow> getSampleOrders(
             Long operationId, String query, String sortBy, String direction, int page, int size) {
         Operation operation = requireOperation(operationId);
+        if (operation.getProduct() == null) {
+            return Page.empty(PageRequest.of(Math.max(0, page), clampSize(size)));
+        }
         return sampleOrderLineItemRepository.findOrderPageByProductId(
                 operation.getProduct().getId(),
                 toPattern(query),
@@ -465,6 +475,9 @@ public class OperationDetailService {
     @Transactional(readOnly = true)
     public List<ProductSampleOrderRow> getSampleOrders(Long operationId) {
         Operation operation = requireOperation(operationId);
+        if (operation.getProduct() == null) {
+            return List.of();
+        }
         return sampleOrderLineItemRepository.findOrderRowsByProductId(
                 operation.getProduct().getId(), null,
                 JpaSort.unsafe(Sort.Direction.DESC, "so.creationDate")
@@ -597,8 +610,11 @@ public class OperationDetailService {
     @Transactional(readOnly = true)
     public List<String> getArchiveBlockers(Long operationId) {
         Operation operation = requireOperation(operationId);
-        List<String> blockers = new ArrayList<>(
-                openRequestBlockers.forProduct(operation.getProduct().getId()));
+        // A standalone operation has no product to pin and no order owing it
+        // pieces — nothing product-scoped can stand in the way.
+        List<String> blockers = operation.getProduct() == null
+                ? new ArrayList<>()
+                : new ArrayList<>(openRequestBlockers.forProduct(operation.getProduct().getId()));
 
         for (OperationOrderUsageRow order : getProductionOrders(operationId)) {
             if (order.status() == ProductionOrderStatus.DELIVERED) {

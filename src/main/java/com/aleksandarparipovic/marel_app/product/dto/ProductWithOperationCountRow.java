@@ -28,4 +28,6 @@ public class ProductWithOperationCountRow {
     private String subtype;
     private String productTypeName;
     private String familyName;
+    // An INTERNI proizvod — the grid shows a badge, the board a filter.
+    private Boolean virtual;
 }

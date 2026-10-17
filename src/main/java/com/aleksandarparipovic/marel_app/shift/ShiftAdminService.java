@@ -40,6 +40,7 @@ public class ShiftAdminService {
 
     private final ShiftRepository shiftRepository;
     private final EmployeeShiftTimePeriodRepository periodRepository;
+    private final EmployeeShiftBreakPeriodRepository breakPeriodRepository;
     private final CurrentUserService currentUserService;
 
     @Transactional(readOnly = true)
@@ -48,8 +49,13 @@ public class ShiftAdminService {
                 .filter(p -> p.getEmployee() == null && p.getArchivedAt() == null && p.getValidTo() == null)
                 .collect(Collectors.toMap(p -> p.getShift().getId(), EmployeeShiftTimePeriod::getValidFrom,
                         (a, b) -> a.isAfter(b) ? a : b));
+        // The CURRENT default pauza per shift, read the same way as the hours.
+        Map<Long, EmployeeShiftBreakPeriod> openBreaks = breakPeriodRepository.findAll().stream()
+                .filter(p -> p.getEmployee() == null && p.getArchivedAt() == null && p.getValidTo() == null)
+                .collect(Collectors.toMap(p -> p.getShift().getId(), p -> p,
+                        (a, b) -> a.getValidFrom().isAfter(b.getValidFrom()) ? a : b));
         return shiftRepository.findAllByOrderByStartTimeAsc().stream()
-                .map(s -> ShiftAdminDto.from(s, defaultSince.get(s.getId())))
+                .map(s -> ShiftAdminDto.from(s, defaultSince.get(s.getId()), openBreaks.get(s.getId())))
                 .toList();
     }
 
@@ -130,7 +136,8 @@ public class ShiftAdminService {
         Shift saved = shiftRepository.saveAndFlush(shift);
         LocalDate since = openedFrom != null ? openedFrom
                 : periodRepository.findOpenDefaultFor(id).map(EmployeeShiftTimePeriod::getValidFrom).orElse(null);
-        return ShiftAdminDto.from(saved, since);
+        return ShiftAdminDto.from(saved, since,
+                breakPeriodRepository.findOpenDefaultFor(id).orElse(null));
     }
 
     /**

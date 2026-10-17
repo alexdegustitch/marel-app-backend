@@ -225,6 +225,8 @@ public class WorkLogMapper {
     public WorkLog toEntity(WorkLogFormDto dto, WorkCategoryResolution resolution) {
         Operation operation = referenceProvider.getRequiredReference(Operation.class, dto.getOperationId(), "operationId");
         // validateOperationProductConsistency(dto.getProductId(), operation);
+        workLogValidator.validateStandaloneConsistency(
+                operation, dto.getProductionOrderId(), dto.getQuantity(), dto.getScrap());
 
         WorkShift workShift = referenceProvider.getRequiredReference(WorkShift.class, dto.getWorkShiftId(), "workShiftId");
         // OffsetDateTime startAt = dateUtil.parseOffsetDateTime(dto.getStartAt(), "startAt");
@@ -273,6 +275,8 @@ public class WorkLogMapper {
 
         Operation operation = referenceProvider.getRequiredReference(Operation.class, dto.getOperationId(), "operationId");
         //validateOperationProductConsistency(dto.getProductId(), operation);
+        workLogValidator.validateStandaloneConsistency(
+                operation, dto.getProductionOrderId(), dto.getQuantity(), dto.getScrap());
         entity.setOperation(operation);
 
         entity.setWorkCode(referenceProvider.getRequiredReference(WorkCodeCategory.class, dto.getWorkCodeCategoryId(), "workCodeCategoryId"));

@@ -97,10 +97,27 @@ public class OperationService {
                 .map(operation -> new AbsenceOperationDto(
                         operation.getId(),
                         operation.getOpName(),
-                        operation.getProduct().getId(),
-                        operation.getProduct().getProductName(),
+                        // Standalone since V65 — the absence operations carry no
+                        // product any more, and the caller no longer needs one.
+                        operation.getProduct() == null ? null : operation.getProduct().getId(),
+                        operation.getProduct() == null ? null : operation.getProduct().getProductName(),
                         operation.getWorkCodeCategory().getId(),
                         operation.getWorkCodeCategory().getCategoryNo()))
+                .toList();
+    }
+
+    /**
+     * The standalone (osnovne) operations a karton row may pick from — the
+     * rows belonging to no product: bolovanje, godišnji odmor, neplaćeno
+     * odsustvo, neradni dan and whatever an administrator adds. Same dating
+     * rule as the per-product options: live, or archived after the karton's
+     * date so an old shift still shows what was picked back then.
+     */
+    public List<OperationBasicInfoDto> getStandaloneOperations(LocalDate date) {
+        return operationRepository
+                .findStandaloneActiveOrArchivedAfterDate(date.atStartOfDay().atOffset(ZoneOffset.UTC))
+                .stream()
+                .map(operationMapper::toBasicDto)
                 .toList();
     }
 
@@ -132,14 +149,25 @@ public class OperationService {
                 .orElseThrow(()-> new IllegalArgumentException("Operation not found"));
 
         operation.setOpName(request.getOperationName());
-        boolean normRequired = request.getNormRequired() == null || request.getNormRequired();
-        operation.setNormRequired(normRequired);
-        operation.setMinNorm(request.getMinNorm());
-        operation.setMaxNorm(request.getMaxNorm());
-        validateNormRules(operation);
-        operation.setUnitsPerProduct(request.getUnitsPerProduct());
-        applyNormDating(operation, request.getMinNorm(), request.getMaxNorm(),
-                request.getTemporary(), request.getNormDate());
+        if (operation.isStandalone()) {
+            // A standalone operation keeps its invariants through every edit:
+            // no norm of any kind, and never without a category.
+            requireNoNormFields(request.getMinNorm(), request.getMaxNorm(),
+                    request.getUnitsPerProduct(), request.getNormDate(), request.getTemporary());
+            if (request.getWorkCodeCategoryId() == null) {
+                throw new IllegalArgumentException("Osnovna operacija mora imati kategoriju rada");
+            }
+            operation.setNormRequired(false);
+        } else {
+            boolean normRequired = request.getNormRequired() == null || request.getNormRequired();
+            operation.setNormRequired(normRequired);
+            operation.setMinNorm(request.getMinNorm());
+            operation.setMaxNorm(request.getMaxNorm());
+            validateNormRules(operation);
+            operation.setUnitsPerProduct(request.getUnitsPerProduct());
+            applyNormDating(operation, request.getMinNorm(), request.getMaxNorm(),
+                    request.getTemporary(), request.getNormDate());
+        }
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
 
         // The norm history follows the columns this form just wrote. Without it
@@ -147,22 +175,42 @@ public class OperationService {
         // another as the one in force.
         normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
 
-        long count = operationRepository.countByProduct_IdAndArchivedAtIsNull(operation.getProduct().getId());
+        return toRow(operation);
+    }
+
+    /** The grid row for one operation, product or not. */
+    private OperationWithProductInfoRow toRow(Operation operation) {
+        Product product = operation.getProduct();
+        long count = product == null
+                ? 0L
+                : operationRepository.countByProduct_IdAndArchivedAtIsNull(product.getId());
         return new OperationWithProductInfoRow(
                 operation.getId(),
-                operation.getProduct().getId(),
+                product == null ? null : product.getId(),
                 operation.getOpName(),
-                operation.getProduct().getProductName(),
+                product == null ? null : product.getProductName(),
                 operation.getMinNorm(),
                 operation.getMaxNorm(),
-                //operation.isNormRequired(),
                 operation.getUnitsPerProduct(),
                 operation.getNormDate(),
                 operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
                 count,
-                operation.getProduct().getCatalogNumber(),
-                operation.isTemporary()
+                product == null ? null : product.getCatalogNumber(),
+                operation.isTemporary(),
+                operation.isStandalone()
         );
+    }
+
+    /**
+     * A standalone operation has no norm, so a form sending any norm field for
+     * one is not a smaller norm — it is a mistake, and it is said out loud.
+     */
+    private static void requireNoNormFields(Integer minNorm, Integer maxNorm,
+                                            Integer unitsPerProduct, LocalDate normDate, Boolean temporary) {
+        if (minNorm != null || maxNorm != null || unitsPerProduct != null
+                || normDate != null || Boolean.TRUE.equals(temporary)) {
+            throw new IllegalArgumentException("Osnovna operacija nema normu — polja norme moraju ostati prazna");
+        }
     }
 
     /**
@@ -226,19 +274,38 @@ public class OperationService {
     @Transactional
     public OperationWithProductInfoRow create(OperationCreateRequest request){
         Operation operation = new Operation();
-        Product product = productRepository.findById(request.getProductId())
-                .orElseThrow(()-> new EntityNotFoundException("Product not found"));
 
-        operation.setProduct(product);
+        if (Boolean.TRUE.equals(request.getStandalone())) {
+            // An OSNOVNA operation: no product, no norm, never without a
+            // category — the DB checks repeat all three.
+            if (request.getProductId() != null) {
+                throw new IllegalArgumentException("Osnovna operacija ne pripada proizvodu");
+            }
+            if (request.getWorkCodeCategoryId() == null) {
+                throw new IllegalArgumentException("Osnovna operacija mora imati kategoriju rada");
+            }
+            requireNoNormFields(request.getMinNorm(), request.getMaxNorm(),
+                    request.getUnitsPerProduct(), request.getNormDate(), request.getTemporary());
+            operation.setStandalone(true);
+            operation.setNormRequired(false);
+        } else {
+            if (request.getProductId() == null) {
+                throw new IllegalArgumentException("Operacija mora pripadati proizvodu");
+            }
+            Product product = productRepository.findById(request.getProductId())
+                    .orElseThrow(()-> new EntityNotFoundException("Product not found"));
+            operation.setProduct(product);
+            boolean normRequired = request.getNormRequired() == null || request.getNormRequired();
+            operation.setNormRequired(normRequired);
+            operation.setMinNorm(request.getMinNorm());
+            operation.setMaxNorm(request.getMaxNorm());
+            validateNormRules(operation);
+            operation.setUnitsPerProduct(request.getUnitsPerProduct());
+            applyNormDating(operation, request.getMinNorm(), request.getMaxNorm(),
+                    request.getTemporary(), request.getNormDate());
+        }
+
         operation.setOpName(request.getOperationName());
-        boolean normRequired = request.getNormRequired() == null || request.getNormRequired();
-        operation.setNormRequired(normRequired);
-        operation.setMinNorm(request.getMinNorm());
-        operation.setMaxNorm(request.getMaxNorm());
-        validateNormRules(operation);
-        operation.setUnitsPerProduct(request.getUnitsPerProduct());
-        applyNormDating(operation, request.getMinNorm(), request.getMaxNorm(),
-                request.getTemporary(), request.getNormDate());
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
         operation = operationRepository.save(operation);
 
@@ -246,22 +313,7 @@ public class OperationService {
         // carrying a norm the version table never saw.
         normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
 
-        long count = operationRepository.countByProduct_IdAndArchivedAtIsNull(operation.getProduct().getId());
-        return new OperationWithProductInfoRow(
-                operation.getId(),
-                operation.getProduct().getId(),
-                operation.getOpName(),
-                operation.getProduct().getProductName(),
-                operation.getMinNorm(),
-                operation.getMaxNorm(),
-                //operation.isNormRequired(),
-                operation.getUnitsPerProduct(),
-                operation.getNormDate(),
-                operation.getWorkCodeCategory() != null ? operation.getWorkCodeCategory().getId() : null,
-                count,
-                operation.getProduct().getCatalogNumber(),
-                operation.isTemporary()
-        );
+        return toRow(operation);
     }
 
     /**
@@ -301,7 +353,10 @@ public class OperationService {
             Operation source = operationRepository.findById(operationId)
                     .orElseThrow(() -> new EntityNotFoundException(
                             "Operacija nije pronađena: " + operationId));
-            if (source.isArchived() || source.getProduct().getId().equals(target.getId())) {
+            // A standalone source has no product to copy from — skipped, not
+            // refused, like every other row the copy cannot take.
+            if (source.isArchived() || source.getProduct() == null
+                    || source.getProduct().getId().equals(target.getId())) {
                 skipped.add(source.getOpName());
                 continue;
             }
