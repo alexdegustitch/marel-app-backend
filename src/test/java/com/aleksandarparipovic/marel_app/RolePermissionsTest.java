@@ -89,6 +89,18 @@ class RolePermissionsTest {
         }
 
         @Test
+        @DisplayName("keeps the administration's own roster")
+        void keepsTheRoster() {
+            // The supervisors ARE the administrators being scheduled, and they
+            // keep the roster themselves; nobody outside the administration and
+            // the director sees the screen at all.
+            assertThat(RolePermissions.roleHas("supervisor", AppPermission.ADMIN_SCHEDULE_MANAGE)).isTrue();
+            assertThat(RolePermissions.roleHas("commercial", AppPermission.ADMIN_SCHEDULE_MANAGE)).isFalse();
+            assertThat(RolePermissions.roleHas("production_coordinator", AppPermission.ADMIN_SCHEDULE_MANAGE)).isFalse();
+            assertThat(RolePermissions.roleHas("accountant", AppPermission.ADMIN_SCHEDULE_MANAGE)).isFalse();
+        }
+
+        @Test
         @DisplayName("cannot reach the customers, the accounts, or who sees which payroll line")
         void staysOffCommercialAndAdministrativeGround() {
             assertThat(RolePermissions.forRole("supervisor")).doesNotContain(

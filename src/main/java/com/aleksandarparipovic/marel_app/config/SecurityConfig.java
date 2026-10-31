@@ -286,6 +286,16 @@ public class SecurityConfig {
                             .access(permission(AppPermission.APP_SETTING_MANAGE))
 
                         /*
+                         * The administration's roster — which shift each
+                         * administrator works on which day. ONE capability for
+                         * reading and writing alike: the screen belongs to the
+                         * administration itself, and everybody who may open it
+                         * may also change it.
+                         */
+                        .requestMatchers("/api/admin-schedule/**")
+                            .access(permission(AppPermission.ADMIN_SCHEDULE_MANAGE))
+
+                        /*
                          * THE WORK RECORDS — cards, months, shifts, hours, logs.
                          *
                          * `/api/me/**` is deliberately NOT in this list. A worker
