@@ -152,7 +152,14 @@ public final class RolePermissions {
                      * hands. And it removes rather than destroys — the work logs
                      * stay recorded either way.
                      */
-                    AppPermission.WORK_SHIFT_ARCHIVE),
+                    AppPermission.WORK_SHIFT_ARCHIVE,
+                    /*
+                     * The administration's own roster — which shift each
+                     * administrator works on which day. The supervisors ARE the
+                     * administrators being scheduled, and they keep the roster
+                     * themselves; the director (admin) holds it through ALL.
+                     */
+                    AppPermission.ADMIN_SCHEDULE_MANAGE),
 
             // Commercial staff drive production orders, the customers behind them
             // and who gets told about them. Nothing about the shop floor, beyond

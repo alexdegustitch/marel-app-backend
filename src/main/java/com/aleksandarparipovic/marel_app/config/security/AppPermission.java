@@ -384,5 +384,23 @@ public enum AppPermission {
      * refuses the removal, so this only ever reaches a month still being worked
      * on.
      */
-    WORK_SHIFT_ARCHIVE
+    WORK_SHIFT_ARCHIVE,
+
+    /**
+     * Read and write the administration's roster — which shift each
+     * administrator works on which day.
+     *
+     * <p>ONE capability for both halves, deliberately: the roster is the
+     * administration's own schedule of itself, so everybody who may see it may
+     * also change it, and a read-only grant would be a screen nobody here
+     * needs. Held by supervisor (whose holders the roster schedules), admin
+     * and developer; nobody else sees the screen at all.
+     *
+     * <p>Not {@link #APP_SETTING_MANAGE}, although the same roles hold both
+     * today: the roster is operational day-to-day data, not configuration, and
+     * the day somebody may edit the schedule without administering šifarnici —
+     * or the other way round — that has to be a change here rather than a
+     * change to who holds which role.
+     */
+    ADMIN_SCHEDULE_MANAGE
 }
