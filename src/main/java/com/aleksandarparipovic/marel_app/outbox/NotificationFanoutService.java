@@ -106,6 +106,17 @@ public class NotificationFanoutService {
             OutboxEventType.USER_REGISTRATION_APPROVED,
             OutboxEventType.USER_REGISTRATION_DECLINED);
 
+    /**
+     * The payroll handover. By e-mail as well, because it is the one payroll
+     * event whose reader — the director — may not be at a screen when the month
+     * arrives, and the handover is exactly what they wait on. Unlike the account
+     * decisions above, these DO respect the e-mail notification preference: the
+     * recipient can read the same thing in the app.
+     */
+    private static final Set<OutboxEventType> PAYROLL_SENT_EMAIL_EVENT_TYPES = EnumSet.of(
+            OutboxEventType.PAYROLL_MONTH_SENT,
+            OutboxEventType.PAYROLL_ITEM_SENT);
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void process(Long outboxEventId) {
         // Idempotency gate. uq_notification_events_outbox_event_id makes this the
@@ -144,6 +155,38 @@ public class NotificationFanoutService {
 
         if (ACCOUNT_DECISION_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
             createEmailDeliveryForApplicant(notificationEvent, event.getPayload());
+        }
+
+        if (PAYROLL_SENT_EMAIL_EVENT_TYPES.contains(event.getEventType())) {
+            // The same people who were told in-app — the ones who can lock.
+            createEmailDeliveriesForRecipients(notificationEvent, inAppRecipients);
+        }
+    }
+
+    /**
+     * An e-mail per recipient, each behind their own notification preference.
+     * Recipients are the already-resolved in-app set, so the two channels can
+     * never name different people.
+     */
+    private void createEmailDeliveriesForRecipients(NotificationEvent event, Set<User> recipients) {
+        for (User recipient : recipients) {
+            if (!userPreferencesService.emailNotificationsEnabled(recipient.getId())) {
+                continue;
+            }
+            String email = recipient.getEmailAddress();
+            if (email == null || email.isBlank()) {
+                continue;
+            }
+            if (deliveryRepository.existsByNotificationEvent_IdAndChannelAndRecipientEmail(
+                    event.getId(), NotificationChannel.EMAIL, email)) {
+                continue;
+            }
+            deliveryRepository.save(NotificationDelivery.builder()
+                    .notificationEvent(event)
+                    .channel(NotificationChannel.EMAIL)
+                    .recipientUser(recipient)
+                    .recipientEmail(email)
+                    .build());
         }
     }
 
@@ -243,6 +286,19 @@ public class NotificationFanoutService {
 
             case PAYROLL_CHANGE_REQUEST_ACCEPTED, PAYROLL_CHANGE_REQUEST_DECLINED ->
                     addUser(recipients, longOf(payload, "requestedByUserId"));
+
+            /*
+             * The handover reaches whoever can act on it — lock it or send it
+             * back — minus the person who just performed it: the sender needs no
+             * notice of their own act.
+             */
+            case PAYROLL_MONTH_SENT, PAYROLL_ITEM_SENT -> {
+                recipients.addAll(usersWith(AppPermission.PAYROLL_LOCK));
+                Long actorId = longOf(payload, "actorUserId");
+                if (actorId != null) {
+                    recipients.removeIf(u -> actorId.equals(u.getId()));
+                }
+            }
         }
 
         // Never notify a person who can no longer use the application.
@@ -558,6 +614,8 @@ public class NotificationFanoutService {
             case PAYROLL_CHANGE_REQUEST_CREATED -> "Zahtev za izmenu obračuna";
             case PAYROLL_CHANGE_REQUEST_ACCEPTED -> "Obračun je vraćen na doradu";
             case PAYROLL_CHANGE_REQUEST_DECLINED -> "Zahtev za izmenu je odbijen";
+            case PAYROLL_MONTH_SENT -> "Obračuni su predati";
+            case PAYROLL_ITEM_SENT -> "Predat je pojedinačan obračun";
         };
     }
 
@@ -682,6 +740,18 @@ public class NotificationFanoutService {
             case PAYROLL_CHANGE_REQUEST_DECLINED -> "Zahtev za izmenu obračuna za "
                     + textOf(payload, "employeeName", "-") + " ("
                     + textOf(payload, "period", "-") + ") je odbijen.";
+            /*
+             * The handover, with no amounts: the count and the month say what is
+             * waiting, and the figures live on the payroll screens the reader
+             * will open from the link.
+             */
+            case PAYROLL_MONTH_SENT -> "Predato je obračuna: "
+                    + textOf(payload, "count", "-") + " za mesec "
+                    + textOf(payload, "period", "-") + ". Spremni su za pregled i zaključavanje.";
+            case PAYROLL_ITEM_SENT -> "Predat je obračun za "
+                    + textOf(payload, "employeeName", "-") + " ("
+                    + textOf(payload, "period", "-") + "). Razlog: "
+                    + textOf(payload, "note", "nije naveden") + ".";
         };
     }
 }

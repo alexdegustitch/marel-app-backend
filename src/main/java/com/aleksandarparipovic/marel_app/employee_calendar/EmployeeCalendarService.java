@@ -40,6 +40,7 @@ import java.util.Map;
 public class EmployeeCalendarService {
 
     private static final String STATUS_APPROVED = "APPROVED";
+    private static final String STATUS_SENT = "SENT";
     private static final String STATUS_LOCKED = "LOCKED";
 
     private final WorkShiftRepository workShiftRepository;
@@ -183,7 +184,9 @@ public class EmployeeCalendarService {
         if (item == null) {
             return null;
         }
-        boolean closed = STATUS_APPROVED.equals(item.getStatus()) || STATUS_LOCKED.equals(item.getStatus());
+        boolean closed = STATUS_APPROVED.equals(item.getStatus())
+                || STATUS_SENT.equals(item.getStatus())
+                || STATUS_LOCKED.equals(item.getStatus());
         return new PayrollStatus(item.getId(), item.getStatus(), closed);
     }
 

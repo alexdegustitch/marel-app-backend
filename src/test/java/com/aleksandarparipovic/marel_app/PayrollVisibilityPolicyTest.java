@@ -50,11 +50,12 @@ class PayrollVisibilityPolicyTest {
         for (String role : List.of("supervisor", "commercial")) {
             signedInAs(role);
             assertThat(policy.canSeeAmounts()).as(role).isFalse();
-            // A locked month reads as approved: finished, nothing expected of them.
-            assertThat(policy.visibleStatus("LOCKED")).as(role).isEqualTo("APPROVED");
+            // A locked month reads as sent: handed over, nothing expected of them.
+            assertThat(policy.visibleStatus("LOCKED")).as(role).isEqualTo("SENT");
             // Everything else passes through — a draft is still a draft.
             assertThat(policy.visibleStatus("DRAFT")).as(role).isEqualTo("DRAFT");
             assertThat(policy.visibleStatus("APPROVED")).as(role).isEqualTo("APPROVED");
+            assertThat(policy.visibleStatus("SENT")).as(role).isEqualTo("SENT");
         }
     }
 
@@ -63,7 +64,7 @@ class PayrollVisibilityPolicyTest {
     void failsClosed() {
         SecurityContextHolder.clearContext();
         assertThat(policy.canSeeAmounts()).isFalse();
-        assertThat(policy.visibleStatus("LOCKED")).isEqualTo("APPROVED");
+        assertThat(policy.visibleStatus("LOCKED")).isEqualTo("SENT");
     }
 
     /*

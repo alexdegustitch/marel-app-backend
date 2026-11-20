@@ -65,6 +65,7 @@ class MyPayslipsIT extends AbstractIntegrationTest {
     /** DRAFT → APPROVED → LOCKED, the only way a month becomes a payslip. */
     private void finish(Long itemId) {
         payrollRunItemService.submit(itemId, null);
+        payrollRunItemService.sendOne(itemId, "ide ranije");
         payrollRunItemService.lock(itemId);
     }
 
@@ -140,9 +141,14 @@ class MyPayslipsIT extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payrollRunItemService.ownDetails(monthlyReportId, employeeId, null))
                 .isInstanceOf(AccessDeniedException.class);
 
-        // APPROVED — handed over, but payroll has not had its last word. Handing
-        // it over now would publish a figure that can still be corrected.
+        // APPROVED — finished by the supervisor, but not yet payroll's. Publishing
+        // now would show a figure that can still be corrected.
         payrollRunItemService.submit(scenario.item().getId(), null);
+        assertThatThrownBy(() -> payrollRunItemService.ownDetails(monthlyReportId, employeeId, null))
+                .isInstanceOf(AccessDeniedException.class);
+
+        // SENT — with payroll, and still not their last word.
+        payrollRunItemService.sendOne(scenario.item().getId(), "ide ranije");
         assertThatThrownBy(() -> payrollRunItemService.ownDetails(monthlyReportId, employeeId, null))
                 .isInstanceOf(AccessDeniedException.class);
 

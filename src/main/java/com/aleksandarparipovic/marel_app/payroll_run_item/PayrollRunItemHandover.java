@@ -45,6 +45,19 @@ import java.util.Map;
 @Builder
 public class PayrollRunItemHandover {
 
+    /**
+     * The supervisor finished the month: DRAFT → APPROVED.
+     *
+     * <p>{@code SUBMITTED} is the legacy spelling of the handover from before
+     * V72, when DRAFT → APPROVED was itself the handover to payroll. It is
+     * never written any more, but old rows keep it so their meaning — "this
+     * WAS handed over" — survives.
+     */
+    public static final String EVENT_APPROVED = "APPROVED";
+
+    /** The handover to payroll: APPROVED → SENT, under the sender's password. */
+    public static final String EVENT_SENT = "SENT";
+
     public static final String EVENT_SUBMITTED = "SUBMITTED";
     public static final String EVENT_RETURNED = "RETURNED";
 
@@ -92,6 +105,8 @@ public class PayrollRunItemHandover {
      */
     public static final java.util.Set<String> EVENTS_VISIBLE_TO_SUBMITTER = java.util.Set.of(
             EVENT_CREATED,
+            EVENT_APPROVED,
+            EVENT_SENT,
             EVENT_SUBMITTED,
             EVENT_RETURNED,
             EVENT_CHANGE_REQUESTED,

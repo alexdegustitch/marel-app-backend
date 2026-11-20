@@ -9,6 +9,7 @@ public interface PayrollMonthAggregate {
     Long getItemCount();
     Long getDraftCount();
     Long getApprovedCount();
+    Long getSentCount();
     Long getLockedCount();
     BigDecimal getTotalNetPayable();
     BigDecimal getTotalNetEarnings();

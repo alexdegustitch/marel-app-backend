@@ -22,6 +22,69 @@ import java.util.List;
 public class PayrollRunController {
 
     private final PayrollRunService payrollRunService;
+    private final com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemService payrollRunItemService;
+    /** The password question belongs to the HTTP boundary, as on lock. */
+    private final com.aleksandarparipovic.marel_app.auth.StepUpVerificationService stepUp;
+
+    /**
+     * Hand the whole month over to payroll: every APPROVED obračun → SENT.
+     *
+     * <p>Offered to the supervisors once the month is complete — no drafts, and
+     * no employed worker without an obračun — and taken under the sender's own
+     * password. One act, one notification to payroll.
+     */
+    @org.springframework.web.bind.annotation.PostMapping("/{year}/{month}/send")
+    @org.springframework.security.access.prepost.PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
+    public ResponseEntity<SendMonthResponse> sendMonth(
+            @PathVariable int year,
+            @PathVariable int month,
+            @RequestBody(required = false) SendMonthRequest request) {
+        stepUp.requireCurrentPassword(request == null ? null : request.password());
+        return ResponseEntity.ok(new SendMonthResponse(payrollRunItemService.sendMonth(year, month)));
+    }
+
+    /** The password of the account pressing the button, nobody else's. */
+    public record SendMonthRequest(String password) {
+    }
+
+    /** How many obračuna actually moved to SENT by this press. */
+    public record SendMonthResponse(int sentCount) {
+    }
+
+    /**
+     * Whether the month can be handed over as a whole, and if not, why not.
+     * For the people who would press the button, not for payroll.
+     */
+    @GetMapping("/{year}/{month}/readiness")
+    @org.springframework.security.access.prepost.PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
+    public ResponseEntity<PayrollRunService.PayrollMonthReadiness> readiness(
+            @PathVariable int year, @PathVariable int month) {
+        return ResponseEntity.ok(payrollRunService.getReadiness(year, month));
+    }
+
+    /**
+     * The handed-over payrolls of one month — the director's list, sortable by
+     * the worker's number or by when the month was last approved.
+     */
+    @GetMapping("/{year}/{month}/sent")
+    @org.springframework.security.access.prepost.PreAuthorize("@perm.has('PAYROLL_LOCK')")
+    public ResponseEntity<Page<com.aleksandarparipovic.marel_app.payroll_run_item.dto.SentPayrollRow>> sent(
+            @PathVariable int year,
+            @PathVariable int month,
+            @RequestParam(defaultValue = "employeeNo") String sort,
+            @RequestParam(defaultValue = "asc") String dir,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        return ResponseEntity.ok(payrollRunService.getSentByYearAndMonth(year, month, sort, dir, page, size));
+    }
+
+    /** Months of the year that hold handed-over payrolls, with how many. */
+    @GetMapping("/{year}/sent-months")
+    @org.springframework.security.access.prepost.PreAuthorize("@perm.has('PAYROLL_LOCK')")
+    public ResponseEntity<List<com.aleksandarparipovic.marel_app.payroll_run_item.PayrollRunItemRepository.MonthSentCount>> sentMonths(
+            @PathVariable int year) {
+        return ResponseEntity.ok(payrollRunService.getMonthsWithSent(year));
+    }
 
     /** GET /api/payroll-runs/years — years that actually hold obračuni, newest first. */
     @GetMapping("/years")

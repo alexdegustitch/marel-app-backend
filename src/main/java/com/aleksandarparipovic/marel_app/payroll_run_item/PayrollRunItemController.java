@@ -242,11 +242,11 @@ public class PayrollRunItemController {
     }
 
     /**
-     * Hand the month over to payroll — "spreman".
+     * The supervisor finishes the month — "odobren".
      *
      * <p>Supervisors as well as admins: this is the shop floor saying its work is
-     * done, and the supervisor is the one who knows. Payroll's own step is the
-     * lock, which stays admin-only.
+     * done, and the supervisor is the one who knows. Not yet the handover —
+     * payroll sees nothing until the month (or one payroll) is SENT below.
      */
     @PostMapping("/{id}/submit")
     @PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
@@ -257,18 +257,41 @@ public class PayrollRunItemController {
         return ResponseEntity.ok(new PayrollRunItemResponse(payrollRunItemService.submit(id, note)));
     }
 
-    /** Send it back for correction. Same people who may hand it over. */
     /**
-     * Payroll handing a submitted month back of its own accord.
+     * Hand ONE payroll over to payroll — "predat" — out of turn.
      *
-     * <p>PAYROLL_LOCK, not PAYROLL_HANDOVER: once the month is submitted, payroll
-     * may already have worked on it, and taking it back underneath them
-     * invalidates that. The supervisor's way back is a change request, which
-     * payroll answers. PAYROLL_HANDOVER still lets them SUBMIT — that half is
-     * unchanged.
+     * <p>The month normally goes over as a whole (send on the payroll-runs
+     * endpoint); one payroll alone is the exception, so it asks for the sender's
+     * password AND a reason. Password verified first, so a wrong one costs no
+     * work and changes nothing.
+     */
+    @PostMapping("/{id}/send")
+    @PreAuthorize("@perm.has('PAYROLL_HANDOVER')")
+    public ResponseEntity<PayrollRunItemResponse> send(
+            @PathVariable Long id,
+            @RequestBody(required = false) SendRequest request) {
+        stepUp.requireCurrentPassword(request == null ? null : request.password());
+        return ResponseEntity.ok(new PayrollRunItemResponse(
+                payrollRunItemService.sendOne(id, request == null ? null : request.note())));
+    }
+
+    /** The sender's own password, and why this payroll travels alone. */
+    public record SendRequest(String password, String note) {
+    }
+
+    /**
+     * Send it back for correction.
+     *
+     * <p>Two acts behind one door, and the service tells them apart by status:
+     * an APPROVED month has not left the shop floor, so the supervisor
+     * (PAYROLL_HANDOVER) pulls back their own approval; a SENT month is with
+     * payroll, and only payroll (PAYROLL_LOCK) hands it back — once sent,
+     * payroll may already have worked on it, and taking it back underneath them
+     * invalidates that. The supervisor's way back after sending is a change
+     * request, which payroll answers.
      */
     @PostMapping("/{id}/return-to-draft")
-    @PreAuthorize("@perm.has('PAYROLL_LOCK')")
+    @PreAuthorize("@perm.has('PAYROLL_HANDOVER') or @perm.has('PAYROLL_LOCK')")
     public ResponseEntity<PayrollRunItemResponse> returnToDraft(
             @PathVariable Long id,
             @RequestBody(required = false) HandoverRequest request) {

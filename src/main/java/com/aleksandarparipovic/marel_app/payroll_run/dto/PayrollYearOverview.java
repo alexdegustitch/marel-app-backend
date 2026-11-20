@@ -22,6 +22,7 @@ public record PayrollYearOverview(int year, boolean amountsVisible, List<MonthOv
             long itemCount,
             long draftCount,
             long approvedCount,
+            long sentCount,
             Long lockedCount,
             BigDecimal totalNetPayable,
             BigDecimal totalNetEarnings,
@@ -29,16 +30,21 @@ public record PayrollYearOverview(int year, boolean amountsVisible, List<MonthOv
             List<RecentPayroll> recent) {
 
         public static MonthOverview empty(int month, boolean amountsVisible) {
-            return new MonthOverview(month, 0, 0, 0, amountsVisible ? 0L : null, null, null, null, List.of());
+            return new MonthOverview(month, 0, 0, 0, 0, amountsVisible ? 0L : null, null, null, null, List.of());
         }
 
-        /** The same month as somebody without payroll access is told about it. */
+        /**
+         * The same month as somebody without payroll access is told about it:
+         * a locked month counts as sent — "predat" is the last thing they did
+         * with it, and the lock is payroll's own step.
+         */
         public MonthOverview withoutAmounts() {
             return new MonthOverview(
                     month,
                     itemCount,
                     draftCount,
-                    approvedCount + (lockedCount == null ? 0 : lockedCount),
+                    approvedCount,
+                    sentCount + (lockedCount == null ? 0 : lockedCount),
                     null,
                     null,
                     null,

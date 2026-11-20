@@ -1992,6 +1992,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // DRAFT -> APPROVED -> LOCKED: payroll freezes what the shop floor handed
         // over, so the handover comes first.
         payrollRunItemService.submit(scenario.item().getId(), null);
+        payrollRunItemService.sendOne(scenario.item().getId(), "ide ranije");
         PayrollRunItem locked = payrollRunItemService.lock(scenario.item().getId());
 
         assertThat(locked.getStatus()).isEqualTo("LOCKED");
@@ -2011,10 +2012,11 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
     void requiredManualInputBlocksLocking() {
         var scenario = fixture.scenario().build();
         calculate(scenario);
-        // Handed over while complete, and only THEN does a line become required —
-        // so what is asserted below is lock's own guard, not the identical one
-        // that now also stands in front of the handover.
+        // Approved and sent while complete, and only THEN does a line become
+        // required — so what is asserted below is lock's own guard, not the
+        // identical one that now also stands in front of the approval.
         payrollRunItemService.submit(scenario.item().getId(), null);
+        payrollRunItemService.sendOne(scenario.item().getId(), "ide ranije");
         fixture.requireManualInput("OTHER");
 
         // "Not entered" is not "entered as zero". Freezing a month while somebody
@@ -2041,6 +2043,7 @@ class PayrollGoldenSnapshotIT extends AbstractIntegrationTest {
         // Zero IS an answer once somebody has given it. has_manual_input is the only
         // thing that can tell the two apart.
         payrollRunItemService.submit(scenario.item().getId(), null);
+        payrollRunItemService.sendOne(scenario.item().getId(), "ide ranije");
         assertThat(payrollRunItemService.lock(scenario.item().getId()).getStatus())
                 .isEqualTo("LOCKED");
     }

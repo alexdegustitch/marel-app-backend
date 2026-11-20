@@ -377,6 +377,24 @@ public class PayrollRunItem {
     private Boolean needsRecalculation = false;
 
 
+    /**
+     * When the supervisor last marked the month finished (DRAFT → APPROVED).
+     * Cleared on the way back to DRAFT. The sent-payrolls screen sorts by it.
+     */
+    @Column(name = "approved_at")
+    private OffsetDateTime approvedAt;
+
+    /**
+     * The handover to payroll (→ SENT): when, and by whom. Mirrors
+     * locked_at/locked_by one step earlier, and is cleared the same way when
+     * the month goes back to DRAFT.
+     */
+    @Column(name = "sent_at")
+    private OffsetDateTime sentAt;
+
+    @Column(name = "sent_by")
+    private Long sentBy;
+
     @Column(name = "locked_at")
     private OffsetDateTime lockedAt;
 

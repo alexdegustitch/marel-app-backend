@@ -68,9 +68,9 @@ public record AdminDashboardResponse(
         Block<RegistrationRequestRow> registrationRequests,
 
         /**
-         * Months the administrator has handed over (status APPROVED) and payroll
-         * has not frozen — "obračuni spremni za pregled". Carries enough rows
-         * for the drawer, not just the card.
+         * Months the administration has handed over (status SENT) and payroll
+         * has not frozen — "predati obračuni". Carries enough rows for the
+         * drawer, not just the card.
          */
         Block<ReadyPayrollRow> submittedPayrolls,
 
@@ -98,7 +98,7 @@ public record AdminDashboardResponse(
     }
 
     /**
-     * A month a supervisor has handed over (status APPROVED) and payroll has
+     * A month a supervisor has handed over (status SENT) and payroll has
      * not frozen.
      *
      * @param monthlyReportId what the payroll screen is addressed by; null

@@ -55,10 +55,14 @@ class PerformanceMarkOnPayrollIT extends AbstractIntegrationTest {
     /** The fixture's default month is 2026-09; its first day is what validity is checked against. */
     private static final LocalDate MONTH_START = LocalDate.of(2026, 9, 1);
 
-    /** Most tests choose as the administrator, who holds both halves. */
+    /*
+     * Most tests choose as the developer seat, which holds both halves of the
+     * mark. Not "admin": since V72 the admin works only with SENT payrolls, and
+     * these tests exercise the mark on months in every status.
+     */
     @BeforeEach
     void signIn() {
-        signedInAs("admin");
+        signedInAs("developer");
     }
 
     @AfterEach
@@ -294,7 +298,7 @@ class PerformanceMarkOnPayrollIT extends AbstractIntegrationTest {
                 LocalDate.of(2026, 1, 1), null);
         signedInAs("supervisor");
         service.setPerformanceMark(august.item().getId(), augustMark.getId());
-        signedInAs("admin");
+        signedInAs("developer");
 
         // Everything but May is finished. May stays DRAFT with no finished
         // obračun, so its slot on the chart has no month under it.

@@ -79,8 +79,10 @@ public class PayrollRunItemService {
 
     private static final String STATUS_LOCKED = "LOCKED";
     private static final String STATUS_DRAFT = "DRAFT";
-    /** "Spreman" — handed over by the shop floor, not yet frozen by payroll. */
+    /** "Odobren" — the supervisor finished the month; payroll does not see it yet. */
     private static final String STATUS_APPROVED = "APPROVED";
+    /** "Predat" — handed over to payroll under a password; what the director works from. */
+    private static final String STATUS_SENT = "SENT";
     private static final String DEFAULT_CURRENCY = "RSD";
     private static final int DEFAULT_CALC_VERSION = 1;
 
@@ -98,6 +100,9 @@ public class PayrollRunItemService {
     private final PayrollRunItemHandoverRepository handoverRepository;
     private final FrozenPayrollView frozenPayrollView;
     private final com.aleksandarparipovic.marel_app.config.security.PermissionService permissionService;
+    private final com.aleksandarparipovic.marel_app.payroll_run.PayrollRunRepository payrollRunRepository;
+    private final com.aleksandarparipovic.marel_app.outbox.OutboxEventPublisher outboxEventPublisher;
+    private final com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository employeeRepository;
 
     private static final PayrollFieldAccessService.Access DENIED_ACCESS =
             new PayrollFieldAccessService.Access(false, false);
@@ -418,10 +423,11 @@ public class PayrollRunItemService {
             return item;
         }
 
-        // The chain is DRAFT -> APPROVED -> LOCKED. Payroll freezes what the shop
-        // floor handed over; freezing a draft would make permanent a month nobody
-        // has said is finished.
-        if (!STATUS_APPROVED.equals(item.getStatus())) {
+        // The chain is DRAFT -> APPROVED -> SENT -> LOCKED. Payroll freezes what
+        // the shop floor handed over; freezing anything earlier would make
+        // permanent a month nobody has said is finished — or one payroll was
+        // never given.
+        if (!STATUS_SENT.equals(item.getStatus())) {
             throw new ConflictException(
                     "Obračun se zaključava tek kada bude predat. Trenutno stanje: "
                             + item.getStatus() + ".");
@@ -448,7 +454,7 @@ public class PayrollRunItemService {
         // AFTER the save, so the figures the step records are the ones that were
         // frozen — the recalculation above may have moved them.
         recordHandover(locked, PayrollRunItemHandover.EVENT_LOCKED,
-                STATUS_APPROVED, STATUS_LOCKED, null);
+                STATUS_SENT, STATUS_LOCKED, null);
 
         log.info("PayrollRunItem {} locked by user {}", id, locked.getLockedBy());
         return locked;
@@ -479,17 +485,20 @@ public class PayrollRunItemService {
     }
 
     /**
-     * Hand the month over to payroll: DRAFT → APPROVED, "spreman".
+     * The supervisor finishes the month: DRAFT → APPROVED, "odobren".
+     *
+     * <p>Not yet the handover — payroll does not see an APPROVED month. The
+     * handover is {@link #sendOne} / {@link #sendMonth}, taken under a password
+     * once every payroll of the month is approved.
      *
      * <p>Recalculates and checks required inputs FIRST, for the same reason
-     * {@link #lock} does: the figures recorded as "what was handed over" have to
+     * {@link #lock} does: the figures recorded as "what was approved" have to
      * be the ones that were actually true, not ones that went stale before
-     * anybody looked. Handing over a stale month would put a number into the
-     * audit record that never existed.
+     * anybody looked.
      *
-     * <p>Idempotent — handing over an already-handed-over month is not an error
+     * <p>Idempotent — approving an already-approved month is not an error
      * and does not add a second row, otherwise a double-clicked button would
-     * invent a handover that never happened.
+     * invent an approval that never happened.
      */
     @Transactional
     public PayrollRunItem submit(Long id, String note) {
@@ -500,8 +509,11 @@ public class PayrollRunItemService {
         if (STATUS_APPROVED.equals(item.getStatus())) {
             return item;
         }
+        if (STATUS_SENT.equals(item.getStatus())) {
+            throw new ConflictException("Obračun je već predat obračunskoj službi.");
+        }
         if (STATUS_LOCKED.equals(item.getStatus())) {
-            throw new ConflictException("Zaključan obračun se ne može ponovo predati.");
+            throw new ConflictException("Zaključan obračun se ne može ponovo odobriti.");
         }
 
         item = getForPayrollAccess(id);
@@ -509,26 +521,170 @@ public class PayrollRunItemService {
         List<String> pending = pendingRequiredInputs(item);
         if (!pending.isEmpty()) {
             throw new ConflictException(
-                    "Obračun se ne može predati dok se ne unesu obavezne stavke: "
+                    "Obračun se ne može odobriti dok se ne unesu obavezne stavke: "
                             + String.join(", ", pending) + ".");
         }
 
         String before = item.getStatus();
         item.setStatus(STATUS_APPROVED);
+        item.setApprovedAt(OffsetDateTime.now());
         item.setUpdatedAt(OffsetDateTime.now());
         PayrollRunItem saved = payrollRunItemRepository.save(item);
 
-        recordHandover(saved, PayrollRunItemHandover.EVENT_SUBMITTED, before, STATUS_APPROVED, note);
-        log.info("PayrollRunItem {} submitted by user {}", id, currentUserService.getCurrentUserId());
+        recordHandover(saved, PayrollRunItemHandover.EVENT_APPROVED, before, STATUS_APPROVED, note);
+        log.info("PayrollRunItem {} approved by user {}", id, currentUserService.getCurrentUserId());
         return saved;
     }
 
     /**
-     * Send it back for correction: APPROVED → DRAFT.
+     * Hand ONE payroll over to payroll: APPROVED → SENT.
      *
-     * <p>The inverse of {@link #submit} and a row of its own, so the sequence
-     * "handed over, returned, handed over again" survives. It does NOT erase the
-     * earlier handover — that record is what a later argument is settled with.
+     * <p>The exception to the month-at-once rule, so it carries a mandatory
+     * reason — the director reading one payroll arriving alone is owed the why.
+     * The caller's password is verified in the controller before this runs.
+     */
+    @Transactional
+    public PayrollRunItem sendOne(Long id, String note) {
+        if (note == null || note.isBlank()) {
+            throw new ConflictException(
+                    "Za predaju pojedinačnog obračuna obavezan je komentar — zašto se predaje sam.");
+        }
+        markHumanDecision(id);
+        PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
+                .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
+
+        if (STATUS_SENT.equals(item.getStatus())) {
+            return item;
+        }
+        if (!STATUS_APPROVED.equals(item.getStatus())) {
+            throw new ConflictException(
+                    "Predaje se samo odobren obračun. Trenutno stanje: " + item.getStatus() + ".");
+        }
+
+        PayrollRunItem sent = markSent(item, note);
+        publishSentEvent(com.aleksandarparipovic.marel_app.outbox.OutboxEventType.PAYROLL_ITEM_SENT, sent, 1, note);
+        log.info("PayrollRunItem {} sent to payroll by user {}", id, currentUserService.getCurrentUserId());
+        return sent;
+    }
+
+    /**
+     * Hand the WHOLE month over: every APPROVED payroll of the month → SENT.
+     *
+     * <p>Refused while anything is still a draft, and refused while an employee
+     * who was employed during the month has no payroll at all — a month handed
+     * over with somebody missing would read as complete to the one person who
+     * cannot see what is missing. The fix for the latter is "Kreiraj kartone",
+     * which re-initialises the month idempotently.
+     *
+     * <p>Payrolls already SENT (sent one by one earlier) are skipped, so the
+     * button stays pressable on a partially sent month. The caller's password is
+     * verified in the controller.
+     */
+    @Transactional
+    public int sendMonth(int year, int month) {
+        PayrollRun run = payrollRunRepository.findFirstByReportYearAndReportMonth(year, month)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "PayrollRun not found for " + year + "/" + month));
+
+        List<PayrollRunItem> items = payrollRunItemRepository.findByPayrollRun_Id(run.getId()).stream()
+                .filter(i -> i.getArchivedAt() == null)
+                .toList();
+
+        long drafts = items.stream().filter(i -> STATUS_DRAFT.equals(i.getStatus())).count();
+        if (drafts > 0) {
+            throw new ConflictException(
+                    "Mesec se predaje tek kada su svi obračuni odobreni — u izradi je još: " + drafts + ".");
+        }
+
+        List<String> missing = findEmployedWithoutPayroll(year, month);
+        if (!missing.isEmpty()) {
+            throw new ConflictException(
+                    "Mesec se ne može predati: bez obračuna su "
+                            + summarizeNames(missing)
+                            + ". Pokrenite „Kreiraj kartone“ da se mesec dopuni.");
+        }
+
+        List<PayrollRunItem> toSend = items.stream()
+                .filter(i -> STATUS_APPROVED.equals(i.getStatus()))
+                .toList();
+        if (toSend.isEmpty()) {
+            throw new ConflictException("Nema odobrenih obračuna za predaju.");
+        }
+
+        PayrollRunItem sample = null;
+        for (PayrollRunItem item : toSend) {
+            markHumanDecision(item.getId());
+            sample = markSent(item, null);
+        }
+
+        publishSentEvent(com.aleksandarparipovic.marel_app.outbox.OutboxEventType.PAYROLL_MONTH_SENT,
+                sample, toSend.size(), null);
+        log.info("Payroll month {}/{} sent to payroll by user {} ({} items)",
+                year, month, currentUserService.getCurrentUserId(), toSend.size());
+        return toSend.size();
+    }
+
+    /** Workers employed during the month with no obračun for it — what blocks a send. */
+    @Transactional(readOnly = true)
+    public List<String> findEmployedWithoutPayroll(int year, int month) {
+        YearMonth ym = YearMonth.of(year, month);
+        return employeeRepository.findEmployedWithoutPayrollForMonth(
+                year, month, ym.atDay(1), ym.atEndOfMonth());
+    }
+
+    /** The one place a payroll becomes SENT, so the stamp and the record never drift. */
+    private PayrollRunItem markSent(PayrollRunItem item, String note) {
+        item.setStatus(STATUS_SENT);
+        item.setSentAt(OffsetDateTime.now());
+        item.setSentBy(currentUserService.getCurrentUserId());
+        item.setUpdatedAt(OffsetDateTime.now());
+        PayrollRunItem saved = payrollRunItemRepository.save(item);
+        recordHandover(saved, PayrollRunItemHandover.EVENT_SENT, STATUS_APPROVED, STATUS_SENT, note);
+        return saved;
+    }
+
+    /** Tells payroll — in-app and by email — that payroll(s) arrived. */
+    private void publishSentEvent(com.aleksandarparipovic.marel_app.outbox.OutboxEventType type,
+                                  PayrollRunItem item, int count, String note) {
+        PayrollRun run = item.getPayrollRun();
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("year", run.getReportYear());
+        payload.put("month", run.getReportMonth());
+        payload.put("period", run.getReportYear() + "-" + String.format("%02d", run.getReportMonth()));
+        payload.put("count", count);
+        payload.put("actorUserId", currentUserService.getCurrentUserId());
+        if (type == com.aleksandarparipovic.marel_app.outbox.OutboxEventType.PAYROLL_ITEM_SENT) {
+            payload.put("payrollRunItemId", item.getId());
+            payload.put("monthlyReportId",
+                    item.getMonthlyReport() != null ? item.getMonthlyReport().getId() : null);
+            payload.put("employeeId", item.getEmployee() != null ? item.getEmployee().getId() : null);
+            payload.put("employeeName", item.getEmployee() != null ? item.getEmployee().getFullName() : null);
+            if (note != null) payload.put("note", note);
+        }
+        outboxEventPublisher.publish(type,
+                com.aleksandarparipovic.marel_app.outbox.OutboxAggregateType.PAYROLL_RUN_ITEM,
+                item.getId(), payload);
+    }
+
+    /** "Petar Petrović, Ana Anić i još 3" — a refusal that names names stays readable. */
+    private static String summarizeNames(List<String> names) {
+        int shown = Math.min(names.size(), 5);
+        String head = String.join(", ", names.subList(0, shown));
+        return names.size() > shown ? head + " i još " + (names.size() - shown) : head;
+    }
+
+    /**
+     * Send it back for correction: APPROVED or SENT → DRAFT.
+     *
+     * <p>Two different acts behind one door, told apart by who may take them:
+     * an APPROVED month has not left the shop floor, so the supervisor
+     * (PAYROLL_HANDOVER) pulls back their own approval; a SENT month is with
+     * payroll, so only payroll (PAYROLL_LOCK) hands it back — the supervisor's
+     * way is a change request.
+     *
+     * <p>A row of its own, so the sequence "approved, returned, approved again"
+     * survives. It does NOT erase the earlier steps — that record is what a
+     * later argument is settled with.
      */
     @Transactional
     public PayrollRunItem returnToDraft(Long id, String note) {
@@ -536,23 +692,51 @@ public class PayrollRunItemService {
         PayrollRunItem item = payrollRunItemRepository.findByIdWithMonthlyReport(id)
                 .orElseThrow(() -> new IllegalArgumentException("PayrollRunItem not found: " + id));
 
-        if (STATUS_DRAFT.equals(item.getStatus())) {
+        String before = item.getStatus();
+        if (STATUS_DRAFT.equals(before)) {
             return item;
         }
-        if (!STATUS_APPROVED.equals(item.getStatus())) {
+        if (!STATUS_APPROVED.equals(before) && !STATUS_SENT.equals(before)) {
             throw new ConflictException(
-                    "Na doradu se vraća samo predat obračun. Trenutno stanje: "
-                            + item.getStatus() + ".");
+                    "Na doradu se vraća samo odobren ili predat obračun. Trenutno stanje: "
+                            + before + ".");
+        }
+        // Only for a real signed-in caller: internal callers and tests reach
+        // this with no SecurityContext, and HTTP entry is already gated by
+        // @PreAuthorize — the question here is WHICH of the two permissions the
+        // person needs at this step.
+        if (payrollVisibilityPolicy.hasAuthenticatedUser()) {
+            if (STATUS_APPROVED.equals(before)
+                    && !permissionService.hasPermission(AppPermission.PAYROLL_HANDOVER)) {
+                throw new ConflictException("Odobren obračun na doradu vraća onaj ko ga odobrava.");
+            }
+            if (STATUS_SENT.equals(before)
+                    && !permissionService.hasPermission(AppPermission.PAYROLL_LOCK)) {
+                throw new ConflictException(
+                        "Predat obračun vraća obračunska služba. Podnesite zahtev za izmenu.");
+            }
         }
 
         item.setStatus(STATUS_DRAFT);
+        clearHandoverStamps(item);
         item.setNeedsRecalculation(true);
         item.setUpdatedAt(OffsetDateTime.now());
         PayrollRunItem saved = payrollRunItemRepository.save(item);
 
-        recordHandover(saved, PayrollRunItemHandover.EVENT_RETURNED, STATUS_APPROVED, STATUS_DRAFT, note);
-        log.info("PayrollRunItem {} returned to draft by user {}", id, currentUserService.getCurrentUserId());
+        recordHandover(saved, PayrollRunItemHandover.EVENT_RETURNED, before, STATUS_DRAFT, note);
+        log.info("PayrollRunItem {} returned to draft from {} by user {}",
+                id, before, currentUserService.getCurrentUserId());
         return saved;
+    }
+
+    /**
+     * A DRAFT remembers neither being approved nor being sent — stale stamps
+     * would read as a finished month to anything that checks them over status.
+     */
+    private static void clearHandoverStamps(PayrollRunItem item) {
+        item.setApprovedAt(null);
+        item.setSentAt(null);
+        item.setSentBy(null);
     }
 
     /**
@@ -589,6 +773,7 @@ public class PayrollRunItemService {
         // than status.
         item.setLockedAt(null);
         item.setLockedBy(null);
+        clearHandoverStamps(item);
         item.setNeedsRecalculation(true);
         item.setUpdatedAt(OffsetDateTime.now());
         PayrollRunItem saved = payrollRunItemRepository.save(item);
@@ -800,15 +985,22 @@ public class PayrollRunItemService {
         }
         PayrollRunItem item = payrollRunItemRepository.findByMonthlyReport_Id(monthlyReportId).orElse(null);
         if (item == null
-                || (!STATUS_APPROVED.equals(item.getStatus()) && !STATUS_LOCKED.equals(item.getStatus()))) {
+                || (!STATUS_APPROVED.equals(item.getStatus())
+                        && !STATUS_SENT.equals(item.getStatus())
+                        && !STATUS_LOCKED.equals(item.getStatus()))) {
             return Optional.empty();
         }
 
-        // The last SUBMITTED step, not the last step: a return to draft followed
-        // by a fresh submission replaces the picture, and a RETURNED row is not
+        // The last step somebody stood behind — approved, sent, or the legacy
+        // SUBMITTED — not the last step of any kind: a return to draft followed
+        // by a fresh approval replaces the picture, and a RETURNED row is not
         // one somebody handed over.
+        java.util.Set<String> frozenSteps = java.util.Set.of(
+                PayrollRunItemHandover.EVENT_SENT,
+                PayrollRunItemHandover.EVENT_APPROVED,
+                PayrollRunItemHandover.EVENT_SUBMITTED);
         return handoverRepository.findByPayrollRunItemIdOrderByOccurredAtDesc(item.getId()).stream()
-                .filter(h -> PayrollRunItemHandover.EVENT_SUBMITTED.equals(h.getEvent()))
+                .filter(h -> frozenSteps.contains(h.getEvent()))
                 .findFirst()
                 .map(h -> h.getPayload().get("detail"))
                 .filter(Map.class::isInstance)
@@ -877,14 +1069,14 @@ public class PayrollRunItemService {
             return item;
         }
 
-        // Back to APPROVED, not DRAFT: unlocking undoes exactly one step, the lock.
-        // Dropping to DRAFT would also silently undo the supervisor's handover,
+        // Back to SENT, not DRAFT: unlocking undoes exactly one step, the lock.
+        // Dropping further would also silently undo the supervisors' handover,
         // which is a different decision with a different owner — that is what
         // returnToDraft is for.
         //
         // needs_recalculation, not a recalculation here: unlocking says the month is
         // open again, and what it should now say is decided by whoever opens it.
-        item.setStatus(STATUS_APPROVED);
+        item.setStatus(STATUS_SENT);
         item.setLockedAt(null);
         item.setLockedBy(null);
         item.setNeedsRecalculation(true);
@@ -896,7 +1088,7 @@ public class PayrollRunItemService {
         // not yet recalculated, so this step records what the locked month said
         // rather than what it is about to say.
         recordHandover(reopened, PayrollRunItemHandover.EVENT_UNLOCKED,
-                STATUS_LOCKED, STATUS_APPROVED, null);
+                STATUS_LOCKED, STATUS_SENT, null);
 
         log.info("PayrollRunItem {} unlocked by user {}", id, currentUserService.getCurrentUserId());
         return reopened;
@@ -921,6 +1113,13 @@ public class PayrollRunItemService {
      */
     @Transactional
     public PayrollRunItemDetailResponse getDetails(Long monthlyReportId, String requestedLocale) {
+        // The director reads only what was handed over. Checked HERE, at the
+        // reading door, and not in the applyFieldAccess=false variant below —
+        // that one builds internal snapshots (for example the RETURNED step's
+        // own record, taken right after the status left SENT) and a record must
+        // not fail to be written because its writer may not read it back.
+        payrollRunItemRepository.findByMonthlyReport_Id(monthlyReportId)
+                .ifPresent(this::refuseIfNotYetVisible);
         return getDetails(monthlyReportId, requestedLocale, true);
     }
 
@@ -1212,7 +1411,7 @@ public class PayrollRunItemService {
                 full.getAdjustments(),
                 // Every one false: a document about oneself is a document, not a
                 // screen with actions on it. Six now — canEditItem joined them.
-                new PayrollRunItemPermissionsDto(false, false, false, false, false, false),
+                new PayrollRunItemPermissionsDto(false, false, false, false, false, false, false),
                 full.getResolvedLocale(),
                 // Nothing was withheld, so nothing to warn about. Taken from the
                 // response rather than written as false, so that if the document
@@ -1331,14 +1530,11 @@ public class PayrollRunItemService {
             throw new ConflictException("Obračun je zaključan i više se ne menja.");
         }
 
-        // LAYER B — once handed over, the shop floor is done with it. Payroll may
-        // still correct an APPROVED month; the supervisor who submitted it may
-        // not, because they have already said it is finished. Sending it back
-        // (return-to-draft) is how they get it again.
-        if (STATUS_APPROVED.equals(item.getStatus()) && payrollVisibilityPolicy.isRestrictedUser()) {
-            throw new ConflictException(
-                    "Obračun je predat i više se ne menja. Vratite ga na doradu da biste ga menjali.");
-        }
+        // LAYER B — once approved, the supervisor has said the month is finished,
+        // and once sent, it is payroll's. Payroll may still correct a SENT month;
+        // the supervisor may not, and for them the way back is return-to-draft
+        // (before sending) or a change request (after).
+        refuseIfClosedForCaller(item);
 
         // LAYER A — what a caller may not SEE, they may not WRITE. The amounts are
         // already withheld from the response for these roles; accepting them on
@@ -1727,14 +1923,49 @@ public class PayrollRunItemService {
         propagateToNextMonthItem(item);
     }
 
-    /** The two guards patch() opens with, for the other doors that move money. */
+    /** The guards patch() opens with, for the other doors that move money. */
     private void requireOpenForThisCaller(PayrollRunItem item) {
         if (STATUS_LOCKED.equals(item.getStatus())) {
             throw new ConflictException("Obračun je zaključan i više se ne menja.");
         }
-        if (STATUS_APPROVED.equals(item.getStatus()) && payrollVisibilityPolicy.isRestrictedUser()) {
-            throw new ConflictException(
-                    "Obračun je predat i više se ne menja. Vratite ga na doradu da biste ga menjali.");
+        refuseIfClosedForCaller(item);
+    }
+
+    /**
+     * Who may write at which step of the chain. DRAFT is the shop floor's;
+     * APPROVED is finished for the supervisor but not yet payroll's; SENT is
+     * payroll's alone; and a payroll the director may not yet SEE (not sent) is
+     * one they may not write either.
+     */
+    private void refuseIfClosedForCaller(PayrollRunItem item) {
+        String status = item.getStatus();
+        if (payrollVisibilityPolicy.isRestrictedUser()) {
+            if (STATUS_APPROVED.equals(status)) {
+                throw new ConflictException(
+                        "Obračun je odobren i više se ne menja. Vratite ga na doradu da biste ga menjali.");
+            }
+            if (STATUS_SENT.equals(status)) {
+                throw new ConflictException(
+                        "Obračun je predat obračunskoj službi. Za izmenu podnesite zahtev.");
+            }
+        }
+        refuseIfNotYetVisible(item);
+    }
+
+    /**
+     * The director works only with what was handed over: a DRAFT or APPROVED
+     * payroll does not exist for them — not on lists, not as a detail, not as a
+     * write. AccessDenied rather than Conflict, because for this reader the
+     * payroll is not there at all.
+     */
+    private void refuseIfNotYetVisible(PayrollRunItem item) {
+        if (!payrollVisibilityPolicy.seesOnlySentPayrolls()) {
+            return;
+        }
+        String status = item.getStatus();
+        if (STATUS_DRAFT.equals(status) || STATUS_APPROVED.equals(status)) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Obračun još nije predat.");
         }
     }
 
@@ -2827,14 +3058,23 @@ public class PayrollRunItemService {
          */
         boolean canEditItem = item != null
                 && !STATUS_LOCKED.equals(item.getStatus())
-                && !(STATUS_APPROVED.equals(item.getStatus())
-                        && payrollVisibilityPolicy.isRestrictedUser());
+                && !((STATUS_APPROVED.equals(item.getStatus()) || STATUS_SENT.equals(item.getStatus()))
+                        && payrollVisibilityPolicy.isRestrictedUser())
+                && !(payrollVisibilityPolicy.seesOnlySentPayrolls()
+                        && (STATUS_DRAFT.equals(item.getStatus())
+                                || STATUS_APPROVED.equals(item.getStatus())));
+
+        // Sending is the same people as approving, but only an APPROVED payroll
+        // has anything to send — answered here so the screen never offers a
+        // button the endpoint would refuse.
+        boolean canSend = canApprove && item != null && STATUS_APPROVED.equals(item.getStatus());
 
         return new PayrollRunItemPermissionsDto(
                 openForEditing && mayChangeSomething,
                 canEditItem,
                 canLock,
                 canApprove,
+                canSend,
                 mayEditItemField(PayrollFieldAccessService.FIELD_HOURLY_RATE),
                 mayEditItemField(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS)
         );
@@ -3659,10 +3899,7 @@ public class PayrollRunItemService {
         if (STATUS_LOCKED.equals(item.getStatus())) {
             throw new ConflictException("Obračun je zaključan i više se ne menja.");
         }
-        if (STATUS_APPROVED.equals(item.getStatus()) && payrollVisibilityPolicy.isRestrictedUser()) {
-            throw new ConflictException(
-                    "Obračun je predat i više se ne menja. Vratite ga na doradu da biste ga menjali.");
-        }
+        refuseIfClosedForCaller(item);
         return item;
     }
 

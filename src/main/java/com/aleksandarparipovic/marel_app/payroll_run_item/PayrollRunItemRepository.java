@@ -6,6 +6,7 @@ import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunInfoDto;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSearchRow;
 import com.aleksandarparipovic.marel_app.payroll_run.dto.PayrollRunSummaryDto;
 import com.aleksandarparipovic.marel_app.payroll_run_item.dto.PayrollRunItemActivityDto;
+import com.aleksandarparipovic.marel_app.payroll_run_item.dto.SentPayrollRow;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -165,6 +166,7 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
           AND pri.archived_at IS NULL
           AND (:search IS NULL OR e.full_name ILIKE '%' || :search || '%' OR e.employee_no ILIKE '%' || :search || '%')
           AND (:status IS NULL OR pri.status = :status)
+          AND (:onlySent = FALSE OR pri.status IN ('SENT', 'LOCKED'))
         GROUP BY pri.id, e.id, e.full_name, e.employee_no, d.name,
                  pri.status, pri.total_net_earnings, pri.net_payable_amount, pri.monthly_report_id
         """,
@@ -178,13 +180,87 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
           AND pri.archived_at IS NULL
           AND (:search IS NULL OR e.full_name ILIKE '%' || :search || '%' OR e.employee_no ILIKE '%' || :search || '%')
           AND (:status IS NULL OR pri.status = :status)
+          AND (:onlySent = FALSE OR pri.status IN ('SENT', 'LOCKED'))
         """,
         nativeQuery = true)
     Page<PayrollRunInfoDto> findPagedByYearAndMonth(@Param("year") int year,
                                                     @Param("month") int month,
                                                     @Param("search") String search,
                                                     @Param("status") String status,
+                                                    @Param("onlySent") boolean onlySent,
                                                     Pageable pageable);
+
+    /**
+     * The handed-over payrolls of one month — the director's working list.
+     *
+     * <p>One row per SENT obračun, with when it was last approved, when and by
+     * whom it was sent, and — when it travelled alone — the reason it did. The
+     * reason lives on the SENT handover row, not on the item, so the latest one
+     * is joined in here.
+     *
+     * <p>Sorting comes from the Pageable over the SELECT aliases; the service
+     * whitelists which ones, so nothing user-typed reaches the ORDER BY.
+     */
+    @Query(value = """
+        SELECT
+            pri.id                  AS id,
+            e.id                    AS employeeId,
+            e.full_name             AS employeeName,
+            e.employee_no           AS employeeNo,
+            pri.monthly_report_id   AS monthlyReportId,
+            pri.approved_at         AS approvedAt,
+            pri.sent_at             AS sentAt,
+            sender.full_name        AS sentByName,
+            hs.note                 AS sentNote,
+            pri.net_payable_amount  AS netPayableAmount,
+            pri.total_net_earnings  AS totalNetEarnings
+        FROM payroll_run_items pri
+        JOIN employees e     ON e.id  = pri.employee_id
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        LEFT JOIN users sender ON sender.id = pri.sent_by
+        LEFT JOIN LATERAL (
+            SELECT h.note
+            FROM payroll_run_item_handovers h
+            WHERE h.payroll_run_item_id = pri.id AND h.event = 'SENT'
+            ORDER BY h.occurred_at DESC
+            LIMIT 1
+        ) hs ON TRUE
+        WHERE pr.report_year  = :year
+          AND pr.report_month = :month
+          AND pri.archived_at IS NULL
+          AND pri.status = 'SENT'
+        """,
+        countQuery = """
+        SELECT COUNT(pri.id)
+        FROM payroll_run_items pri
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        WHERE pr.report_year  = :year
+          AND pr.report_month = :month
+          AND pri.archived_at IS NULL
+          AND pri.status = 'SENT'
+        """,
+        nativeQuery = true)
+    Page<SentPayrollRow> findSentByYearAndMonth(@Param("year") int year,
+                                                @Param("month") int month,
+                                                Pageable pageable);
+
+    /** Months of one year that hold at least one SENT obračun, with how many. */
+    @Query(value = """
+        SELECT pr.report_month AS month, COUNT(*) AS sentCount
+        FROM payroll_run_items pri
+        JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+        WHERE pr.report_year = :year
+          AND pri.archived_at IS NULL
+          AND pri.status = 'SENT'
+        GROUP BY pr.report_month
+        ORDER BY pr.report_month
+        """, nativeQuery = true)
+    List<MonthSentCount> findMonthsWithSent(@Param("year") int year);
+
+    interface MonthSentCount {
+        Integer getMonth();
+        Long getSentCount();
+    }
 
     /** Returns last 3 payroll run items touched by the current user in the given month. */
     @Query(value = """
@@ -297,7 +373,7 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
         WHERE pri.employee.id = :employeeId
           AND YEAR(pri.period) = :year
           AND MONTH(pri.period) = :month
-          AND pri.status IN ('LOCKED', 'APPROVED')
+          AND pri.status IN ('LOCKED', 'SENT', 'APPROVED')
           AND pri.archivedAt IS NULL
         """)
     long countClosedForEmployeeAndMonth(@Param("employeeId") Long employeeId,
@@ -379,6 +455,7 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
                    COUNT(*)                                      AS item_count,
                    COUNT(*) FILTER (WHERE i.status = 'DRAFT')    AS draft_count,
                    COUNT(*) FILTER (WHERE i.status = 'APPROVED') AS approved_count,
+                   COUNT(*) FILTER (WHERE i.status = 'SENT')     AS sent_count,
                    COUNT(*) FILTER (WHERE i.status = 'LOCKED')   AS locked_count,
                    SUM(i.net_payable_amount)                     AS total_net_payable,
                    SUM(i.total_net_earnings)                     AS total_net_earnings
@@ -395,6 +472,7 @@ public interface PayrollRunItemRepository extends JpaRepository<PayrollRunItem, 
                t.item_count         AS itemCount,
                t.draft_count        AS draftCount,
                t.approved_count     AS approvedCount,
+               t.sent_count         AS sentCount,
                t.locked_count       AS lockedCount,
                t.total_net_payable  AS totalNetPayable,
                t.total_net_earnings AS totalNetEarnings,

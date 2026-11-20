@@ -79,5 +79,12 @@ public enum OutboxEventType {
      */
     PAYROLL_CHANGE_REQUEST_CREATED,
     PAYROLL_CHANGE_REQUEST_ACCEPTED,
-    PAYROLL_CHANGE_REQUEST_DECLINED
+    PAYROLL_CHANGE_REQUEST_DECLINED,
+    /**
+     * The handover: a whole month of obračuni, or one obračun alone, moved to
+     * SENT. In-app AND email — the director is the one reader who may not be at
+     * a screen when the month arrives, and the handover is what they wait on.
+     */
+    PAYROLL_MONTH_SENT,
+    PAYROLL_ITEM_SENT
 }

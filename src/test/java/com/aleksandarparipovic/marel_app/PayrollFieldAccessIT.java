@@ -41,6 +41,12 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         SecurityContextHolder.clearContext();
     }
 
+    /*
+     * The privileged reader here is "developer", not "admin": since V72 the
+     * admin role works only with SENT payrolls, and these tests exercise field
+     * access on months in every status. The developer seat has the same
+     * canSeeAmounts answer without the sent-only filter.
+     */
     private void signedInAs(String roleName) {
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("u", "p",
@@ -59,7 +65,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("payroll bypasses the table entirely")
     void payrollSeesEverything() {
-        signedInAs("admin");
+        signedInAs("developer");
 
         // Not "has rows granting everything" — no rows at all, and still yes.
         assertThat(repository.findForRole("admin")).isEmpty();
@@ -70,7 +76,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("a granted line becomes visible to that role and to nobody else")
     void grantIsPerRole() {
-        signedInAs("admin");
+        signedInAs("developer");
         service.set("MEAL_ALLOWANCE", "supervisor", true, false);
 
         signedInAs("supervisor");
@@ -84,7 +90,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("editing without seeing is not a state that can be stored")
     void editRequiresView() {
-        signedInAs("admin");
+        signedInAs("developer");
 
         var saved = service.set("MEAL_ALLOWANCE", "supervisor", false, true);
 
@@ -104,7 +110,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         var scenario = fixture.scenario().build();
         Long monthlyReportId = scenario.monthlyReport().getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
         var full = payrollRunItemService.getDetails(monthlyReportId);
         int fullLineCount = full.getAdjustments().stream()
                 .mapToInt(section -> section.getAdjustments().size()).sum();
@@ -148,7 +154,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         var scenario = fixture.scenario().build();
         Long monthlyReportId = scenario.monthlyReport().getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
 
         // A HIDDEN LINE HAS TO CARRY MONEY, or the assertion proves nothing:
         // with every adjustment at zero the two totals agree no matter what is
@@ -190,12 +196,15 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         Long monthlyReportId = scenario.monthlyReport().getId();
         Long itemId = scenario.item().getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
         service.set("OTHER", "supervisor", true, false);
         service.set(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS, "supervisor", true, false);
 
         setAmount(itemId, scenario.adjustment("OTHER").getId(), "1000.00");
         payrollRunItemService.submit(itemId, "predato");
+        // And handed over: since V72 payroll works from SENT — an APPROVED month
+        // has not reached them yet, so nothing below could happen on one.
+        payrollRunItemService.sendOne(itemId, "ide ranije");
 
         var liveBefore = payrollRunItemService.getDetails(monthlyReportId)
                 .getSummary().getTotalNetEarnings();
@@ -205,7 +214,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
 
         // Payroll keeps working after the handover — which is exactly the case
         // the frozen view exists for.
-        signedInAs("admin");
+        signedInAs("developer");
         setAmount(itemId, scenario.adjustment("OTHER").getId(), "7777.00");
         // The live payroll really did move, or the assertions below prove nothing.
         assertThat(payrollRunItemService.getDetails(monthlyReportId).getSummary().getTotalNetEarnings())
@@ -226,16 +235,17 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         assertThat(lineOf(frozen.get(), "MEAL_ALLOWANCE").get("amount")).isNull();
         assertThat(lineOf(frozen.get(), "MEAL_ALLOWANCE").get("valueHidden")).isEqualTo(true);
 
-        // A lock applied afterwards is not theirs to learn about.
-        signedInAs("admin");
+        // A lock applied afterwards is not theirs to learn about — they read the
+        // month as still "predat".
+        signedInAs("developer");
         payrollRunItemService.lock(itemId);
         signedInAs("supervisor");
         assertThat(summaryOf(payrollRunItemService.frozenDetails(monthlyReportId).orElseThrow())
-                .get("status")).isEqualTo("APPROVED");
+                .get("status")).isEqualTo("SENT");
 
         // Back in draft, the frozen view stops applying and they see live
         // figures again — filtered to the same lines.
-        signedInAs("admin");
+        signedInAs("developer");
         payrollRunItemService.unlock(itemId);
         payrollRunItemService.returnToDraft(itemId, "vraceno");
 
@@ -254,7 +264,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         var scenario = fixture.scenario().build();
         Long itemId = scenario.item().getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
         service.set("OTHER", "supervisor", true, true);
 
         // Submitted BY the restricted reader — the case where the record could
@@ -262,7 +272,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         signedInAs("supervisor");
         payrollRunItemService.submit(itemId, "predato");
 
-        signedInAs("admin");
+        signedInAs("developer");
         Long handoverId = payrollRunItemService.getHandovers(itemId).get(0).id();
         var snapshot = payrollRunItemService.getHandoverSnapshot(handoverId).orElseThrow();
 
@@ -284,7 +294,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         Long itemId = scenario.item().getId();
         Long otherId = scenario.adjustment("OTHER").getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
         service.set("OTHER", "supervisor", true, false);
 
         signedInAs("supervisor");
@@ -303,12 +313,12 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
                 .hasMessageContaining("OTHER");
 
         // Granted for editing, the same line goes through.
-        signedInAs("admin");
+        signedInAs("developer");
         service.set("OTHER", "supervisor", true, true);
         signedInAs("supervisor");
         setAmount(itemId, otherId, "4321.00");
 
-        signedInAs("admin");
+        signedInAs("developer");
         assertThat(payrollRunItemService.getDetails(monthlyReportId).getAdjustments().stream()
                 .flatMap(s -> s.getAdjustments().stream())
                 .filter(a -> "OTHER".equals(a.getCategoryCode()))
@@ -323,7 +333,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         Long monthlyReportId = scenario.monthlyReport().getId();
         Long itemId = scenario.item().getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
         // Readable, and not editable. The case sloj C exists for.
         service.set(PayrollFieldAccessService.FIELD_HOURLY_RATE, "supervisor", true, false);
         service.set(PayrollFieldAccessService.FIELD_TOTAL_NET_EARNINGS, "supervisor", true, false);
@@ -342,7 +352,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
                 .hasMessageContaining("ukupnu zaradu");
 
         // Payroll is not asked.
-        signedInAs("admin");
+        signedInAs("developer");
         assertThat(payrollRunItemService.getDetails(monthlyReportId).getPermissions()
                 .isCanEditTotalNetEarnings()).isTrue();
     }
@@ -353,7 +363,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         var scenario = fixture.scenario().build();
         Long monthlyReportId = scenario.monthlyReport().getId();
 
-        signedInAs("admin");
+        signedInAs("developer");
         var forPayroll = payrollRunItemService.getDetails(monthlyReportId).getPermissions();
         // These were all false for everybody, always: the check compared
         // authorities against ROLE_ADMIN while they are issued lowercase.
@@ -369,7 +379,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
         assertThat(forSupervisor.isCanLock()).isFalse();
         assertThat(forSupervisor.isCanEditAdjustments()).isFalse();
 
-        signedInAs("admin");
+        signedInAs("developer");
         service.set("OTHER", "supervisor", true, true);
         signedInAs("supervisor");
         assertThat(payrollRunItemService.getDetails(monthlyReportId).getPermissions()
@@ -423,7 +433,7 @@ class PayrollFieldAccessIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("payroll's own roles cannot be given a row")
     void payrollRolesAreNotConfigurable() {
-        signedInAs("admin");
+        signedInAs("developer");
 
         // An administrator must not be able to switch payroll's own access off.
         assertThatThrownBy(() -> service.set("MEAL_ALLOWANCE", "admin", false, false))

@@ -39,7 +39,7 @@ public class PayrollVisibilityPolicy {
 
     /** Reported instead of LOCKED to anyone who may not know about the lock. */
     static final String LOCKED = "LOCKED";
-    static final String APPROVED = "APPROVED";
+    static final String SENT = "SENT";
 
     /**
      * Whether a real signed-in user is behind this call.
@@ -109,12 +109,30 @@ public class PayrollVisibilityPolicy {
 
     /**
      * The status to report. Identity for privileged users; LOCKED collapses into
-     * APPROVED for everyone else, so "ready" is all they ever see.
+     * SENT for everyone else — once they handed the month over, "predat" is all
+     * they ever learn, and the lock stays payroll's own step.
      */
     public String visibleStatus(String status) {
         if (canSeeAmounts() || status == null) {
             return status;
         }
-        return LOCKED.equalsIgnoreCase(status) ? APPROVED : status;
+        return LOCKED.equalsIgnoreCase(status) ? SENT : status;
+    }
+
+    /**
+     * Whether this reader works only with handed-over payrolls.
+     *
+     * <p>The director reads payrolls to lock and pay them, and a month the
+     * supervisors are still preparing is noise they asked not to see: DRAFT and
+     * APPROVED items are withheld from their lists and refused as details until
+     * the month is SENT. The developer account keeps the full view — it is the
+     * engineering seat, not a reader of pay.
+     */
+    public boolean seesOnlySentPayrolls() {
+        if (!hasAuthenticatedUser()) {
+            return false;
+        }
+        java.util.Set<String> roles = currentRoleNames();
+        return roles.contains("admin") && !roles.contains("developer");
     }
 }

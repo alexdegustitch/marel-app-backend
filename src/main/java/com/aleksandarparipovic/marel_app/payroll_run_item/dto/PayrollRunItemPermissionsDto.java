@@ -26,6 +26,13 @@ public class PayrollRunItemPermissionsDto {
     private final boolean canApprove;
 
     /**
+     * Whether THIS reader may hand THIS payroll over right now: the sender's
+     * permission on an APPROVED payroll. The send itself still asks for the
+     * password and, alone, a reason.
+     */
+    private final boolean canSend;
+
+    /**
      * The two item-level money figures, answered per reader.
      *
      * <p>They are not adjustment lines, so per-line access cannot carry them;

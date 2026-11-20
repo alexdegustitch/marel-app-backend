@@ -192,4 +192,51 @@ public interface EmployeeRepository
     List<com.aleksandarparipovic.marel_app.search.dto.EmployeeSearchRow> searchFolded(
             @Param("folded") String folded);
 
+    /**
+     * Workers employed during the month — the whole month or part of it — who
+     * have no obračun for it. Sending a month with such a worker is refused:
+     * complete-looking payroll with somebody missing is exactly what the
+     * director cannot notice.
+     *
+     * <p>"Employed during the month" is read from the employment-period history
+     * where it exists, and from the employee's own dates otherwise — a worker
+     * who left mid-month counts even though is_active has since gone false, and
+     * one hired for NEXT month does not count yet. Archived workers never count.
+     *
+     * <p>An obračun created and archived does not satisfy the check, matching
+     * every list that ignores archived items.
+     */
+    @Query(value = """
+        SELECT e.full_name
+        FROM employees e
+        WHERE e.archived_at IS NULL
+          AND (
+              EXISTS (
+                  SELECT 1 FROM employee_employment_periods p
+                  WHERE p.employee_id = e.id
+                    AND p.started_on <= :monthEnd
+                    AND (p.ended_on IS NULL OR p.ended_on >= :monthStart)
+              )
+              OR (
+                  e.is_active = TRUE
+                  AND e.employment_start_date <= :monthEnd
+                  AND (e.employment_end_date IS NULL OR e.employment_end_date >= :monthStart)
+              )
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM payroll_run_items pri
+              JOIN payroll_runs pr ON pr.id = pri.payroll_run_id
+              WHERE pri.employee_id = e.id
+                AND pr.report_year  = :year
+                AND pr.report_month = :month
+                AND pri.archived_at IS NULL
+          )
+        ORDER BY e.full_name
+        """, nativeQuery = true)
+    List<String> findEmployedWithoutPayrollForMonth(@Param("year") int year,
+                                                    @Param("month") int month,
+                                                    @Param("monthStart") LocalDate monthStart,
+                                                    @Param("monthEnd") LocalDate monthEnd);
+
 }

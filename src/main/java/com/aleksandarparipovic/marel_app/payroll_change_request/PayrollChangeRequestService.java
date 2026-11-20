@@ -48,8 +48,12 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class PayrollChangeRequestService {
 
-    /** The two the month can be asked back from. A DRAFT is already open. */
-    private static final Set<String> REQUESTABLE_STATUSES = Set.of("APPROVED", "LOCKED");
+    /**
+     * The two the month can be asked back from. A DRAFT is already open, and an
+     * APPROVED month has not left the shop floor — the supervisor returns it to
+     * draft themselves instead of asking.
+     */
+    private static final Set<String> REQUESTABLE_STATUSES = Set.of("SENT", "LOCKED");
 
     /** A page nobody asked for and nothing renders. */
     private static final int MAX_PAGE_SIZE = 200;

@@ -94,7 +94,9 @@ public class NotificationEmailComposer {
     }
 
     private String htmlBody(DeliveryBatchProcessor.PendingSend send, OrderEmailView orderView) {
-        String link = linkFor(send.entityType(), send.entityId());
+        String link = "PAYROLL_RUN_ITEM".equals(send.entityType())
+                ? payrollLinkFor(send.payload())
+                : linkFor(send.entityType(), send.entityId());
 
         StringBuilder html = new StringBuilder()
                 .append("<div style=\"font-family:-apple-system,Segoe UI,Roboto,sans-serif;")
@@ -205,6 +207,28 @@ public class NotificationEmailComposer {
             log.error("[NotificationEmailComposer] orderView nije mogao da se pročita", ex);
             return null;
         }
+    }
+
+    /**
+     * The payroll handover's link, built from the payload rather than the
+     * entity id: one payroll opens its own page, a whole month opens the
+     * sent-payrolls list — both need query parameters, which {@code
+     * ROUTE_BY_ENTITY}'s route-plus-id shape cannot carry.
+     */
+    private String payrollLinkFor(JsonNode payload) {
+        if (payload == null) {
+            return null;
+        }
+        if (payload.hasNonNull("payrollRunItemId")
+                && payload.hasNonNull("monthlyReportId") && payload.hasNonNull("employeeId")) {
+            return webAppUrl + "/#/app/employee-payroll?employeeId=" + payload.get("employeeId").asLong()
+                    + "&monthlyReportId=" + payload.get("monthlyReportId").asLong();
+        }
+        if (payload.hasNonNull("year") && payload.hasNonNull("month")) {
+            return webAppUrl + "/#/app/submitted-payrolls?year=" + payload.get("year").asInt()
+                    + "&month=" + payload.get("month").asInt();
+        }
+        return null;
     }
 
     private String linkFor(String entityType, Long entityId) {

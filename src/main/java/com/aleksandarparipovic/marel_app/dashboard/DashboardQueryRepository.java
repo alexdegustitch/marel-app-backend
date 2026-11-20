@@ -32,9 +32,13 @@ public class DashboardQueryRepository {
     private final NamedParameterJdbcTemplate jdbc;
 
     // ── Payroll handed over by the shop floor ───────────────────────────────
+    //
+    // SENT, not APPROVED: since V72 an APPROVED month has not left the shop
+    // floor yet, and the director's "waiting on me" pile is exactly the
+    // handed-over-but-not-locked one.
 
     public long countReadyPayrolls() {
-        return count("SELECT COUNT(*) FROM payroll_run_items WHERE status = 'APPROVED'",
+        return count("SELECT COUNT(*) FROM payroll_run_items WHERE status = 'SENT' AND archived_at IS NULL",
                 new MapSqlParameterSource());
     }
 
@@ -44,7 +48,7 @@ public class DashboardQueryRepository {
                        pri.period, pri.updated_at
                 FROM payroll_run_items pri
                 JOIN employees e ON e.id = pri.employee_id
-                WHERE pri.status = 'APPROVED'
+                WHERE pri.status = 'SENT' AND pri.archived_at IS NULL
                 ORDER BY pri.period DESC NULLS LAST, pri.updated_at DESC NULLS LAST, pri.id DESC
                 LIMIT :limit
                 """,

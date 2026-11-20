@@ -180,6 +180,7 @@ class YearViewsReadAYearInOneLookIT extends AbstractIntegrationTest {
         var open = fixture.scenario().period(APRIL).build();
         var done = fixture.scenario().period(APRIL).inRun(open.payrollRun()).build();
         payrollRunItemService.submit(done.item().getId(), null);
+        payrollRunItemService.sendOne(done.item().getId(), "ide ranije");
         payrollRunItemService.lock(done.item().getId());
 
         signedInAs(newUser("admin", "admin"));
@@ -191,6 +192,7 @@ class YearViewsReadAYearInOneLookIT extends AbstractIntegrationTest {
         assertThat(april.itemCount()).isEqualTo(2);
         assertThat(april.draftCount()).isEqualTo(1);
         assertThat(april.approvedCount()).isZero();
+        assertThat(april.sentCount()).isZero();
         assertThat(april.lockedCount()).isEqualTo(1);
         BigDecimal expected = payrollRunItemService.findById(open.item().getId()).getNetPayableAmount()
                 .add(payrollRunItemService.findById(done.item().getId()).getNetPayableAmount());
@@ -204,6 +206,7 @@ class YearViewsReadAYearInOneLookIT extends AbstractIntegrationTest {
         var open = fixture.scenario().period(APRIL).build();
         var done = fixture.scenario().period(APRIL).inRun(open.payrollRun()).build();
         payrollRunItemService.submit(done.item().getId(), null);
+        payrollRunItemService.sendOne(done.item().getId(), "ide ranije");
         payrollRunItemService.lock(done.item().getId());
 
         signedInAs(newUser("supervisor", "supervisor"));
@@ -213,7 +216,10 @@ class YearViewsReadAYearInOneLookIT extends AbstractIntegrationTest {
         var april = overview.months().get(3);
         assertThat(april.itemCount()).isEqualTo(2);
         assertThat(april.draftCount()).isEqualTo(1);
-        assertThat(april.approvedCount()).isEqualTo(1);
+        assertThat(april.approvedCount()).isZero();
+        // The locked month counts as "predat" for the floor — the last thing
+        // they did with it — never as the lock itself.
+        assertThat(april.sentCount()).isEqualTo(1);
         assertThat(april.lockedCount()).isNull();
         assertThat(april.totalNetPayable()).isNull();
         assertThat(april.totalNetEarnings()).isNull();
@@ -244,6 +250,7 @@ class YearViewsReadAYearInOneLookIT extends AbstractIntegrationTest {
     void payrollIsFoundByAFragmentWithVisibleStatus() {
         var done = fixture.scenario().period(APRIL).build();
         payrollRunItemService.submit(done.item().getId(), null);
+        payrollRunItemService.sendOne(done.item().getId(), "ide ranije");
         payrollRunItemService.lock(done.item().getId());
         String fragment = done.employee().getEmployeeNo().substring(3).toLowerCase();
 
@@ -257,7 +264,7 @@ class YearViewsReadAYearInOneLookIT extends AbstractIntegrationTest {
         PayrollRunSearchHit forFloor = seenByFloor.stream()
                 .filter(h -> h.monthlyReportId().equals(done.monthlyReport().getId())).findFirst().orElseThrow();
         assertThat(forPayroll.status()).isEqualTo("LOCKED");
-        assertThat(forFloor.status()).isEqualTo("APPROVED");
+        assertThat(forFloor.status()).isEqualTo("SENT");
         assertThat(forPayroll.employeeId()).isEqualTo(done.employee().getId());
         assertThat(forPayroll.month()).isEqualTo(4);
     }

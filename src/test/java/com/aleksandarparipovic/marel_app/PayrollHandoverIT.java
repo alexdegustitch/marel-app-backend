@@ -42,7 +42,7 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
     }
 
     @Test
-    @DisplayName("handing over moves DRAFT to APPROVED and records one step")
+    @DisplayName("approving moves DRAFT to APPROVED and records one step")
     void submitRecordsTheHandover() {
         var scenario = fixture.scenario().build();
         Long id = scenario.item().getId();
@@ -50,10 +50,11 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
         var submitted = payrollRunItemService.submit(id, "Gotovo za jul.");
 
         assertThat(submitted.getStatus()).isEqualTo("APPROVED");
+        assertThat(submitted.getApprovedAt()).isNotNull();
 
         List<PayrollRunItemHandover> steps = handoversOf(id);
         assertThat(steps).hasSize(1);
-        assertThat(steps.getFirst().getEvent()).isEqualTo("SUBMITTED");
+        assertThat(steps.getFirst().getEvent()).isEqualTo("APPROVED");
         assertThat(steps.getFirst().getStatusBefore()).isEqualTo("DRAFT");
         assertThat(steps.getFirst().getStatusAfter()).isEqualTo("APPROVED");
         assertThat(steps.getFirst().getNote()).isEqualTo("Gotovo za jul.");
@@ -74,7 +75,7 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
         List<PayrollRunItemHandover> steps = handoversOf(id);
         assertThat(steps).hasSize(3);
         assertThat(steps.stream().map(PayrollRunItemHandover::getEvent))
-                .containsExactlyInAnyOrder("SUBMITTED", "RETURNED", "SUBMITTED");
+                .containsExactlyInAnyOrder("APPROVED", "RETURNED", "APPROVED");
         assertThat(steps.stream().map(PayrollRunItemHandover::getNote))
                 .contains("prva predaja", "fali prekovremeni", "druga predaja");
     }
@@ -137,23 +138,30 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
         assertThatThrownBy(() -> payrollRunItemService.lock(id))
                 .hasMessageContaining("predat");
 
+        // Approving alone is still not the handover — payroll freezes what was
+        // SENT, and nothing earlier.
         payrollRunItemService.submit(id, null);
+        assertThatThrownBy(() -> payrollRunItemService.lock(id))
+                .hasMessageContaining("predat");
+
+        payrollRunItemService.sendOne(id, "ide ranije");
         assertThat(payrollRunItemService.lock(id).getStatus()).isEqualTo("LOCKED");
     }
 
     @Test
     @DisplayName("unlocking undoes the lock only — it does not undo the handover")
-    void unlockReturnsToApproved() {
+    void unlockReturnsToSent() {
         var scenario = fixture.scenario().build();
         Long id = scenario.item().getId();
 
         payrollRunItemService.submit(id, null);
+        payrollRunItemService.sendOne(id, "ide ranije");
         payrollRunItemService.lock(id);
 
-        // Back to APPROVED, not DRAFT: dropping to DRAFT would silently undo the
-        // supervisor's handover, which is a different decision with a different
+        // Back to SENT, not DRAFT: dropping further would silently undo the
+        // supervisors' handover, which is a different decision with a different
         // owner.
-        assertThat(payrollRunItemService.unlock(id).getStatus()).isEqualTo("APPROVED");
+        assertThat(payrollRunItemService.unlock(id).getStatus()).isEqualTo("SENT");
     }
 
     @Test
@@ -210,17 +218,18 @@ class PayrollHandoverIT extends AbstractIntegrationTest {
         payrollRunItemService.submit(id, null);
         var afterSubmit = payrollRunItemService.getHandovers(id);
         assertThat(afterSubmit).hasSize(2);
-        assertThat(afterSubmit.getFirst().event()).isEqualTo("SUBMITTED");
+        assertThat(afterSubmit.getFirst().event()).isEqualTo("APPROVED");
         assertThat(afterSubmit.getLast().event()).isEqualTo("CREATED");
     }
 
     @Test
-    @DisplayName("a locked month cannot be handed over again")
+    @DisplayName("a locked month cannot be approved again")
     void lockedCannotBeSubmitted() {
         var scenario = fixture.scenario().build();
         Long id = scenario.item().getId();
 
         payrollRunItemService.submit(id, null);
+        payrollRunItemService.sendOne(id, "ide ranije");
         payrollRunItemService.lock(id);
 
         assertThatThrownBy(() -> payrollRunItemService.submit(id, null))

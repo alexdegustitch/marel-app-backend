@@ -48,6 +48,8 @@ class HandoverVisibilityTest {
     void isClosed() {
         // Not a count for its own sake: adding an event and adding it here are
         // two different acts, and this makes the second one deliberate.
-        assertThat(PayrollRunItemHandover.EVENTS_VISIBLE_TO_SUBMITTER).hasSize(6);
+        // V72 added APPROVED (the finish) and SENT (the handover) to the
+        // supervisor's own workflow.
+        assertThat(PayrollRunItemHandover.EVENTS_VISIBLE_TO_SUBMITTER).hasSize(8);
     }
 }
