@@ -79,7 +79,9 @@ public class AuthController {
                 clientIp(httpRequest),
                 userAgent(httpRequest)
         );
-        writeRefreshCookie(httpResponse, response.getRefreshToken());
+        // Absent = remembered: older clients sent no flag and always got a persistent cookie.
+        boolean remember = request.getRememberMe() == null || request.getRememberMe();
+        writeRefreshCookie(httpResponse, response.getRefreshToken(), remember);
         return ResponseEntity.ok(response);
     }
 
@@ -292,7 +294,8 @@ public class AuthController {
                 clientIp(httpRequest),
                 userAgent(httpRequest)
         );
-        writeRefreshCookie(httpResponse, response.getRefreshToken());
+        // Google sign-in has no checkbox; it keeps the pre-flag behaviour (remembered).
+        writeRefreshCookie(httpResponse, response.getRefreshToken(), true);
         return ResponseEntity.ok(response);
     }
 
@@ -308,7 +311,8 @@ public class AuthController {
                 clientIp(httpRequest),
                 userAgent(httpRequest)
         );
-        writeRefreshCookie(httpResponse, response.getRefreshToken());
+        // Rotation re-issues the SAME kind of cookie the session signed in with.
+        writeRefreshCookie(httpResponse, response.getRefreshToken(), rememberChoiceFrom(httpRequest));
         return ResponseEntity.ok(response);
     }
 
@@ -355,25 +359,70 @@ public class AuthController {
         throw new IllegalArgumentException("Refresh token is required");
     }
 
-    private void writeRefreshCookie(HttpServletResponse response, String refreshToken) {
-        ResponseCookie cookie = ResponseCookie.from(refreshTokenCookieName, refreshToken)
+    /**
+     * "Sačuvaj me prijavljenog".
+     *
+     * <p>Remembered (the default, and the only behaviour before the flag
+     * existed): the refresh cookie carries Max-Age and survives browser
+     * restarts for the configured TTL. Not remembered: NO Max-Age, so the
+     * browser drops it when it closes and the next visit starts at the login.
+     *
+     * <p>The browser never tells the server which kind an incoming cookie was,
+     * yet /refresh rotates the cookie and must re-issue the SAME kind. The
+     * choice therefore travels in a companion HttpOnly cookie with the same
+     * scope and lifetime — not in the refresh_tokens table, which would be a
+     * schema change for one presentation bit.
+     */
+    private void writeRefreshCookie(HttpServletResponse response, String refreshToken, boolean remember) {
+        ResponseCookie.ResponseCookieBuilder cookie = ResponseCookie.from(refreshTokenCookieName, refreshToken)
                 .httpOnly(true)
                 .secure(refreshTokenCookieSecure)
                 .sameSite(refreshTokenCookieSameSite)
-                .path("/api/auth")
-                .maxAge(refreshTokenTtlSeconds)
-                .build();
-        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+                .path("/api/auth");
+        ResponseCookie.ResponseCookieBuilder choice = ResponseCookie.from(persistChoiceCookieName(), remember ? "1" : "0")
+                .httpOnly(true)
+                .secure(refreshTokenCookieSecure)
+                .sameSite(refreshTokenCookieSameSite)
+                .path("/api/auth");
+        if (remember) {
+            cookie.maxAge(refreshTokenTtlSeconds);
+            choice.maxAge(refreshTokenTtlSeconds);
+        }
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.build().toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, choice.build().toString());
+    }
+
+    private String persistChoiceCookieName() {
+        return refreshTokenCookieName + "_persist";
+    }
+
+    /**
+     * The remember choice the session was issued with. Absent means remembered:
+     * every cookie written before this flag existed was persistent, and the
+     * companion travels with the refresh cookie from the first sign-in on.
+     */
+    private boolean rememberChoiceFrom(HttpServletRequest httpRequest) {
+        Cookie[] cookies = httpRequest.getCookies();
+        if (cookies != null) {
+            for (Cookie cookie : cookies) {
+                if (persistChoiceCookieName().equals(cookie.getName())) {
+                    return !"0".equals(cookie.getValue());
+                }
+            }
+        }
+        return true;
     }
 
     private void clearRefreshCookie(HttpServletResponse response) {
-        ResponseCookie cookie = ResponseCookie.from(refreshTokenCookieName, "")
-                .httpOnly(true)
-                .secure(refreshTokenCookieSecure)
-                .sameSite(refreshTokenCookieSameSite)
-                .path("/api/auth")
-                .maxAge(0)
-                .build();
-        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        for (String name : new String[] { refreshTokenCookieName, persistChoiceCookieName() }) {
+            ResponseCookie cookie = ResponseCookie.from(name, "")
+                    .httpOnly(true)
+                    .secure(refreshTokenCookieSecure)
+                    .sameSite(refreshTokenCookieSameSite)
+                    .path("/api/auth")
+                    .maxAge(0)
+                    .build();
+            response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        }
     }
 }
