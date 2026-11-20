@@ -7,6 +7,9 @@
 -- Drugi: spisak tabela čiji je audit trigger UGAŠEN (prazno = sve beleži).
 -- Treći: kad je poslednji red ušao u audit_logs — ako je trigger ugašen, ovo je
 --        trenutak od kog trag više ne postoji.
+-- Četvrti: prekidač app.audit_off (V71) u OVOJ sesiji. On je per-sesija, pa
+--        ovde vidiš samo svoju: trigeri mogu biti aktivni, a da tvoja sesija
+--        ipak ne upisuje trag jer je prekidač uključen.
 -- =============================================================================
 
 SELECT CASE t.tgenabled
@@ -38,3 +41,10 @@ SELECT c.relname AS tabela,
 SELECT count(*)        AS audit_logs_redova,
        max(change_time) AS poslednji_upis
   FROM public.audit_logs;
+
+SELECT coalesce(nullif(current_setting('app.audit_off', true), ''), '(nije set)')
+           AS prekidac_u_ovoj_sesiji,
+       CASE WHEN current_setting('app.audit_off', true) = 'on'
+            THEN 'OVA sesija NE upisuje audit trag'
+            ELSE 'ova sesija upisuje audit trag normalno'
+       END AS znaci;
