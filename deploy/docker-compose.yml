@@ -1,0 +1,114 @@
+# Production stack: PostgreSQL + backend + Caddy (TLS, web frontend, reverse proxy).
+#
+# Lives on the server as /opt/marel/docker-compose.yml, next to:
+#   .env        - the real secrets (chmod 600, NEVER in git; template: .env.example)
+#   Caddyfile   - reverse proxy + static web config
+#   uploads/    - local file storage (bind-mounted, owned by uid 1000)
+#   web/        - frontend releases (web/releases/<sha>, symlink web/current)
+#   backups/    - pg_dump output (backup.sh)
+#
+# Deploys are done by deploy.sh (called from GitHub Actions), never by hand-editing
+# the image tag here: APP_IMAGE_TAG lives in .env so a rollback is one sed + up -d.
+
+name: marel
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marel_app
+      POSTGRES_USER: marel
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD missing from .env}
+    volumes:
+      # postgres:18+ keeps data in a version subdirectory under /var/lib/postgresql;
+      # mounting the old /var/lib/postgresql/data path makes the entrypoint refuse to start.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marel -d marel_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    # Deliberately NO ports: the database is reachable only from this compose
+    # network. psql from the host goes through: docker compose exec db psql ...
+
+  app:
+    image: ghcr.io/alexdegustitch/marel-app-backend:${APP_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    # Loopback only: lets deploy.sh and the host curl /actuator/health, without
+    # exposing the API to the internet except through Caddy.
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      TZ: Europe/Belgrade
+
+      # --- database ---
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/marel_app
+      SPRING_DATASOURCE_USERNAME: marel
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+
+      # --- security ---
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET missing from .env}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?BOOTSTRAP_ADMIN_PASSWORD missing from .env}
+      BOOTSTRAP_DEVELOPER_PASSWORD: ${BOOTSTRAP_DEVELOPER_PASSWORD:-}
+      REFRESH_COOKIE_SECURE: "true"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS missing from .env}
+      # Behind Caddy every request would otherwise look like it came from the
+      # proxy, and one wrong-password guesser would rate-limit the whole factory.
+      APP_SECURITY_LOGINRATELIMIT_TRUSTFORWARDEDHEADER: "true"
+
+      # --- URLs ---
+      WEB_APP_URL: ${WEB_APP_URL:?WEB_APP_URL missing from .env}
+
+      # --- Google OAuth ---
+      # Empty until filled in .env: the app starts, only "Continue with Google"
+      # is dead. Deliberately not :? so `up -d db caddy` works before they exist.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-https://api.spikytail.com/api/auth/google/callback}
+
+      # --- mail (Postmark; empty = logging adapter, nothing is sent) ---
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-no-reply@spikytail.com}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-SpikyTail}
+
+      # --- file storage ---
+      APP_STORAGE_TYPE: ${APP_STORAGE_TYPE:-local}
+      APP_UPLOAD_DIR: /data/uploads
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+
+      # --- AI assistant (empty = endpoint answers 503, feature off) ---
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./uploads:/data/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,28 @@
+# Caddy issues and renews the TLS certificates by itself (Let's Encrypt),
+# as long as both DNS records point at this server BEFORE the stack starts.
+
+spikytail.com {
+	encode zstd gzip
+	root * /srv/web/current
+
+	# Hashed Vite assets never change content under the same name.
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+	# index.html must always be revalidated, or users keep running old bundles.
+	header /index.html Cache-Control "no-cache"
+
+	# SPA fallback: /login, /privacy, ... are client-side routes.
+	try_files {path} /index.html
+	file_server
+}
+
+www.spikytail.com {
+	redir https://spikytail.com{uri} permanent
+}
+
+api.spikytail.com {
+	encode zstd gzip
+	# WebSocket (/ws) is proxied by the same directive - no extra config needed.
+	# Caddy sets X-Forwarded-For/Proto, which the app reads
+	# (server.forward-headers-strategy=native + rate-limit trust flag).
+	reverse_proxy app:8080
+}
