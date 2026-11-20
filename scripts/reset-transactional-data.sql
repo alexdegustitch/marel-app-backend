@@ -12,7 +12,7 @@
 --           departments, shifts, compensation_schemes,
 --           work_code_categories (+ translations, mappings, mapping_types,
 --           scheme_rules), bonus_categories, bonus_eligibility_rules,
---           bonus_min_hours_rules (+ history), livac/plastic kategorije,
+--           bonus_min_hours_rules (+ history),
 --           payroll_adjustment_categories (+ translations, scheme_rules,
 --           sections), payroll_time_adjustment_categories,
 --           employee_payroll_value_definitions, performance_marks (šifarnik
@@ -83,16 +83,14 @@ DELETE FROM work_shifts;
 -- 6) Vremena izrade
 --    manufacturing_time_requests i product_manufacturing_times se referenciraju
 --    MEĐUSOBNO, a CHECK (chk_manufacturing_time_requests_result_state) ne da da
---    se COMPLETED zahtevu skine rezultat — zato jedan TRUNCATE preko svih pet
---    tabela odjednom (sve međusobne FK veze su unutar ovog skupa, spolja ih
+--    se COMPLETED zahtevu skine rezultat — zato jedan TRUNCATE preko sve tri
+--    tabele odjednom (sve međusobne FK veze su unutar ovog skupa, spolja ih
 --    niko ne referencira). Mora PRE brisanja naloga: zahtevi drže FK na
 --    production_order_line_items.
 -- ----------------------------------------------------------------------------
 TRUNCATE manufacturing_time_requests,
          product_manufacturing_times,
-         product_manufacturing_time_operations,
-         manufacturing_product_times,
-         manufacturing_time_operations;
+         product_manufacturing_time_operations;
 
 -- ----------------------------------------------------------------------------
 -- 7) Radni nalozi (proizvodni + uzorci), beleške, rokovi, mejlovi, zahtevi
