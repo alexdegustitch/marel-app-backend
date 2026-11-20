@@ -97,4 +97,18 @@ public interface EmployeeCompensationSchemeHistoryRepository
             ORDER BY h.validFrom ASC
             """)
     List<EmployeeCompensationSchemeHistory> lockHistoryFor(@Param("employeeId") Long employeeId);
+
+    /**
+     * Whether any employee is on this scheme on {@code date} or will be after it —
+     * the guard that refuses archiving a scheme still (or about to be) in force.
+     * Closed, purely historical periods do not block: payroll history references
+     * the scheme by id and an archived scheme stays readable.
+     */
+    @Query("""
+            SELECT COUNT(h) > 0 FROM EmployeeCompensationSchemeHistory h
+            WHERE h.compensationScheme.id = :schemeId
+              AND h.archivedAt IS NULL
+              AND (h.validUntil IS NULL OR h.validUntil >= :date)
+            """)
+    boolean existsInForceOnOrAfter(@Param("schemeId") Long schemeId, @Param("date") LocalDate date);
 }

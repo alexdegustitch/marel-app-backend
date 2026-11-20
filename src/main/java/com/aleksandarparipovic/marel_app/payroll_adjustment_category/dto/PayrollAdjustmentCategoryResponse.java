@@ -22,6 +22,10 @@ public class PayrollAdjustmentCategoryResponse {
      */
     private final String nameEn;
     private final String sectionCode;
+    /** The section's display name (payroll_adjustment_sections.name), e.g. "Razduženja". */
+    private final String sectionName;
+    /** PLUS, MINUS or NONE — what a line in this section does to the totals. */
+    private final String sectionDirection;
     private final Integer sectionOrder;
     private final Integer sortOrder;
     private final String impactCode;
@@ -48,6 +52,8 @@ public class PayrollAdjustmentCategoryResponse {
         this.name = c.getName();
         this.nameEn = nameEn;
         this.sectionCode = c.getSection().getCode();
+        this.sectionName = c.getSection().getName();
+        this.sectionDirection = c.getSection().getDirection();
         this.sectionOrder = c.getSection().getSortOrder();
         this.sortOrder = c.getSortOrder();
         this.impactCode = c.getImpactCode();

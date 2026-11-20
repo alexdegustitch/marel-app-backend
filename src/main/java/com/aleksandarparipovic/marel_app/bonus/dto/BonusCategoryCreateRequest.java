@@ -37,6 +37,14 @@ public class BonusCategoryCreateRequest {
     /** Optional: an open-ended bonus has no end date. */
     private LocalDate validUntil;
 
+    /**
+     * Edit only: the date a CHANGED amount takes effect (V69 versioning).
+     * Empty = today. The same date as the current spell's start corrects it in
+     * place; a later date closes it and opens a new spell. Ignored when the
+     * amount did not change, and on create.
+     */
+    private LocalDate amountEffectiveFrom;
+
     @Size(max = 255, message = "Opis je predugačak.")
     private String description;
 }

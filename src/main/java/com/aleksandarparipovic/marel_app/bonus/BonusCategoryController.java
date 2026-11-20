@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.bonus;
 
+import com.aleksandarparipovic.marel_app.bonus.dto.BonusAmountPeriodDto;
 import com.aleksandarparipovic.marel_app.bonus.dto.BonusCategoryCreateRequest;
 import com.aleksandarparipovic.marel_app.bonus.dto.BonusCategoryDto;
 import com.aleksandarparipovic.marel_app.bonus.dto.BonusCategoryOptionDto;
@@ -70,7 +71,14 @@ public class BonusCategoryController {
             @PathVariable Long id,
             @Valid @RequestBody BonusCategoryCreateRequest request
     ) {
-        return ResponseEntity.ok(mapper.toDto(bonusCategoryService.update(id, toEntity(request))));
+        return ResponseEntity.ok(mapper.toDto(
+                bonusCategoryService.update(id, toEntity(request), request.getAmountEffectiveFrom())));
+    }
+
+    /** The amount's dated history (V69), newest first — the šifarnik's detail view. */
+    @GetMapping("/{id}/amount-history")
+    public ResponseEntity<List<BonusAmountPeriodDto>> amountHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(bonusCategoryService.amountHistory(id));
     }
 
     /**

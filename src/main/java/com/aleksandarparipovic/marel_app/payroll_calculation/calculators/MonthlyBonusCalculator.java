@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.payroll_calculation.calculators;
 
+import com.aleksandarparipovic.marel_app.bonus.BonusCategoryAmountPeriodRepository;
 import com.aleksandarparipovic.marel_app.bonus_eligibility_rules.BonusEligibilityRule;
 import com.aleksandarparipovic.marel_app.bonus_eligibility_rules.BonusEligibilityRuleRepository;
 import com.aleksandarparipovic.marel_app.bonus_min_hours_rules.BonusMinHoursRuleRepository;
@@ -49,6 +50,7 @@ public class MonthlyBonusCalculator implements PayrollComponentCalculator {
     private final EmployeeBonusRepository employeeBonusRepository;
     private final BonusMinHoursRuleRepository minHoursRuleRepository;
     private final BonusEligibilityRuleRepository eligibilityRuleRepository;
+    private final BonusCategoryAmountPeriodRepository amountPeriodRepository;
 
     private static int safe(Integer value) {
         return value == null ? 0 : value;
@@ -152,8 +154,23 @@ public class MonthlyBonusCalculator implements PayrollComponentCalculator {
             return BigDecimal.ZERO;
         }
 
-        BigDecimal amount = employeeBonus.getBonusCategory().getBonusAmount();
+        /*
+         * THE AMOUNT IN FORCE ON THE PAYROLL MONTH, not the amount right now
+         * (V69). Editing a category's amount versions these periods, so a
+         * recalculation of an older, unlocked month keeps paying what the
+         * month was worth when it was worked. The category's own column is
+         * only the fallback for a period that predates the V69 seed.
+         */
+        var amountPeriod = amountPeriodRepository
+                .findInForce(employeeBonus.getBonusCategory().getId(), ctx.periodStart())
+                .orElse(null);
+        BigDecimal amount = amountPeriod != null
+                ? amountPeriod.getAmount()
+                : employeeBonus.getBonusCategory().getBonusAmount();
         inputs.put("bonusCategory", employeeBonus.getBonusCategory().getCategoryNo());
+        inputs.put("baseBonusAmountSource", amountPeriod != null
+                ? "AMOUNT_PERIOD_FROM_" + amountPeriod.getValidFrom()
+                : "CATEGORY_FALLBACK");
         inputs.put(INPUT_BASE_BONUS, amount);
         return amount != null ? amount : BigDecimal.ZERO;
     }
