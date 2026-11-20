@@ -271,6 +271,48 @@ public class OperationService {
         operation.setOpName(name);
     }
 
+    /**
+     * Changes the work code category and nothing else — the norm is not touched.
+     * The old value stays readable: the operations_history trigger records the
+     * change, and the page's "Istorija izmena" reads it back.
+     */
+    @Transactional
+    public void changeWorkCodeCategory(Long id, Long workCodeCategoryId) {
+        Operation operation = operationRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Operation not found"));
+
+        // The same invariant every other edit path keeps.
+        if (operation.isStandalone() && workCodeCategoryId == null) {
+            throw new IllegalArgumentException("Osnovna operacija mora imati kategoriju rada");
+        }
+        operation.setWorkCodeCategory(resolveWorkCodeCategory(workCodeCategoryId));
+    }
+
+    /**
+     * Changes units-per-product on its own, without opening the norm dialog.
+     *
+     * <p>The value still lives alongside the norm in the version history —
+     * {@link OperationNormInForceService} keeps the operation's columns and the
+     * version in force in agreement, and payroll reads the columns — so the
+     * change is recorded there too, exactly as the edit form's path does it.
+     */
+    @Transactional
+    public void changeUnitsPerProduct(Long id, Integer unitsPerProduct) {
+        Operation operation = operationRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Operation not found"));
+
+        if (operation.isStandalone()) {
+            throw new IllegalArgumentException(
+                    "Osnovna operacija nema normu — polja norme moraju ostati prazna");
+        }
+        if (unitsPerProduct != null && unitsPerProduct < 1) {
+            throw new IllegalArgumentException("Količina u sklopu mora biti najmanje 1");
+        }
+
+        operation.setUnitsPerProduct(unitsPerProduct);
+        normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
+    }
+
     @Transactional
     public OperationWithProductInfoRow create(OperationCreateRequest request){
         Operation operation = new Operation();

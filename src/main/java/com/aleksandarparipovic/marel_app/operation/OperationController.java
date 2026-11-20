@@ -132,6 +132,34 @@ public class OperationController {
         return ResponseEntity.noContent().build();
     }
 
+    @PatchMapping("/{id}/work-code-category")
+    public ResponseEntity<Void> changeWorkCodeCategory(
+            @PathVariable Long id,
+            @RequestBody OperationCategoryChangeRequest request
+    ) {
+        operationService.changeWorkCodeCategory(id, request.workCodeCategoryId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/{id}/units-per-product")
+    public ResponseEntity<Void> changeUnitsPerProduct(
+            @PathVariable Long id,
+            @RequestBody OperationUnitsChangeRequest request
+    ) {
+        operationService.changeUnitsPerProduct(id, request.unitsPerProduct());
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * The recorded category and units-per-product changes, newest first — read
+     * from the operations_history trigger log, so it covers edits made anywhere,
+     * not only on this page.
+     */
+    @GetMapping("/{id}/field-history")
+    public ResponseEntity<List<OperationFieldChangeDto>> getFieldHistory(@PathVariable Long id) {
+        return ResponseEntity.ok(operationDetailService.getFieldHistory(id));
+    }
+
     // ── The operation detail page ───────────────────────────────────────────
 
     /**

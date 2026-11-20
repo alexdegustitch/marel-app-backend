@@ -57,6 +57,7 @@ public class OperationDetailService {
     public static final int MAX_MONTHS = 24;
 
     private final OperationRepository operationRepository;
+    private final com.aleksandarparipovic.marel_app.operation.repository.OperationFieldHistoryRepository fieldHistoryRepository;
     private final OperationNormVersionRepository normVersionRepository;
     private final OperationNormActivationRepository normActivationRepository;
     private final OperationNormInForceService normInForce;
@@ -66,6 +67,18 @@ public class OperationDetailService {
     private final UserRepository userRepository;
     private final OrderProgressService orderProgressService;
     private final OpenRequestBlockers openRequestBlockers;
+
+    // ── Field history ───────────────────────────────────────────────────────
+
+    /**
+     * The category and units-per-product changes of this operation, newest
+     * first. Readable by everyone who may open the page, like the norm history:
+     * knowing what was in force when is the point of keeping it.
+     */
+    @Transactional(readOnly = true)
+    public List<com.aleksandarparipovic.marel_app.operation.dto.OperationFieldChangeDto> getFieldHistory(Long operationId) {
+        return fieldHistoryRepository.findFieldChanges(operationId);
+    }
 
     // ── Norm history ────────────────────────────────────────────────────────
 
