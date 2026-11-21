@@ -20,6 +20,13 @@ public class OperationMapper {
         dto.setNormRequired(o.isNormRequired());
         dto.setUnitsPerProduct(o.getUnitsPerProduct());
         dto.setNormDate(o.getNormDate());
+        /*
+         * A norm entered without a date ON PURPOSE. Carried here too, not only
+         * on the grid's row: the product page now writes norms as well, and a
+         * bare dash cannot say whether the date is missing or was never meant
+         * to be there.
+         */
+        dto.setNormTemporary(o.isTemporary());
         dto.setWorkCodeCategoryId(o.getWorkCodeCategory() != null ? o.getWorkCodeCategory().getId() : null);
         return dto;
     }
