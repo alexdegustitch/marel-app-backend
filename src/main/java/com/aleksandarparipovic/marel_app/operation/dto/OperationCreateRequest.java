@@ -21,6 +21,10 @@ public class OperationCreateRequest {
     @NotBlank
     private String operationName;
 
+    /** Optional free text. A copy made from an existing operation sends the
+     * source's description, so the copy is the whole definition, not the name alone. */
+    private String description;
+
     private LocalDate normDate;
 
     private Integer minNorm;

@@ -197,7 +197,8 @@ public class OperationService {
                 count,
                 product == null ? null : product.getCatalogNumber(),
                 operation.isTemporary(),
-                operation.isStandalone()
+                operation.isStandalone(),
+                operation.getDescription()
         );
     }
 
@@ -348,6 +349,7 @@ public class OperationService {
         }
 
         operation.setOpName(request.getOperationName());
+        operation.setDescription(request.getDescription());
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
         operation = operationRepository.save(operation);
 
