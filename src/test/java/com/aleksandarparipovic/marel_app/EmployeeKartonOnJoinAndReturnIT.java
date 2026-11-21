@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,9 +33,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * for the month or recorded the employee's first shift — so between being
  * entered and being worked, a person was missing from the month they belong to.
  *
- * <p>The two openings use DIFFERENT months on purpose, which is most of what is
- * asserted here: joining files you under the month you were hired, returning
- * files you under the month you came back.
+ * <p>Joining opens the karton for the month of employment start, and ONLY when
+ * that month is the current one: somebody entered in advance, or backdated to an
+ * earlier month, opens nothing — a month that has not begun or is already behind
+ * us is filled by "Kreiraj kartone" or by the first shift, not as a side effect
+ * of adding one person to the register. Returning files you under the month you
+ * came back, whenever that is.
  */
 @Transactional
 class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
@@ -58,54 +62,69 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
     /** A hire date safely outside the current month, so the two never collide. */
     private static final LocalDate LONG_AGO = LocalDate.of(2024, 2, 15);
 
+    /**
+     * The month the karton is opened for — which is now the ONLY month creation
+     * ever opens one for, so the dates here are relative to it rather than
+     * written out: a fixed 2026-05 would stop exercising the rule next June.
+     */
+    private static final YearMonth THIS_MONTH = YearMonth.now();
+
     @Test
-    @DisplayName("creating an employee creates their karton for the month they started")
+    @DisplayName("somebody who starts this month has their karton from the start")
     void theKartonExistsFromTheStart() {
-        LocalDate start = LocalDate.of(2026, 5, 11);
+        LocalDate start = THIS_MONTH.atDay(11);
 
         var created = employeeService.createEmployee(request(start));
         entityManager.flush();
 
-        assertThat(employeeRecordService.existsForEmployeeAndMonth(created.getEmployeeId(), 2026, 5)).isTrue();
+        assertThat(employeeRecordService.existsForEmployeeAndMonth(
+                created.getEmployeeId(), THIS_MONTH.getYear(), THIS_MONTH.getMonthValue())).isTrue();
     }
 
     @Test
-    @DisplayName("the month is employment start, not the month the form was filled in")
-    void theMonthIsTheOneTheyStarted() {
-        // An employee entered in advance or backdated belongs to the month they
-        // began — the month every other record of theirs is filed under.
-        LocalDate start = LocalDate.of(2025, 11, 3);
+    @DisplayName("somebody backdated to an earlier month opens nothing")
+    void aBackdatedHireOpensNothing() {
+        // A month already behind us is not something adding one person to the
+        // register may write into — "Kreiraj kartone" for that month, or the
+        // employee's first shift, is what fills it.
+        LocalDate start = THIS_MONTH.minusMonths(3).atDay(3);
 
         var created = employeeService.createEmployee(request(start));
         entityManager.flush();
 
-        assertThat(employeeRecordService.existsForEmployeeAndMonth(created.getEmployeeId(), 2025, 11)).isTrue();
-
-        LocalDate today = LocalDate.now();
-        if (today.getYear() != 2025 || today.getMonthValue() != 11) {
-            assertThat(employeeRecordService
-                    .existsForEmployeeAndMonth(created.getEmployeeId(), today.getYear(), today.getMonthValue()))
-                    .isFalse();
-        }
+        assertThat(kartonCount(created.getEmployeeId())).isZero();
     }
 
     @Test
-    @DisplayName("the karton is filed on the first of that month, whatever day they started")
+    @DisplayName("somebody entered in advance opens nothing either")
+    void aFutureHireOpensNothing() {
+        LocalDate start = THIS_MONTH.plusMonths(1).atDay(1);
+
+        var created = employeeService.createEmployee(request(start));
+        entityManager.flush();
+
+        assertThat(kartonCount(created.getEmployeeId())).isZero();
+    }
+
+    @Test
+    @DisplayName("the karton is filed on the first of the month, whatever day they started")
     void theRecordStartsOnTheFirst() {
-        LocalDate start = LocalDate.of(2026, 5, 27);
+        LocalDate start = THIS_MONTH.atDay(27);
 
         var created = employeeService.createEmployee(request(start));
         entityManager.flush();
 
         Long recordId = employeeRecordService
-                .findRecordIdForEmployeeAndMonth(created.getEmployeeId(), 2026, 5).orElseThrow();
+                .findRecordIdForEmployeeAndMonth(
+                        created.getEmployeeId(), THIS_MONTH.getYear(), THIS_MONTH.getMonthValue())
+                .orElseThrow();
 
         Object startDate = entityManager.createNativeQuery(
                         "SELECT start_date FROM employee_records WHERE id = :id")
                 .setParameter("id", recordId)
                 .getSingleResult();
 
-        assertThat(startDate.toString()).isEqualTo("2026-05-01");
+        assertThat(startDate.toString()).isEqualTo(THIS_MONTH.atDay(1).toString());
     }
 
     @Test
@@ -117,13 +136,15 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
          * start a whole month's payroll as a side effect — asserted by there
          * being no payroll run for that month afterwards.
          */
-        LocalDate start = LocalDate.of(2026, 4, 6);
+        LocalDate start = THIS_MONTH.atDay(6);
 
         employeeService.createEmployee(request(start));
         entityManager.flush();
 
         Number runs = (Number) entityManager.createNativeQuery(
-                        "SELECT count(*) FROM payroll_runs WHERE report_year = 2026 AND report_month = 4")
+                        "SELECT count(*) FROM payroll_runs WHERE report_year = :y AND report_month = :m")
+                .setParameter("y", THIS_MONTH.getYear())
+                .setParameter("m", THIS_MONTH.getMonthValue())
                 .getSingleResult();
 
         assertThat(runs.longValue()).isZero();
@@ -155,7 +176,12 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
         employeeService.patchEmployee(employeeId, patch("{\"active\": true}"));
         entityManager.flush();
 
-        assertThat(kartonCount(employeeId)).isEqualTo(2);
+        // The one karton they have is THIS month's, opened by the return: being
+        // hired long ago opened none, and the return does not go looking for the
+        // original hire month.
+        assertThat(kartonCount(employeeId)).isEqualTo(1);
+        assertThat(employeeRecordService.existsForEmployeeAndMonth(
+                employeeId, THIS_MONTH.getYear(), THIS_MONTH.getMonthValue())).isTrue();
     }
 
     @Test
@@ -190,7 +216,8 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
         employeeService.patchEmployee(created.getEmployeeId(), patch("{\"notes\": \"Nova beleška\"}"));
         entityManager.flush();
 
-        assertThat(kartonCount(created.getEmployeeId())).isEqualTo(1);
+        // Hired long ago, so creation opened none — and the save opens none.
+        assertThat(kartonCount(created.getEmployeeId())).isZero();
     }
 
     @Test
@@ -221,7 +248,7 @@ class EmployeeKartonOnJoinAndReturnIT extends AbstractIntegrationTest {
         employeeService.patchEmployee(created.getEmployeeId(), patch("{\"active\": false}"));
         entityManager.flush();
 
-        assertThat(kartonCount(created.getEmployeeId())).isEqualTo(1);
+        assertThat(kartonCount(created.getEmployeeId())).isZero();
     }
 
     @Test

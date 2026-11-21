@@ -52,6 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Optional;
 
@@ -193,16 +194,19 @@ public class EmployeeService {
         }
 
         /*
-         * THE KARTON FOR THE MONTH THEY STARTED.
+         * THE KARTON FOR THE MONTH THEY STARTED — ONLY WHEN THAT IS THIS MONTH.
          *
          * Until now a new employee had none until somebody pressed "Kreiraj
          * kartone" for that month or recorded their first shift — so between
          * being entered and being worked they were missing from the month they
          * belong to.
          *
-         * The month is EMPLOYMENT START, not today: an employee entered in
-         * advance or backdated belongs to the month they began, and that is the
-         * month every other record of theirs is filed under.
+         * The month is EMPLOYMENT START, not today, and it is opened ONLY when
+         * employment start falls in the CURRENT month. Somebody entered in
+         * advance, or backdated to an earlier month, opens nothing here: adding
+         * one person to the register must not write into a month that is already
+         * closed or has not begun. Those months are filled the way they always
+         * were — "Kreiraj kartone" for the month, or the first shift recorded.
          *
          * Through getOrCreateMonthlyRecord, which does NOT publish
          * PayrollMonthInitEvent — deliberately, unlike the bulk creation.
@@ -212,8 +216,10 @@ public class EmployeeService {
          * Idempotent: the method reads before it writes, and
          * uq_employee_records_employee_start_date is behind it either way.
          */
-        employeeRecordService.getOrCreateMonthlyRecord(
-                employee.getId(), employee.getEmploymentStartDate());
+        if (YearMonth.from(employee.getEmploymentStartDate()).equals(YearMonth.now())) {
+            employeeRecordService.getOrCreateMonthlyRecord(
+                    employee.getId(), employee.getEmploymentStartDate());
+        }
 
         return employeeRowEnricher.enrich(repository.findEmployeeWithBonusById(employee.getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Employee projection not found"));
