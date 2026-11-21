@@ -52,9 +52,11 @@ public class EmployeeShiftTimeService {
         return shiftRepository.findByIsActiveTrueAndArchivedAtIsNullOrderByStartTimeAsc().stream()
                 .map(shift -> {
                     var resolved = shiftTimeResolver.resolve(employeeId, shift, date);
-                    // The pauza rides along so the karton learns both windows
+                    // The pauze ride along so the karton learns every window
                     // in the one request it already makes.
-                    var resolvedBreak = shiftBreakResolver.resolve(employeeId, shift.getId(), date).orElse(null);
+                    var breaks = shiftBreakResolver.resolveAll(employeeId, shift.getId(), date).stream()
+                            .map(EffectiveShiftTimeDto.EffectiveBreakDto::from)
+                            .toList();
                     return new EffectiveShiftTimeDto(
                             shift.getId(),
                             shift.getShiftCode(),
@@ -62,9 +64,7 @@ public class EmployeeShiftTimeService {
                             resolved.startTime(),
                             resolved.endTime(),
                             resolved.employeeOwn(),
-                            resolvedBreak == null ? null : resolvedBreak.startTime(),
-                            resolvedBreak == null ? null : resolvedBreak.endTime(),
-                            resolvedBreak == null ? null : resolvedBreak.employeeOwn());
+                            breaks);
                 })
                 .toList();
     }

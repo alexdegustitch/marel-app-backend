@@ -13,10 +13,10 @@ import java.util.Optional;
 public interface EmployeeShiftBreakPeriodRepository extends JpaRepository<EmployeeShiftBreakPeriod, Long> {
 
     /**
-     * The row in force for (employee, shift, date): the employee's own spell if
-     * one covers the date, the default spell otherwise. One query — the
-     * employee row sorts first and LIMIT keeps it. Same shape as
-     * {@link EmployeeShiftTimePeriodRepository#findInForce}.
+     * Every spell in force for (employee-or-default, shift, date), ALL breaks
+     * at once. {@link ShiftBreakResolver} groups them by breakNo and lets the
+     * employee's row win within each group — a shift can hold several breaks,
+     * so one row is no longer the answer.
      */
     @Query("""
             SELECT p FROM EmployeeShiftBreakPeriod p
@@ -25,42 +25,55 @@ public interface EmployeeShiftBreakPeriodRepository extends JpaRepository<Employ
               AND (p.employee.id = :employeeId OR p.employee IS NULL)
               AND p.validFrom <= :date
               AND (p.validTo IS NULL OR p.validTo >= :date)
-            ORDER BY p.employee.id ASC NULLS LAST
-            LIMIT 1
+            ORDER BY p.breakNo ASC
             """)
-    Optional<EmployeeShiftBreakPeriod> findInForce(@Param("employeeId") Long employeeId,
-                                                   @Param("shiftId") Long shiftId,
-                                                   @Param("date") LocalDate date);
+    List<EmployeeShiftBreakPeriod> findAllInForce(@Param("employeeId") Long employeeId,
+                                                  @Param("shiftId") Long shiftId,
+                                                  @Param("date") LocalDate date);
+
+    /** The DEFAULT spells in force on a date, for every shift — pickers' read. */
+    @Query("""
+            SELECT p FROM EmployeeShiftBreakPeriod p
+            WHERE p.employee IS NULL
+              AND p.archivedAt IS NULL
+              AND p.validFrom <= :date
+              AND (p.validTo IS NULL OR p.validTo >= :date)
+            ORDER BY p.shift.id ASC, p.breakNo ASC
+            """)
+    List<EmployeeShiftBreakPeriod> findDefaultsInForce(@Param("date") LocalDate date);
 
     /** The employee's own spells, newest first — the history a screen shows. */
     @Query("""
             SELECT p FROM EmployeeShiftBreakPeriod p
             WHERE p.employee.id = :employeeId
               AND p.archivedAt IS NULL
-            ORDER BY p.validFrom DESC, p.id DESC
+            ORDER BY p.validFrom DESC, p.breakNo ASC, p.id DESC
             """)
     List<EmployeeShiftBreakPeriod> findHistoryFor(@Param("employeeId") Long employeeId);
 
-    /** The employee's OPEN spell for one shift (validTo null), if any. */
+    /** The employee's OPEN spell for one break of one shift, if any. */
     @Query("""
             SELECT p FROM EmployeeShiftBreakPeriod p
             WHERE p.employee.id = :employeeId
               AND p.shift.id = :shiftId
+              AND p.breakNo = :breakNo
               AND p.archivedAt IS NULL
               AND p.validTo IS NULL
             """)
     Optional<EmployeeShiftBreakPeriod> findOpenFor(@Param("employeeId") Long employeeId,
-                                                   @Param("shiftId") Long shiftId);
+                                                   @Param("shiftId") Long shiftId,
+                                                   @Param("breakNo") Integer breakNo);
 
     /**
-     * The employee's own spells for one shift that would overlap [from, to]
-     * (to null = open-ended). The friendly pre-check; ex_esbp_no_overlap in the
-     * database is the guarantee.
+     * The employee's own spells for one break of one shift that would overlap
+     * [from, to] (to null = open-ended). The friendly pre-check;
+     * ex_esbp_no_overlap in the database is the guarantee.
      */
     @Query("""
             SELECT p FROM EmployeeShiftBreakPeriod p
             WHERE p.employee.id = :employeeId
               AND p.shift.id = :shiftId
+              AND p.breakNo = :breakNo
               AND p.archivedAt IS NULL
               AND p.id <> :excludeId
               AND p.validFrom <= COALESCE(:to, p.validFrom)
@@ -68,6 +81,7 @@ public interface EmployeeShiftBreakPeriodRepository extends JpaRepository<Employ
             """)
     List<EmployeeShiftBreakPeriod> findOwnOverlapping(@Param("employeeId") Long employeeId,
                                                       @Param("shiftId") Long shiftId,
+                                                      @Param("breakNo") Integer breakNo,
                                                       @Param("from") LocalDate from,
                                                       @Param("to") LocalDate to,
                                                       @Param("excludeId") Long excludeId);
@@ -78,17 +92,40 @@ public interface EmployeeShiftBreakPeriodRepository extends JpaRepository<Employ
             WHERE p.employee IS NULL
               AND p.shift.id = :shiftId
               AND p.archivedAt IS NULL
-            ORDER BY p.validFrom DESC, p.id DESC
+            ORDER BY p.validFrom DESC, p.breakNo ASC, p.id DESC
             """)
     List<EmployeeShiftBreakPeriod> findDefaultHistoryFor(@Param("shiftId") Long shiftId);
 
-    /** The shift's OPEN default spell (employee null, validTo null), if any. */
+    /** The shift's OPEN default spell for one break, if any. */
+    @Query("""
+            SELECT p FROM EmployeeShiftBreakPeriod p
+            WHERE p.employee IS NULL
+              AND p.shift.id = :shiftId
+              AND p.breakNo = :breakNo
+              AND p.archivedAt IS NULL
+              AND p.validTo IS NULL
+            """)
+    Optional<EmployeeShiftBreakPeriod> findOpenDefaultFor(@Param("shiftId") Long shiftId,
+                                                          @Param("breakNo") Integer breakNo);
+
+    /** Every OPEN default spell of one shift, by break. */
     @Query("""
             SELECT p FROM EmployeeShiftBreakPeriod p
             WHERE p.employee IS NULL
               AND p.shift.id = :shiftId
               AND p.archivedAt IS NULL
               AND p.validTo IS NULL
+            ORDER BY p.breakNo ASC
             """)
-    Optional<EmployeeShiftBreakPeriod> findOpenDefaultFor(@Param("shiftId") Long shiftId);
+    List<EmployeeShiftBreakPeriod> findOpenDefaultsFor(@Param("shiftId") Long shiftId);
+
+    /** Every OPEN default spell of every shift — the šifarnik's list view. */
+    @Query("""
+            SELECT p FROM EmployeeShiftBreakPeriod p
+            WHERE p.employee IS NULL
+              AND p.archivedAt IS NULL
+              AND p.validTo IS NULL
+            ORDER BY p.shift.id ASC, p.breakNo ASC
+            """)
+    List<EmployeeShiftBreakPeriod> findAllOpenDefaults();
 }

@@ -491,17 +491,17 @@ public class WorkShiftService {
     public WorkShiftBasicInfoDto createShift(WorkShiftCreateRequest request) {
         WorkShiftBasicInfoDto created = doCreateShift(request);
 
-        // The pauza, when the form asked for one. AFTER the shift exists in
-        // every branch (plain create, merge, trim): the log hangs off the row
+        // The pauze, when the form asked for them. AFTER the shift exists in
+        // every branch (plain create, merge, trim): the logs hang off the row
         // that actually ended up in the database. Idempotent, so a MERGE into
-        // a shift already carrying its break writes nothing twice.
+        // a shift already carrying its breaks writes nothing twice.
         if (Boolean.TRUE.equals(request.getIncludeBreak())) {
             WorkShift shift = repository.findById(created.id())
                     .orElseThrow(() -> new EntityNotFoundException("Work shift not found: " + created.id()));
-            breakLogWriter.ensureBreakLog(shift).ifPresent(breakLog -> {
+            if (!breakLogWriter.ensureBreakLogs(shift).isEmpty()) {
                 recalcQueueService.enqueueDailyJob(shift, "BREAK_LOG");
                 eventPublisher.publishEvent(new DailyRecalcRequestedEvent(DailyRecalcRequestedEvent.Type.DAILY));
-            });
+            }
         }
         return created;
     }

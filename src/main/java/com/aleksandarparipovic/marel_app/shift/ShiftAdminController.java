@@ -1,6 +1,6 @@
 package com.aleksandarparipovic.marel_app.shift;
 
-import com.aleksandarparipovic.marel_app.shift.dto.ChangeShiftTimeRequest;
+import com.aleksandarparipovic.marel_app.shift.dto.ChangeShiftBreakRequest;
 import com.aleksandarparipovic.marel_app.shift.dto.EmployeeShiftBreakPeriodDto;
 import com.aleksandarparipovic.marel_app.shift.dto.EmployeeShiftTimePeriodDto;
 import com.aleksandarparipovic.marel_app.shift.dto.ShiftAdminDto;
@@ -67,22 +67,23 @@ public class ShiftAdminController {
         return ResponseEntity.ok(breakService.defaultHistory(id));
     }
 
-    /** Move the shift's default break from a date — or state it for the first time. */
+    /** Move ONE of the shift's default breaks from a date — or state it for the first time. */
     @PostMapping("/{id}/default-break")
     @PreAuthorize("@perm.has('APP_SETTING_MANAGE')")
     public ResponseEntity<EmployeeShiftBreakPeriodDto> changeDefaultBreak(
             @PathVariable Long id,
-            @Valid @RequestBody ChangeShiftTimeRequest request) {
+            @Valid @RequestBody ChangeShiftBreakRequest request) {
         return ResponseEntity.ok(breakService.changeDefault(id, request));
     }
 
-    /** Close the open default break — the shift has no break after endedOn. */
+    /** Close one open default break — the shift stops having it after endedOn. */
     @PostMapping("/{id}/default-break/close")
     @PreAuthorize("@perm.has('APP_SETTING_MANAGE')")
     public ResponseEntity<Void> closeDefaultBreak(
             @PathVariable Long id,
+            @RequestParam Integer breakNo,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endedOn) {
-        breakService.closeDefault(id, endedOn);
+        breakService.closeDefault(id, breakNo, endedOn);
         return ResponseEntity.noContent().build();
     }
 }

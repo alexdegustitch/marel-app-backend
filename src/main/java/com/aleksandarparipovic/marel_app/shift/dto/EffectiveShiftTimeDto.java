@@ -1,6 +1,9 @@
 package com.aleksandarparipovic.marel_app.shift.dto;
 
+import com.aleksandarparipovic.marel_app.shift.ShiftBreakResolver;
+
 import java.time.LocalTime;
+import java.util.List;
 
 /**
  * When each shift runs FOR ONE EMPLOYEE on a date — the picker's answer.
@@ -14,8 +17,18 @@ public record EffectiveShiftTimeDto(
         LocalTime startTime,
         LocalTime endTime,
         boolean employeeOwn,
-        /** The pauza window, when one is configured — all three null otherwise. */
-        LocalTime breakStartTime,
-        LocalTime breakEndTime,
-        Boolean breakEmployeeOwn
-) {}
+        /** The pauza windows in force for this person, by breakNo — empty when none. */
+        List<EffectiveBreakDto> breaks
+) {
+    /** One break window; employeeOwn marks the worker's own arrangement. */
+    public record EffectiveBreakDto(
+            int breakNo,
+            LocalTime startTime,
+            LocalTime endTime,
+            boolean employeeOwn
+    ) {
+        public static EffectiveBreakDto from(ShiftBreakResolver.ResolvedBreak b) {
+            return new EffectiveBreakDto(b.breakNo(), b.startTime(), b.endTime(), b.employeeOwn());
+        }
+    }
+}

@@ -14,6 +14,11 @@ import java.time.OffsetDateTime;
  * employee} set → that person's own break window; NULL → the shift's default,
  * versioned.
  *
+ * <p>A shift may hold SEVERAL breaks: {@code breakNo} is the break's identity
+ * (1 = prva pauza, 2 = druga, …), and an employee row overrides the default
+ * row with the same (shift, breakNo) — or, with {@code suppressed}, states
+ * that this person does not take that default break at all (times NULL).
+ *
  * <p>Affects only what the break WRITER draws next (see {@code
  * BreakLogWriter}); it never rewrites a karton row already written. Unlike
  * shift times there is no fallback beyond the default row — a shift without a
@@ -41,11 +46,26 @@ public class EmployeeShiftBreakPeriod {
     @JoinColumn(name = "shift_id", nullable = false)
     private Shift shift;
 
-    @Column(name = "start_time", nullable = false)
+    /** Which break of the shift this spell is about: 1 = prva pauza, … */
+    @Builder.Default
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.SMALLINT)
+    @Column(name = "break_no", nullable = false)
+    private Integer breakNo = 1;
+
+    /**
+     * Employee rows only: this person does not take that default break while
+     * the spell covers the date. Times are NULL on a suppressed row.
+     */
+    @Builder.Default
+    @Column(name = "suppressed", nullable = false)
+    private boolean suppressed = false;
+
+    /** NULL only on a suppressed row. */
+    @Column(name = "start_time")
     private LocalTime startTime;
 
     /** May be before startTime — shift III's break crosses midnight. */
-    @Column(name = "end_time", nullable = false)
+    @Column(name = "end_time")
     private LocalTime endTime;
 
     @Column(name = "valid_from", nullable = false)

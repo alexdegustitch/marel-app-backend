@@ -14,16 +14,18 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 /**
- * The one log a shift's PAUZA is drawn with.
+ * The logs a shift's PAUZE are drawn with — one per break window.
  *
  * <p>The counterpart of {@code AbsenceLogWriter}, one window smaller: where an
- * absence spans the whole shift, the pauza spans the window {@code
- * ShiftBreakResolver} answers with — the employee's own arrangement when they
- * have one, the shift's versioned default otherwise, and nothing at all when
- * neither is configured.
+ * absence spans the whole shift, each pauza spans one window {@code
+ * ShiftBreakResolver} answers with — the employee's own arrangements where
+ * they have them, the shift's versioned defaults otherwise, and nothing at all
+ * when neither is configured.
  *
  * <p><b>Which operation.</b> The standalone operation named "Pauza" (V65 made
  * operations without a product possible, and the partial unique index makes
@@ -38,8 +40,9 @@ import java.util.Optional;
  *
  * <p><b>When it is written.</b> Only when somebody asks — the checkbox on
  * shift creation, or the karton's own toggle (which goes through the ordinary
- * draft save instead of this writer). Idempotent per shift: a shift already
- * carrying a live Pauza log gets the same one back.
+ * draft save instead of this writer). Idempotent per window: a break whose
+ * interval an existing live Pauza log already overlaps is left to that log —
+ * hand-moved rows included — so asking twice draws nothing twice.
  */
 @Service
 @RequiredArgsConstructor
@@ -58,66 +61,86 @@ public class BreakLogWriter {
     private final DateUtil dateUtil;
 
     /**
-     * Ensures the shift carries its pauza log, and hands it back — or empty
-     * when the break window does not fit the shift's ACTUAL interval (a shift
-     * trimmed around a collision may no longer contain it; a break the shift
-     * cannot hold is not drawn, and the karton shows exactly that).
+     * Ensures the shift carries a log for each of its pauze, and hands back
+     * the NEWLY written ones. A window that does not fit the shift's ACTUAL
+     * interval is skipped (a shift trimmed around a collision may no longer
+     * contain it; a break the shift cannot hold is not drawn, and the karton
+     * shows exactly that), as is a window an existing live Pauza log already
+     * covers.
      *
      * @throws IllegalStateException when no break window is configured for the
-     *         shift, or the standalone "Pauza" operation does not exist — both
-     *         are configuration gaps a person must fix, said plainly.
+     *         shift at all, or the standalone "Pauza" operation does not exist
+     *         — both are configuration gaps a person must fix, said plainly.
      */
-    public Optional<WorkLog> ensureBreakLog(WorkShift shift) {
-        ShiftBreakResolver.ResolvedBreak window = breakResolver
-                .resolve(shift.getEmployee().getId(), shift.getShift().getId(), shift.getWorkDate())
-                .orElseThrow(() -> new IllegalStateException(
-                        "Smena nema podešenu pauzu — unesite je u šifarniku Smene ili kod radnika."));
+    public List<WorkLog> ensureBreakLogs(WorkShift shift) {
+        List<ShiftBreakResolver.ResolvedBreak> windows = breakResolver.resolveAll(
+                shift.getEmployee().getId(), shift.getShift().getId(), shift.getWorkDate());
+        if (windows.isEmpty()) {
+            throw new IllegalStateException(
+                    "Smena nema podešenu pauzu — unesite je u šifarniku Smene ili kod radnika.");
+        }
 
         Operation operation = breakOperation();
+        List<WorkLog> existing = findBreakLogs(shift, operation);
+        List<WorkLog> written = new ArrayList<>();
 
-        Optional<WorkLog> existing = findBreakLog(shift, operation);
-        if (existing.isPresent()) {
-            return existing;
+        for (ShiftBreakResolver.ResolvedBreak window : windows) {
+            // Anchored to the shift's window, not the calendar date — shift
+            // III's 02:00 belongs to the morning after the work date.
+            StartEndResult time = dateUtil.buildStartEnd(
+                    shift.getWorkDate(),
+                    window.startTime().format(HH_MM),
+                    window.endTime().format(HH_MM),
+                    shift.getStartAt(), shift.getEndAt(), ZONE);
+
+            if (time.start().isBefore(shift.getStartAt()) || time.end().isAfter(shift.getEndAt())) {
+                log.warn("Break {} ({}–{}) does not fit shift {} ({}–{}); not drawn",
+                        window.breakNo(), window.startTime(), window.endTime(),
+                        shift.getId(), shift.getStartAt(), shift.getEndAt());
+                continue;
+            }
+
+            // A live Pauza log overlapping the window — the same one written
+            // earlier, or one somebody moved by hand — already draws it.
+            boolean covered = existing.stream().anyMatch(wl ->
+                    wl.getStartAt().isBefore(time.end()) && wl.getEndAt().isAfter(time.start()));
+            if (covered) {
+                continue;
+            }
+
+            WorkLog saved = workLogRepository.save(WorkLog.builder()
+                    .workShift(shift)
+                    .operation(operation)
+                    .workCode(operation.getWorkCodeCategory())
+                    .startAt(time.start())
+                    .endAt(time.end())
+                    .quantity(0)
+                    .scrap(0)
+                    .isActive(true)
+                    .normMultiplierSnapshot(BigDecimal.valueOf(
+                            operation.getWorkCodeCategory().getNormMultiplier() == null
+                                    ? 0d : operation.getWorkCodeCategory().getNormMultiplier()))
+                    .build());
+            existing.add(saved);
+            written.add(saved);
+            log.debug("Pauza {} log {} written on shift {} ({}–{})",
+                    window.breakNo(), saved.getId(), shift.getId(), time.start(), time.end());
         }
-
-        // Anchored to the shift's window, not the calendar date — shift III's
-        // 02:00 belongs to the morning after the work date.
-        StartEndResult time = dateUtil.buildStartEnd(
-                shift.getWorkDate(),
-                window.startTime().format(HH_MM),
-                window.endTime().format(HH_MM),
-                shift.getStartAt(), shift.getEndAt(), ZONE);
-
-        if (time.start().isBefore(shift.getStartAt()) || time.end().isAfter(shift.getEndAt())) {
-            log.warn("Break {}–{} does not fit shift {} ({}–{}); not drawn",
-                    window.startTime(), window.endTime(), shift.getId(), shift.getStartAt(), shift.getEndAt());
-            return Optional.empty();
-        }
-
-        WorkLog saved = workLogRepository.save(WorkLog.builder()
-                .workShift(shift)
-                .operation(operation)
-                .workCode(operation.getWorkCodeCategory())
-                .startAt(time.start())
-                .endAt(time.end())
-                .quantity(0)
-                .scrap(0)
-                .isActive(true)
-                .normMultiplierSnapshot(BigDecimal.valueOf(
-                        operation.getWorkCodeCategory().getNormMultiplier() == null
-                                ? 0d : operation.getWorkCodeCategory().getNormMultiplier()))
-                .build());
-        log.debug("Pauza log {} written on shift {} ({}–{})",
-                saved.getId(), shift.getId(), time.start(), time.end());
-        return Optional.of(saved);
+        return written;
     }
 
-    /** The live Pauza log on this shift, if one is drawn. */
-    public Optional<WorkLog> findBreakLog(WorkShift shift, Operation operation) {
+    /** The live Pauza logs on this shift, earliest first. */
+    public List<WorkLog> findBreakLogs(WorkShift shift, Operation operation) {
         return workLogRepository.findActiveLogsWithRefsForShift(shift.getId()).stream()
                 .filter(wl -> wl.getOperation() != null
                         && operation.getId().equals(wl.getOperation().getId()))
-                .findFirst();
+                .sorted(java.util.Comparator.comparing(WorkLog::getStartAt))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+    }
+
+    /** The first live Pauza log on this shift, if one is drawn. */
+    public Optional<WorkLog> findBreakLog(WorkShift shift, Operation operation) {
+        return findBreakLogs(shift, operation).stream().findFirst();
     }
 
     /**

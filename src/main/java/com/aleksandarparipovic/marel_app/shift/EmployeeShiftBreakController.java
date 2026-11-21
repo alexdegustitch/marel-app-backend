@@ -1,6 +1,6 @@
 package com.aleksandarparipovic.marel_app.shift;
 
-import com.aleksandarparipovic.marel_app.shift.dto.ChangeShiftTimeRequest;
+import com.aleksandarparipovic.marel_app.shift.dto.ChangeShiftBreakRequest;
 import com.aleksandarparipovic.marel_app.shift.dto.EmployeeShiftBreakPeriodDto;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,23 +29,27 @@ public class EmployeeShiftBreakController {
         return ResponseEntity.ok(service.history(employeeId));
     }
 
-    /** Give the employee their own break window for a shift, from a date. */
+    /**
+     * State one break for the employee from a date — their own window, an
+     * extra break, or (suppressed) that they skip a default one.
+     */
     @PostMapping
     public ResponseEntity<EmployeeShiftBreakPeriodDto> change(
             @PathVariable Long employeeId,
-            @Valid @RequestBody ChangeShiftTimeRequest request
+            @Valid @RequestBody ChangeShiftBreakRequest request
     ) {
         return ResponseEntity.ok(service.change(employeeId, request));
     }
 
-    /** Close the open spell for a shift — the default applies again after endedOn. */
+    /** Close the open spell of one break — the default applies again after endedOn. */
     @PostMapping("/{shiftId}/close")
     public ResponseEntity<Void> close(
             @PathVariable Long employeeId,
             @PathVariable Long shiftId,
+            @RequestParam Integer breakNo,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endedOn
     ) {
-        service.close(employeeId, shiftId, endedOn);
+        service.close(employeeId, shiftId, breakNo, endedOn);
         return ResponseEntity.noContent().build();
     }
 
