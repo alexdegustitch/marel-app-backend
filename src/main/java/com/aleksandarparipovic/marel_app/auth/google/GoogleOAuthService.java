@@ -82,6 +82,11 @@ public class GoogleOAuthService {
         }
 
         return new GoogleUserInfo(
+                // `sub` is what joins a Google account to a local profile, so a
+                // response without one must not be read as a usable identity:
+                // it would be recorded as the string "null" and then matched
+                // against the next such response.
+                userInfo.get("sub") != null ? String.valueOf(userInfo.get("sub")) : null,
                 String.valueOf(userInfo.get("email")),
                 Boolean.TRUE.equals(userInfo.get("email_verified")),
                 userInfo.get("given_name") != null ? String.valueOf(userInfo.get("given_name")) : null,

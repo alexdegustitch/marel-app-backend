@@ -32,6 +32,27 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
     Optional<User> findByEmailAddressIgnoreCase(String emailAddress);
 
     /**
+     * The profile joined to a Google account, by Google's stable {@code sub}.
+     *
+     * <p>The FIRST thing the Google callback asks, before any address is
+     * compared: this is the only identifier Google documents as stable, so it is
+     * the one answer that survives somebody renaming their Gmail. At most one row
+     * by uq_users_google_subject.
+     */
+    @EntityGraph(attributePaths = "role")
+    Optional<User> findByGoogleSubject(String googleSubject);
+
+    /**
+     * The profile joined to a Google ADDRESS.
+     *
+     * <p>Asked only when the subject matched nothing, which happens for a link
+     * made before the subject was recorded. Case-insensitive, like every other
+     * address lookup here, and unambiguous by uq_users_google_email_ci.
+     */
+    @EntityGraph(attributePaths = "role")
+    Optional<User> findByGoogleEmailIgnoreCase(String googleEmail);
+
+    /**
      * The account belonging to one worker, if any.
      *
      * <p>Returns at most one because the database says so — uq_users_employee_id
