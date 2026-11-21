@@ -225,6 +225,26 @@ public interface WorkShiftRepository extends JpaRepository<WorkShift, Long>, Jpa
     """, nativeQuery = true)
     List<Long> getShiftsForEmployeeRecord(@Param("employeeRecordId") Long employeeRecordId);
 
+    /**
+     * The shifts that went down WITH a karton — archived at or after the moment
+     * the karton itself was.
+     *
+     * <p>How a karton's restore knows what to bring back without a join table:
+     * EmployeeRecordArchiveService stamps the karton first and cascades after,
+     * so anything withdrawn before that instant was a separate decision about
+     * that one shift and stays withdrawn.
+     */
+    @Query(value = """
+    SELECT ws.id
+    FROM work_shifts ws
+    WHERE ws.employee_record_id = :employeeRecordId
+      AND ws.archived_at IS NOT NULL
+      AND ws.archived_at >= :since
+    ORDER BY ws.work_date, ws.id
+    """, nativeQuery = true)
+    List<Long> findShiftsArchivedWithRecord(@Param("employeeRecordId") Long employeeRecordId,
+                                            @Param("since") OffsetDateTime since);
+
     @Query(value = """
     SELECT ws.id
     FROM work_shifts ws

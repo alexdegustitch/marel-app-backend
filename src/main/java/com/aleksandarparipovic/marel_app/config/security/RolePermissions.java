@@ -154,6 +154,17 @@ public final class RolePermissions {
                      */
                     AppPermission.WORK_SHIFT_ARCHIVE,
                     /*
+                     * And the whole karton with it.
+                     *
+                     * <p>They open the month's kartoni (createEmployeeRecordsForMonth
+                     * is theirs), so undoing one they opened by mistake is theirs
+                     * too — a wrong month, a worker who never started, a batch run
+                     * twice. Same guard as the shift above: a handed-over, sent or
+                     * locked payroll refuses it, so this only ever reaches a month
+                     * still in their own hands.
+                     */
+                    AppPermission.EMPLOYEE_RECORD_ARCHIVE,
+                    /*
                      * The administration's own roster — which shift each
                      * administrator works on which day. The supervisors ARE the
                      * administrators being scheduled, and they keep the roster

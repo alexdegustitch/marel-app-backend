@@ -387,6 +387,17 @@ public enum AppPermission {
     WORK_SHIFT_ARCHIVE,
 
     /**
+     * Withdraw a whole karton — one worker's whole month — and put it back.
+     *
+     * <p>Its own permission, beside WORK_SHIFT_ARCHIVE rather than folded into
+     * it: taking one shift back corrects a day, while taking the karton back
+     * removes the month a worker's pay is reckoned from. The guard is again the
+     * MONTH and not only the permission — a payroll already handed over, sent
+     * or locked refuses the withdrawal outright.
+     */
+    EMPLOYEE_RECORD_ARCHIVE,
+
+    /**
      * Read and write the administration's roster — which shift each
      * administrator works on which day.
      *

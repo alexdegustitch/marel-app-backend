@@ -589,7 +589,7 @@ public class EmployeeLeaveService {
             endAt = endAt.plusDays(1);
         }
 
-        EmployeeRecord record = employeeRecordService.getOrCreateMonthlyRecord(employee.getId(), date);
+        EmployeeRecord record = employeeRecordService.getOrCreateMonthlyRecordForWriting(employee.getId(), date);
         Long userId = currentUserService.getCurrentUserId();
 
         WorkShift shift = workShiftRepository.save(WorkShift.builder()

@@ -28,4 +28,7 @@ public interface EmployeeRecordInfo {
     BigDecimal getTotalWeightedNormMinutes();
 
     BigDecimal getApprovedPerformanceRate();
+
+    /** When the karton was withdrawn, or null while it is live. See V73. */
+    Instant getArchivedAt();
 }

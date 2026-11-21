@@ -548,7 +548,7 @@ public class WorkShiftService {
         Shift shift = shiftRepository.findById(request.getShiftType())
                 .orElseThrow(() -> new EntityNotFoundException("Shift not found: " + request.getShiftType()));
 
-        EmployeeRecord employeeRecord = employeeRecordService.getOrCreateMonthlyRecord(request.getEmployeeId(), workDate);
+        EmployeeRecord employeeRecord = employeeRecordService.getOrCreateMonthlyRecordForWriting(request.getEmployeeId(), workDate);
 
         WorkShift workShift = WorkShift.builder()
                 .employee(referenceProvider.getRequiredReference(Employee.class, request.getEmployeeId(), "employeeId"))

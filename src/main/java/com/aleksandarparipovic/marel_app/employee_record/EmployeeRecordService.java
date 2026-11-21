@@ -1,6 +1,7 @@
 package com.aleksandarparipovic.marel_app.employee_record;
 
 import com.aleksandarparipovic.marel_app.auth.CurrentUserService;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.common.LikePattern;
 import com.aleksandarparipovic.marel_app.employee.Employee;
 import com.aleksandarparipovic.marel_app.employee.repository.EmployeeRepository;
@@ -56,6 +57,28 @@ public class EmployeeRecordService {
 
         return employeeRecordRepository.findByEmployeeIdAndStartDate(employeeId, monthStart)
                 .orElseGet(() -> createMonthlyRecord(employeeId, monthStart));
+    }
+
+    /**
+     * The same karton, for code that is about to WRITE a shift into it.
+     *
+     * <p>Refuses when the karton has been withdrawn. Without this, entering a
+     * shift would quietly resurrect work under an archived karton — the row
+     * would hang off a month nobody can see, and its hours would still reach the
+     * recalculation. The plain {@link #getOrCreateMonthlyRecord} stays
+     * unguarded on purpose: the recalc workers and the monthly report build
+     * DERIVED data from what is already there, and an archived month must still
+     * be able to settle at zero rather than crash the queue.
+     */
+    @Transactional
+    public EmployeeRecord getOrCreateMonthlyRecordForWriting(Long employeeId, LocalDate workDate) {
+        EmployeeRecord record = getOrCreateMonthlyRecord(employeeId, workDate);
+        if (record.getArchivedAt() != null) {
+            throw new ConflictException(
+                    "Karton za " + YearMonth.from(workDate).getMonthValue() + "/" + workDate.getYear()
+                            + " je arhiviran. Vratite ga iz arhive pa onda unosite smene.");
+        }
+        return record;
     }
 
     private EmployeeRecord createMonthlyRecord(Long employeeId, LocalDate monthStart) {
@@ -121,11 +144,20 @@ public class EmployeeRecordService {
     }
 
     @Transactional(readOnly = true)
-    public Page<EmployeeRecordListRow> getEmployeeRecordsByYearAndMonth(int year, int month, String globalSearch, Pageable pageable){
+    /**
+     * The month's kartoni, live ones by default.
+     *
+     * <p>{@code onlyArchived} switches the list to the withdrawn ones instead of
+     * adding them: a withdrawn karton beside a live one in the same table would
+     * read as a duplicate of the same worker's month. It is the view the restore
+     * action is reached from.
+     */
+    public Page<EmployeeRecordListRow> getEmployeeRecordsByYearAndMonth(int year, int month, String globalSearch,
+                                                                        boolean onlyArchived, Pageable pageable){
         OffsetDateTime start = YearMonth.of(year, month).atDay(1).atStartOfDay().atOffset(ZoneOffset.UTC);
         OffsetDateTime end = start.plusMonths(1);
 
-        Page<EmployeeRecordInfo> page = employeeRecordRepository.findMonthlyRecords(start, end, globalSearch, pageable);
+        Page<EmployeeRecordInfo> page = employeeRecordRepository.findMonthlyRecords(start, end, globalSearch, onlyArchived, pageable);
 
         // The page's last shifts in ONE second query, not one per row: the list
         // glances at each karton's tail without opening any of them.
@@ -154,6 +186,14 @@ public class EmployeeRecordService {
 
         List<Employee> employees = employeeRepository.findAllByActiveTrueAndArchivedAtIsNull();
         for (Employee employee : employees) {
+            /*
+             * Deliberately NOT filtered on archived_at: a withdrawn karton still
+             * occupies (employee_id, start_date), so treating it as absent would
+             * send this straight into the unique constraint. A month whose karton
+             * was taken back is reopened by RESTORING it, not by creating a
+             * second one — which is also why countActiveWithoutRecord keeps
+             * counting the worker as having one.
+             */
             if (employeeRecordRepository.findByEmployeeIdAndStartDate(employee.getId(), monthStart).isPresent()) {
                 continue;
             }

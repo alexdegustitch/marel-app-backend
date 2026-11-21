@@ -10,4 +10,10 @@ public interface EmployeeRecordEmployeeInfo {
     Integer getMonth();
 
     Integer getYear();
+
+    /** When the karton was withdrawn, or null while it is live. See V73. */
+    Instant getArchivedAt();
+
+    /** Why it was withdrawn, as the person typed it; null while it is live. */
+    String getArchiveReason();
 }

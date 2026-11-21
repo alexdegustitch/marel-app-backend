@@ -50,6 +50,14 @@ public class EmployeeRecord {
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 
+    /** Who withdrew it; NULL while the karton is live. See V73. */
+    @Column(name = "archived_by")
+    private Long archivedBy;
+
+    /** Why, as the person typed it; NULL while the karton is live. See V73. */
+    @Column(name = "archive_reason")
+    private String archiveReason;
+
     @Column(name = "is_active", nullable = false)
     private Boolean active = true;
 

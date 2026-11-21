@@ -22,6 +22,8 @@ public record EmployeeRecordListRow(
         Integer totalShiftMinutes,
         BigDecimal totalWeightedNormMinutes,
         BigDecimal approvedPerformanceRate,
+        /** Set only on the archived view; null for a live karton. */
+        Instant archivedAt,
         List<ShiftGlance> recentShifts
 ) {
 
@@ -55,6 +57,7 @@ public record EmployeeRecordListRow(
                 info.getTotalShiftMinutes(),
                 info.getTotalWeightedNormMinutes(),
                 info.getApprovedPerformanceRate(),
+                info.getArchivedAt(),
                 recentShifts);
     }
 }

@@ -33,6 +33,15 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
     /** Every karton of one month — start_date is always the month's first day. */
     List<EmployeeRecord> findAllByStartDate(LocalDate startDate);
 
+    /**
+     * The LIVE kartoni of one month — what a month-wide withdrawal acts on.
+     *
+     * <p>Beside {@link #findAllByStartDate} rather than replacing it: that one
+     * answers "what did this month open", which the create path and the recalc
+     * workers need whole, archived rows included.
+     */
+    List<EmployeeRecord> findAllByStartDateAndArchivedAtIsNull(LocalDate startDate);
+
 
     @Query(value = """
         SELECT
@@ -48,6 +57,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         WHERE eru.user_id = :userId
           AND er.start_date >= CAST(:monthStart AS date)
           AND er.start_date < CAST(:monthEnd AS date)
+          AND er.archived_at IS NULL
         ORDER BY eru.last_activity_at DESC
         LIMIT 3
         """, nativeQuery = true)
@@ -71,7 +81,8 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             MAX(eru.last_activity_at) AS updateTime,
             mr.total_shift_minutes AS totalShiftMinutes,
             mr.total_weighted_norm_minutes AS totalWeightedNormMinutes,
-            mr.approved_performance_rate AS approvedPerformanceRate
+            mr.approved_performance_rate AS approvedPerformanceRate,
+            er.archived_at               AS archivedAt
         FROM employee_records er
         JOIN employees e ON e.id = er.employee_id
         JOIN departments d ON d.id = e.department_id
@@ -83,13 +94,16 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         LEFT JOIN monthly_reports mr ON mr.employee_record_id = er.id
         WHERE er.start_date >= CAST(:monthStart AS date)
           AND er.start_date < CAST(:monthEnd AS date)
+          AND ((:onlyArchived = TRUE  AND er.archived_at IS NOT NULL)
+            OR (:onlyArchived = FALSE AND er.archived_at IS NULL))
           AND (
                 :search IS NULL
                 OR e.full_name ILIKE '%' || :search || '%'
                 OR e.employee_no ILIKE '%' || :search || '%'
               )
         GROUP BY er.id, e.full_name, e.id, e.employee_no, d.name, bc.category_no,
-                 mr.total_shift_minutes, mr.total_weighted_norm_minutes, mr.approved_performance_rate
+                 mr.total_shift_minutes, mr.total_weighted_norm_minutes, mr.approved_performance_rate,
+                 er.archived_at
     """,
             countQuery = """
         SELECT COUNT(er.id)
@@ -97,6 +111,8 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         JOIN employees e ON e.id = er.employee_id
         WHERE er.start_date >= CAST(:monthStart AS date)
           AND er.start_date < CAST(:monthEnd AS date)
+          AND ((:onlyArchived = TRUE  AND er.archived_at IS NOT NULL)
+            OR (:onlyArchived = FALSE AND er.archived_at IS NULL))
           AND (
                 :search IS NULL
                 OR e.full_name ILIKE '%' || :search || '%'
@@ -109,6 +125,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             @Param("monthStart") OffsetDateTime monthStart,
             @Param("monthEnd") OffsetDateTime monthEnd,
             @Param("search") String search,
+            @Param("onlyArchived") boolean onlyArchived,
             Pageable pageable
     );
 
@@ -117,7 +134,9 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             e.full_name AS employeeName,
             e.id AS employeeId,
             EXTRACT(MONTH FROM er.start_date)::int AS month,
-            EXTRACT(YEAR FROM er.start_date)::int AS year
+            EXTRACT(YEAR FROM er.start_date)::int AS year,
+            er.archived_at                        AS archivedAt,
+            er.archive_reason                     AS archiveReason
         FROM employee_records er
         JOIN employees e ON e.id = er.employee_id
         WHERE er.id = :id
@@ -177,6 +196,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         -- employee page must still list the month rather than drop it.
         LEFT JOIN monthly_reports mr ON mr.employee_record_id = er.id
         WHERE e.id = :employeeId
+          AND er.archived_at IS NULL
         ORDER BY er.start_date DESC
         LIMIT :size
         """, nativeQuery = true)
@@ -204,6 +224,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             FROM employee_records er
             WHERE er.start_date >= :yearStart
               AND er.start_date <  :yearEnd
+              AND er.archived_at IS NULL
         ),
         totals AS (
             SELECT r.month,
@@ -258,6 +279,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
             WHERE eru.user_id = :userId
               AND er.start_date >= :yearStart
               AND er.start_date <  :yearEnd
+              AND er.archived_at IS NULL
         )
         SELECT m.month            AS month,
                m.record_id        AS employeeRecordId,
@@ -351,6 +373,7 @@ public interface EmployeeRecordRepository extends JpaRepository<EmployeeRecord, 
         JOIN employees e ON e.id = er.employee_id
         WHERE er.start_date >= :yearStart
           AND er.start_date <  :yearEnd
+          AND er.archived_at IS NULL
           AND (lower(e.full_name)   LIKE :pattern
             OR lower(e.employee_no) LIKE :pattern)
         ORDER BY er.start_date DESC, e.full_name ASC, er.id ASC
