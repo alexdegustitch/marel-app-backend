@@ -8,6 +8,7 @@ import com.aleksandarparipovic.marel_app.auth.dto.RefreshTokenRequest;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterRequest;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterResponse;
 import com.aleksandarparipovic.marel_app.auth.google.GoogleHandoffCodeStore;
+import com.aleksandarparipovic.marel_app.auth.google.GoogleLinkCodeStore;
 import com.aleksandarparipovic.marel_app.auth.google.GoogleOAuthService;
 import com.aleksandarparipovic.marel_app.auth.google.GooglePendingRegistrationStore;
 import com.aleksandarparipovic.marel_app.auth.google.GoogleUserInfo;
@@ -48,6 +49,7 @@ public class AuthController {
     private final OAuthStateStore oAuthStateStore;
     private final GoogleHandoffCodeStore googleHandoffCodeStore;
     private final GooglePendingRegistrationStore googlePendingRegistrationStore;
+    private final GoogleLinkCodeStore googleLinkCodeStore;
 
     @Value("${app.deep-link.scheme:marel}")
     private String deepLinkScheme;
@@ -143,7 +145,11 @@ public class AuthController {
         try {
             GoogleUserInfo info = googleOAuthService.exchangeCodeForUserInfo(code);
 
-            java.util.Optional<User> existing = authService.findGoogleUserForLogin(info.email());
+            if (OAuthStateStore.INTENT_LINK.equals(entry.intent())) {
+                return respondWithLinkResult(entry, info);
+            }
+
+            java.util.Optional<User> existing = authService.findGoogleUserForLogin(info);
 
             if (existing.isEmpty()) {
                 if (!INTENT_REGISTER.equals(entry.intent())) {
@@ -170,6 +176,38 @@ public class AuthController {
             log.error("[AuthController] Google OAuth callback failed", ex);
             return respondWithResult(entry.clientType(), "error", "google_failed");
         }
+    }
+
+    /**
+     * The join half of the callback: Google has confirmed an identity for a
+     * profile that asked from inside the application.
+     *
+     * <p>Nothing is WRITTEN here. The callback is an unauthenticated request
+     * arriving from a browser redirect, so it only hands back a one-time code;
+     * the application posts that code with its token and the join is applied
+     * there, by the profile's own session. {@link GoogleLinkCodeStore} says why.
+     *
+     * <p>An address Google itself does not vouch for is refused: a join is
+     * recorded by subject, so an unverified address would not weaken the match —
+     * but it WOULD be shown back to its owner on the profile page as the account
+     * they are joined to, and that statement has to be true.
+     */
+    private ResponseEntity<?> respondWithLinkResult(OAuthStateStore.Entry entry, GoogleUserInfo info) {
+        if (entry.userId() == null) {
+            // A link state is only ever issued with a profile on it; without one
+            // there is nothing this round-trip could be about.
+            log.warn("[AuthController] Google link callback carried no user id");
+            return respondWithResult(entry.clientType(), "error", "google_failed");
+        }
+
+        if (!info.emailVerified()) {
+            return respondWithResult(entry.clientType(), "error", "google_email_unverified");
+        }
+
+        String linkCode = googleLinkCodeStore.issue(new GoogleLinkCodeStore.PendingLink(
+                entry.userId(), info.subject(), info.email()));
+
+        return respondWithResult(entry.clientType(), "linkCode", linkCode);
     }
 
     private ResponseEntity<?> respondWithResult(String clientType, String paramName, String paramValue) {

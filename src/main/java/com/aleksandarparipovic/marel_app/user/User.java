@@ -114,4 +114,31 @@ public class User {
 
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
+
+    /**
+     * The Google account this profile is joined to, as Google's {@code sub}.
+     *
+     * <p>NULL for the great majority of accounts, which is not a gap: joining a
+     * Google account is a thing its owner does, and nobody else may do it for
+     * them. Unique across the table where it is set (uq_users_google_subject) —
+     * one Google account answers for at most one profile, because a sign-in that
+     * had to choose between two would be the one thing a sign-in must never do.
+     *
+     * <p>The SUBJECT and not the address, because it is the half Google promises
+     * not to change: somebody who renames their Gmail keeps the link.
+     *
+     * <p>Not a credential. It is an account number Google hands this application,
+     * and it is useless to anybody who cannot complete Google's own round-trip —
+     * which is why, unlike the password hash, it stays in the audit trail.
+     */
+    @Column(name = "google_subject", length = 64)
+    private String googleSubject;
+
+    /** The joined account's address, kept because it is what its owner recognises. */
+    @Column(name = "google_email")
+    private String googleEmail;
+
+    /** When the owner joined the two; NULL while nothing is joined. */
+    @Column(name = "google_linked_at")
+    private OffsetDateTime googleLinkedAt;
 }

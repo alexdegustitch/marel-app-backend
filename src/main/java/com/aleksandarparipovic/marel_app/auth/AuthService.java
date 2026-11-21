@@ -5,6 +5,7 @@ import com.aleksandarparipovic.marel_app.account.PasswordPolicy;
 import com.aleksandarparipovic.marel_app.account.UsernameRules;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterRequest;
 import com.aleksandarparipovic.marel_app.auth.dto.RegisterResponse;
+import com.aleksandarparipovic.marel_app.auth.google.GoogleUserInfo;
 import com.aleksandarparipovic.marel_app.auth.refresh.RefreshToken;
 import com.aleksandarparipovic.marel_app.auth.refresh.RefreshTokenService;
 import com.aleksandarparipovic.marel_app.role.Role;
@@ -330,12 +331,38 @@ public class AuthService {
 
     /**
      * "Continue with Google" from the LOGIN screen — never provisions an account.
-     * If no local user matches the Google-verified email, the caller must tell the
-     * user no such account exists rather than silently creating one.
+     * If no local user matches the Google-verified identity, the caller must tell
+     * the user no such account exists rather than silently creating one.
+     *
+     * <p>Three questions, in this order, and the first answer wins:
+     *
+     * <ol>
+     *   <li>the JOINED SUBJECT — Google's stable {@code sub}. Asked first because
+     *       it is the only half Google promises not to change, so it still answers
+     *       for somebody who has since renamed their Gmail.</li>
+     *   <li>the JOINED ADDRESS — for a link recorded without a subject.</li>
+     *   <li>the ACCOUNT ADDRESS — the comparison this flow used before joining
+     *       existed. Kept, and kept LAST, so that everybody whose account address
+     *       is itself their Gmail goes on signing in exactly as they did, with
+     *       nothing to migrate and nothing to join.</li>
+     * </ol>
+     *
+     * <p>Nothing is WRITTEN here, not even when the third question is what
+     * answered: recording a subject off the back of a matching address would be
+     * the application joining two accounts on somebody's behalf, and that is the
+     * one claim only the person themselves may make (see {@code V74}).
      */
     @Transactional(readOnly = true)
-    public java.util.Optional<User> findGoogleUserForLogin(String email) {
-        return userRepository.findByEmailAddressIgnoreCase(email);
+    public java.util.Optional<User> findGoogleUserForLogin(GoogleUserInfo info) {
+        if (info.subject() != null && !info.subject().isBlank()) {
+            java.util.Optional<User> bySubject = userRepository.findByGoogleSubject(info.subject());
+            if (bySubject.isPresent()) {
+                return bySubject;
+            }
+        }
+
+        return userRepository.findByGoogleEmailIgnoreCase(info.email())
+                .or(() -> userRepository.findByEmailAddressIgnoreCase(info.email()));
     }
 
     @Transactional

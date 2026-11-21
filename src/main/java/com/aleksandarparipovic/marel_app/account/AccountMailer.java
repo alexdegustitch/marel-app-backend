@@ -47,6 +47,20 @@ public class AccountMailer {
     public record PasswordEstablished(String toAddress, String recipientName) {
     }
 
+    /**
+     * A Google account was joined to this profile.
+     *
+     * <p>Goes to the ACCOUNT's own address, not the Google one: the point of the
+     * letter is that the rightful owner hears about a new way into their account
+     * even if it was somebody else at an unlocked session who added it.
+     */
+    public record GoogleLinked(String toAddress, String recipientName, String googleEmail) {
+    }
+
+    /** The same warning for the opposite decision: a way in was just removed. */
+    public record GoogleUnlinked(String toAddress, String recipientName, String googleEmail) {
+    }
+
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onCodeIssued(CodeIssued event) {
         send(EmailMessage.to(
@@ -78,6 +92,26 @@ public class AccountMailer {
                 event.toAddress(),
                 "Na vašem nalogu je postavljena lozinka",
                 passwordEstablishedBody(event),
+                appName,
+                null));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onGoogleLinked(GoogleLinked event) {
+        send(EmailMessage.to(
+                event.toAddress(),
+                "Vaš nalog je povezan sa Google nalogom",
+                googleLinkedBody(event),
+                appName,
+                null));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onGoogleUnlinked(GoogleUnlinked event) {
+        send(EmailMessage.to(
+                event.toAddress(),
+                "Veza sa Google nalogom je prekinuta",
+                googleUnlinkedBody(event),
                 appName,
                 null));
     }
@@ -126,6 +160,30 @@ public class AccountMailer {
                         + "Google-a, a lozinkom se potvrđuju radnje u aplikaciji.</p>"
                         + "<p style=\"margin:0;color:#b02a37\">Ako lozinku niste postavili vi, odmah se "
                         + "javite administratoru — neko drugi ima pristup vašem nalogu.</p>");
+    }
+
+    private String googleLinkedBody(GoogleLinked event) {
+        return wrap(
+                "<p style=\"margin:0 0 16px\">" + escape(greeting(event.recipientName())) + "</p>"
+                        + "<p style=\"margin:0 0 12px\">Vaš nalog je povezan sa Google nalogom "
+                        + "<strong>" + escape(event.googleEmail()) + "</strong>.</p>"
+                        + "<p style=\"margin:0 0 16px\">Od sada se možete prijaviti i dugmetom "
+                        + "„Nastavi preko Google-a\", pored prijave korisničkim imenom i lozinkom. "
+                        + "E-adresa naloga i lozinka ostaju nepromenjeni, i radnje u aplikaciji "
+                        + "potvrđujete lozinkom kao i do sada.</p>"
+                        + "<p style=\"margin:0;color:#b02a37\">Ako ovu vezu niste napravili vi, odmah se "
+                        + "javite administratoru — neko drugi ima pristup vašem nalogu.</p>");
+    }
+
+    private String googleUnlinkedBody(GoogleUnlinked event) {
+        return wrap(
+                "<p style=\"margin:0 0 16px\">" + escape(greeting(event.recipientName())) + "</p>"
+                        + "<p style=\"margin:0 0 12px\">Veza vašeg naloga sa Google nalogom "
+                        + "<strong>" + escape(event.googleEmail()) + "</strong> je prekinuta.</p>"
+                        + "<p style=\"margin:0 0 16px\">Prijava preko Google-a više ne radi za ovaj nalog; "
+                        + "prijavljujete se korisničkim imenom i lozinkom.</p>"
+                        + "<p style=\"margin:0;color:#b02a37\">Ako ovo niste uradili vi, odmah se javite "
+                        + "administratoru.</p>");
     }
 
     private String greeting(String recipientName) {
