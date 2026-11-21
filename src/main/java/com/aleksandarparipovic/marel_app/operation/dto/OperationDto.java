@@ -11,6 +11,11 @@ public class OperationDto {
     private Long id;
     private Long productId;
     private String operationName;
+
+    /** The operation's own description — read by the add-operations drawer so a
+     * copy carries the source's definition, not only its name. */
+    private String description;
+
     private Integer minNorm;
     private Integer maxNorm;
     private Boolean normRequired;

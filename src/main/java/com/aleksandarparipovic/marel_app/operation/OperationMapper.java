@@ -14,6 +14,7 @@ public class OperationMapper {
         dto.setId(o.getId());
         dto.setProductId(o.getProduct() == null ? null : o.getProduct().getId());
         dto.setOperationName(o.getOpName());
+        dto.setDescription(o.getDescription());
         dto.setMinNorm(o.getMinNorm());
         dto.setMaxNorm(o.getMaxNorm());
         dto.setNormRequired(o.isNormRequired());

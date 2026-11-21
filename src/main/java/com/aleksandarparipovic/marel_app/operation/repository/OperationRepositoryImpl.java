@@ -70,7 +70,8 @@ public class OperationRepositoryImpl implements OperationRepositoryCustom {
                     productCountExpression,
                     productJoin(joinManager, cb).get("catalogNumber"),
                     root.get("temporary"),
-                    root.get("standalone")
+                    root.get("standalone"),
+                    root.get("description")
             ));
         } else {
             throw new UnsupportedOperationException("Unsupported projection type " + projectionType.getName());

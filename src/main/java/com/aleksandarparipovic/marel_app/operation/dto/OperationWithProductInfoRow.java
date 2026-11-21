@@ -29,6 +29,9 @@ public class OperationWithProductInfoRow {
     // An OSNOVNA operation — no product; the grid shows a badge where the
     // product band would be.
     private final boolean standalone;
+    // The operation's own description. Carried so the add-operations drawer can
+    // hand a copy the source's whole definition, not only its name.
+    private final String description;
 
 
 }
