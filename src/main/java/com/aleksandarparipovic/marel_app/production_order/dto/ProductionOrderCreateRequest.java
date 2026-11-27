@@ -39,6 +39,8 @@ public record ProductionOrderCreateRequest(
 
     public record LineItemRequest(
             @NotNull Long productId,
+            /** Required when the product has live variants; a different variant is a different line. */
+            Long productVariantId,
             String description,
             String note,
             Integer lineOrder,

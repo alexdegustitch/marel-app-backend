@@ -78,7 +78,7 @@ class OrderCopySourceSearchIT extends AbstractIntegrationTest {
             Product product, String description, String note, int quantity
     ) {
         return new ProductionOrderCreateRequest.LineItemRequest(
-                product.getId(), description, note, 1,
+                product.getId(), null, description, note, 1,
                 List.of(new ProductionOrderCreateRequest.QuantityRequest(
                         quantity, LocalDate.of(2026, 9, 1))));
     }

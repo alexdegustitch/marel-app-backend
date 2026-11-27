@@ -122,6 +122,7 @@ public class ProductionOrderService {
     private final OutboxEventPublisher outboxEventPublisher;
     private final OrderProgressService orderProgressService;
     private final PasswordConfirmationService passwordConfirmation;
+    private final com.aleksandarparipovic.marel_app.product_variant.ProductVariantLineResolver productVariantLineResolver;
 
     @Transactional
     public ProductionOrderDetailDto create(ProductionOrderCreateRequest req) {
@@ -187,6 +188,9 @@ public class ProductionOrderService {
                 ProductionOrderLineItem lineItem = new ProductionOrderLineItem();
                 lineItem.setProductionOrder(order);
                 lineItem.setProduct(product);
+                // V78: a product with live variants is ordered AS a variant.
+                lineItem.setProductVariant(
+                        productVariantLineResolver.resolveForLine(product, itemReq.productVariantId()));
                 lineItem.setQuantity(totalQty);
                 lineItem.setProductDescription(itemReq.description());
                 lineItem.setNote(itemReq.note());
@@ -593,6 +597,9 @@ public class ProductionOrderService {
                 ProductionOrderLineItem lineItem = new ProductionOrderLineItem();
                 lineItem.setProductionOrder(order);
                 lineItem.setProduct(product);
+                // V78: a product with live variants is ordered AS a variant.
+                lineItem.setProductVariant(
+                        productVariantLineResolver.resolveForLine(product, itemReq.productVariantId()));
                 lineItem.setQuantity(totalQty);
                 lineItem.setProductDescription(itemReq.description());
                 lineItem.setNote(itemReq.note());
@@ -637,6 +644,11 @@ public class ProductionOrderService {
         boolean alreadyDelivered = order.getStatus() == ProductionOrderStatus.DELIVERED;
 
         order.setStatus(ProductionOrderStatus.DELIVERED);
+        if (!alreadyDelivered) {
+            // SPEC odluka 16: the result is frozen WITH the status, same
+            // transaction — later catalogue edits must not rewrite history.
+            order.setClosedProgressSnapshot(orderProgressService.closingSnapshot(order.getId()));
+        }
         order = productionOrderRepository.save(order);
 
         // Published only on the actual transition. Outbox idempotency is keyed on
@@ -688,6 +700,9 @@ public class ProductionOrderService {
 
         if (order.getStatus() != ProductionOrderStatus.CANCELLED) {
             order.setStatus(ProductionOrderStatus.CANCELLED);
+            // SPEC odluka 16: cancelled is closed too — what was worked up to
+            // the call-off is the order's final, frozen figure.
+            order.setClosedProgressSnapshot(orderProgressService.closingSnapshot(order.getId()));
             order.setCancelledAt(OffsetDateTime.now());
             // The identity whose password was just confirmed — the signature
             // records the signer, not whatever the session happens to hold.

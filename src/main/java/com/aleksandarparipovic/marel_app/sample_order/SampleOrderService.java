@@ -101,6 +101,7 @@ public class SampleOrderService {
     private final PermissionService permissionService;
     private final OutboxEventPublisher outboxEventPublisher;
     private final PasswordConfirmationService passwordConfirmation;
+    private final com.aleksandarparipovic.marel_app.product_variant.ProductVariantLineResolver productVariantLineResolver;
 
     // ── Writing ─────────────────────────────────────────────────────────────
 
@@ -137,6 +138,7 @@ public class SampleOrderService {
                 lineItemDtos.add(writeLineItem(
                         order,
                         itemReq.productId(),
+                        itemReq.productVariantId(),
                         itemReq.description(),
                         itemReq.note(),
                         itemReq.lineOrder() != null ? itemReq.lineOrder() : position,
@@ -198,6 +200,7 @@ public class SampleOrderService {
                 lineItemDtos.add(writeLineItem(
                         order,
                         itemReq.productId(),
+                        itemReq.productVariantId(),
                         itemReq.description(),
                         itemReq.note(),
                         itemReq.lineOrder() != null ? itemReq.lineOrder() : position,
@@ -325,6 +328,7 @@ public class SampleOrderService {
     private SampleOrderLineItemDto writeLineItem(
             SampleOrder order,
             Long productId,
+            Long productVariantId,
             String description,
             String note,
             int lineOrder,
@@ -341,6 +345,9 @@ public class SampleOrderService {
         SampleOrderLineItem lineItem = new SampleOrderLineItem();
         lineItem.setSampleOrder(order);
         lineItem.setProduct(product);
+        // V78: a product with live variants is ordered AS a variant.
+        lineItem.setProductVariant(
+                productVariantLineResolver.resolveForLine(product, productVariantId));
         lineItem.setOrderLine(lineOrder);
         lineItem.setQuantity(quantity);
         lineItem.setProductDescription(blankToNull(description));

@@ -28,11 +28,33 @@ public class OperationMapper {
          */
         dto.setNormTemporary(o.isTemporary());
         dto.setWorkCodeCategoryId(o.getWorkCodeCategory() != null ? o.getWorkCodeCategory().getId() : null);
+
+        dto.setSortOrder(o.getSortOrder());
+        if (o.getOperationGroup() != null) {
+            dto.setOperationGroupId(o.getOperationGroup().getId());
+            dto.setOperationGroupName(o.getOperationGroup().getName());
+        }
+        dto.setGroupDefault(o.isGroupDefault());
+        // One row by the service's rule (SPEC odluka 4); first() is the whole set.
+        o.getVariantBindings().stream().findFirst().ifPresent(binding -> {
+            dto.setBindingAttributeId(binding.getAttribute().getId());
+            dto.setBindingAttributeName(binding.getAttribute().getName());
+            dto.setBindingOptionId(binding.getOption().getId());
+            dto.setBindingOptionValue(binding.getOption().getValue());
+        });
         return dto;
     }
 
     public OperationBasicInfoDto toBasicDto(Operation o){
         Long workCodeCategoryId = o.getWorkCodeCategory() != null ? o.getWorkCodeCategory().getId() : null;
-        return new OperationBasicInfoDto(o.getId(), o.getOpName(), o.getMinNorm(), workCodeCategoryId);
+        OperationVariantOption binding = o.getVariantBindings().stream().findFirst().orElse(null);
+        return new OperationBasicInfoDto(
+                o.getId(), o.getOpName(), o.getMinNorm(), workCodeCategoryId,
+                o.getOperationGroup() == null ? null : o.getOperationGroup().getId(),
+                o.getOperationGroup() == null ? null : o.getOperationGroup().getName(),
+                o.isGroupDefault(),
+                binding == null ? null : binding.getAttribute().getName(),
+                binding == null ? null : binding.getOption().getId(),
+                binding == null ? null : binding.getOption().getValue());
     }
 }

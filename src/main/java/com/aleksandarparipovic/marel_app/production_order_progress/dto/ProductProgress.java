@@ -24,10 +24,24 @@ public record ProductProgress(
         List<Long> lineItemIds,
         /** Σ of the covered lines' ordered quantities. */
         long requiredProducts,
-        /** The bottleneck: the fewest whole products any needed operation allows. */
+        /**
+         * The LOWER bound of the finished count: pieces that are whole in every
+         * reading of the shared pools. With one line, or with no shared
+         * operations, it equals {@link #wholeProductsDoneMax} and the range
+         * collapses to the old single figure.
+         */
         long wholeProductsDone,
+        /**
+         * The UPPER bound: the most whole products any allowed reading of the
+         * shared pools adds up to, computed JOINTLY over the lines (SPEC 5.6,
+         * mera 2) — not the sum of each line's own best case, which would count
+         * a shared pool twice.
+         */
+        long wholeProductsDoneMax,
         /** wholeProductsDone ÷ requiredProducts, never above 100. */
         BigDecimal percent,
+        /** wholeProductsDoneMax ÷ requiredProducts — the range's other end. */
+        BigDecimal percentMax,
         /**
          * Which operation is holding the product back, or null when it is
          * finished. The id travels with the name so a screen can link to the
@@ -35,6 +49,8 @@ public record ProductProgress(
          */
         Long bottleneckOperationId,
         String bottleneckOperationName,
-        List<OperationProgress> operations
+        List<OperationProgress> operations,
+        /** The per-line ranges behind the total; one row per order line. */
+        List<LineProgress> lines
 ) {
 }

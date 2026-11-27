@@ -28,6 +28,16 @@ public class ProductionOrderLineItem {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
+    /**
+     * Which variant this line orders (V78). NULL = a product without variants.
+     * The composite FK proves the variant belongs to this line's product; the
+     * service makes it REQUIRED once the product has live variants. A different
+     * variant is a different line; the same variant may repeat freely.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_variant_id")
+    private com.aleksandarparipovic.marel_app.product_variant.ProductVariant productVariant;
+
     @Column(name = "quantity", nullable = false)
     private Integer quantity;
 

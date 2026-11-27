@@ -7,6 +7,9 @@ public record SampleOrderLineItemDto(
         Long productId,
         String productName,
         String productCode,
+        /** The ordered variant (V78); both null on a product without variants. */
+        Long productVariantId,
+        String productVariantLabel,
         /** The opis the shop floor works from. */
         String productDescription,
         Integer lineOrder,

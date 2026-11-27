@@ -39,6 +39,16 @@ public class ProductManufacturingTime {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
+    /**
+     * The variant this time was configured for (V78). NULL on a product WITH
+     * variants is legal and means "all variants": the configurator offered the
+     * union of every variant's operations and the excluded flags picked what
+     * counts (SPEC odluka 9).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_variant_id")
+    private com.aleksandarparipovic.marel_app.product_variant.ProductVariant productVariant;
+
     @Column(name = "product_name", nullable = false)
     private String productName;
 

@@ -99,7 +99,7 @@ class CustomerOrdersPageIT extends AbstractIntegrationTest {
                 false, false, false,
                 List.of(),
                 List.of(new ProductionOrderCreateRequest.LineItemRequest(
-                        product.getId(), null, "bez posebne napomene", 1,
+                        product.getId(), null, null, "bez posebne napomene", 1,
                         List.of(new ProductionOrderCreateRequest.QuantityRequest(1, null)))),
                 null));
     }
@@ -112,7 +112,7 @@ class CustomerOrdersPageIT extends AbstractIntegrationTest {
         List<ProductionOrderCreateRequest.LineItemRequest> lines = lineNote == null
                 ? List.of()
                 : List.of(new ProductionOrderCreateRequest.LineItemRequest(
-                        aProduct().getId(), null, lineNote, 1,
+                        aProduct().getId(), null, null, lineNote, 1,
                         List.of(new ProductionOrderCreateRequest.QuantityRequest(5, null))));
 
         return productionOrderService.create(new ProductionOrderCreateRequest(
@@ -284,10 +284,10 @@ class CustomerOrdersPageIT extends AbstractIntegrationTest {
                 List.of(),
                 List.of(
                         new ProductionOrderCreateRequest.LineItemRequest(
-                                aProduct().getId(), null, "obična obrada", 1,
+                                aProduct().getId(), null, null, "obična obrada", 1,
                                 List.of(new ProductionOrderCreateRequest.QuantityRequest(1, null))),
                         new ProductionOrderCreateRequest.LineItemRequest(
-                                aProduct().getId(), null, "lakirati u sivo", 2,
+                                aProduct().getId(), null, null, "lakirati u sivo", 2,
                                 List.of(new ProductionOrderCreateRequest.QuantityRequest(1, null)))),
                 null));
 

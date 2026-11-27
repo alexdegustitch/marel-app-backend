@@ -42,6 +42,8 @@ import java.util.Set;
 public class OrderProgressService {
 
     private final OrderProgressQueryRepository repository;
+    private final com.aleksandarparipovic.marel_app.production_order.repository.ProductionOrderRepository orderRepository;
+    private final ClosedOrderProgressStore snapshotStore;
 
     /** One order, fully broken down. Never null: an unknown order has no scope. */
     @Transactional(readOnly = true)
@@ -55,9 +57,15 @@ public class OrderProgressService {
     /**
      * Several orders at once — what a list of order cards needs.
      *
-     * <p>Four queries whatever the number of orders, never one per order.
+     * <p>Five queries whatever the number of orders, never one per order.
+     *
+     * <p><b>Closed orders answer from their snapshot</b> (SPEC odluka 16): a
+     * DELIVERED or CANCELLED order returns the figure written when it closed,
+     * so a later catalogue edit cannot rewrite its history. A closed order
+     * from before V78 has no snapshot yet — it is computed here once and the
+     * result is written back (lazy backfill, same code, same structure).
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public Map<Long, OrderProgress> forOrders(Collection<Long> orderIds) {
         Set<Long> ids = new java.util.LinkedHashSet<>();
         for (Long id : orderIds) {
@@ -67,6 +75,45 @@ public class OrderProgressService {
             return Map.of();
         }
 
+        Map<Long, OrderProgress> fromSnapshots = new HashMap<>();
+        List<com.aleksandarparipovic.marel_app.production_order.ProductionOrder> closedWithoutSnapshot =
+                new java.util.ArrayList<>();
+        for (var order : orderRepository.findAllById(ids)) {
+            if (order.getStatus() == com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus.CREATED) {
+                continue;
+            }
+            OrderProgress stored = snapshotStore.read(order.getClosedProgressSnapshot());
+            if (stored != null) {
+                fromSnapshots.put(order.getId(), stored);
+            } else {
+                closedWithoutSnapshot.add(order);
+            }
+        }
+
+        Set<Long> toCompute = new java.util.LinkedHashSet<>(ids);
+        toCompute.removeAll(fromSnapshots.keySet());
+
+        Map<Long, OrderProgress> computed = toCompute.isEmpty() ? Map.of() : compute(toCompute);
+
+        // Lazy backfill: a closed order computed once writes what it computed,
+        // in THIS transaction, and never computes again.
+        for (var order : closedWithoutSnapshot) {
+            OrderProgress progress = computed.get(order.getId());
+            if (progress != null) {
+                order.setClosedProgressSnapshot(snapshotStore.envelope(progress));
+                orderRepository.save(order);
+            }
+        }
+
+        Map<Long, OrderProgress> result = new LinkedHashMap<>();
+        for (Long id : ids) {
+            OrderProgress progress = fromSnapshots.get(id);
+            result.put(id, progress != null ? progress : computed.get(id));
+        }
+        return result;
+    }
+
+    private Map<Long, OrderProgress> compute(Set<Long> ids) {
         List<ScopeRequirementRow> requirements = repository.findRequirements(ids);
         List<OperationOutputRow> output = repository.findOutput(ids);
 
@@ -76,7 +123,50 @@ public class OrderProgressService {
         }
 
         return OrderProgressCalculator.calculate(
-                requirements, output, strayOperations(requirements, output), linesWithoutScope, ids);
+                requirements, output,
+                operationKeys(requirements, output),
+                strayOperations(requirements, output),
+                linesWithoutScope, ids);
+    }
+
+    /**
+     * Each seen operation's aggregation key — COALESCE(group, operation), the
+     * V77 rule that makes interchangeable machines pool their work. Fetched
+     * for the handful of ids the answer mentions so the work-log sum itself
+     * stays index-only.
+     */
+    private Map<Long, com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKey> operationKeys(
+            List<ScopeRequirementRow> requirements, List<OperationOutputRow> output) {
+        Set<Long> operationIds = new HashSet<>();
+        for (ScopeRequirementRow row : requirements) {
+            operationIds.add(row.getOperationId());
+        }
+        for (OperationOutputRow row : output) {
+            if (row.getOperationId() != null) {
+                operationIds.add(row.getOperationId());
+            }
+        }
+        operationIds.remove(null);
+        if (operationIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKey> keys = new HashMap<>();
+        for (var row : repository.findOperationKeys(operationIds)) {
+            keys.put(row.getOperationId(),
+                    new com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKey(
+                            row.getOperationGroupId(), row.getOperationGroupName()));
+        }
+        return keys;
+    }
+
+    /**
+     * The envelope a closing order writes, computed FRESH inside the closing
+     * transaction (the snapshot in the table is still null there).
+     */
+    @Transactional
+    public com.fasterxml.jackson.databind.JsonNode closingSnapshot(Long orderId) {
+        OrderProgress progress = compute(new java.util.LinkedHashSet<>(List.of(orderId))).get(orderId);
+        return snapshotStore.envelope(progress);
     }
 
     /** The compact figure a card or a table row shows. */

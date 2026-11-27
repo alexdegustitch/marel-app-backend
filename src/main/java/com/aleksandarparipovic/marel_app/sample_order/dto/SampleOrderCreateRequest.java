@@ -40,6 +40,8 @@ public record SampleOrderCreateRequest(
 ) {
     public record LineItemRequest(
             @NotNull(message = "Proizvod je obavezan") Long productId,
+            /** Required when the product has live variants (V78). */
+            Long productVariantId,
             /** The opis the shop floor works from. */
             String description,
             String note,

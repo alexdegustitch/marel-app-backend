@@ -53,6 +53,8 @@ public class SampleOrderMapper {
                 lineItem.getProduct().getId(),
                 lineItem.getProduct().getProductName(),
                 lineItem.getProduct().getProductCode(),
+                lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().getId(),
+                lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().displayLabel(),
                 lineItem.getProductDescription(),
                 lineItem.getOrderLine(),
                 lineItem.getQuantity(),

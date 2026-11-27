@@ -72,14 +72,45 @@ public class OperationController {
     }
 
     @GetMapping("/active-operations-for-product/id={id}&date={date}")
-    public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(@PathVariable Long id, @PathVariable LocalDate date){
-        List<OperationBasicInfoDto> operationBasicInfoDtos = operationService.getAllOperationsForProduct(id, date);
+    public ResponseEntity<List<OperationBasicInfoDto>> getAllOperationsForProduct(
+            @PathVariable Long id,
+            @PathVariable LocalDate date,
+            @RequestParam(required = false) Long attributeOptionId
+    ){
+        List<OperationBasicInfoDto> operationBasicInfoDtos =
+                operationService.getAllOperationsForProduct(id, date, attributeOptionId);
         return ResponseEntity.ok(operationBasicInfoDtos);
     }
 
+    /**
+     * V77 — two optional filters over the same list. {@code variantId}: only
+     * the operations that apply to that variant (unbound + its values).
+     * {@code attributeOptionId}: the karton filter — unbound + bound to that
+     * one value. Neither: everything except operations bound to a value no
+     * live variant carries.
+     */
     @GetMapping("/operations-for-product/id={id}&date={date}")
-    public ResponseEntity<List<OperationDto>> getAllOperationsForProductDto(@PathVariable Long id, @PathVariable LocalDate date){
-        return ResponseEntity.ok(operationService.getAllOperationsForProductDto(id, date));
+    public ResponseEntity<List<OperationDto>> getAllOperationsForProductDto(
+            @PathVariable Long id,
+            @PathVariable LocalDate date,
+            @RequestParam(required = false) Long variantId,
+            @RequestParam(required = false) Long attributeOptionId
+    ){
+        return ResponseEntity.ok(operationService.getAllOperationsForProductDto(id, date, variantId, attributeOptionId));
+    }
+
+    /**
+     * Sets or clears the binding — the attribute value the operation exists
+     * for. On a group member it changes every member, because members share
+     * the binding set by invariant.
+     */
+    @PutMapping("/{id}/binding")
+    public ResponseEntity<Void> setBinding(
+            @PathVariable Long id,
+            @RequestBody OperationBindingRequest request
+    ){
+        operationService.setBinding(id, request.getVariantAttributeOptionId());
+        return ResponseEntity.noContent().build();
     }
 
     /**

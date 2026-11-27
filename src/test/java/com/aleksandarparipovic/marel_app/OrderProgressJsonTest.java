@@ -31,7 +31,7 @@ class OrderProgressJsonTest {
     @DisplayName("an operation reports its percentage, not only the pieces behind it")
     void operationCarriesItsPercentage() throws Exception {
         OperationProgress operation = new OperationProgress(
-                1L, "Operacija 1", BigDecimal.ONE, 2000, 356, 0);
+                1L, "Operacija 1", null, null, BigDecimal.ONE, 2000, 356, 0);
 
         JsonNode json = mapper.readTree(mapper.writeValueAsString(operation));
 
@@ -45,10 +45,13 @@ class OrderProgressJsonTest {
     @DisplayName("the whole answer keeps its figures down to the operation the screen draws")
     void theWholeTreeSurvivesSerialisation() throws Exception {
         OperationProgress operation = new OperationProgress(
-                1L, "Operacija 1", BigDecimal.ONE, 2000, 356, 0);
+                1L, "Operacija 1", null, null, BigDecimal.ONE, 2000, 356, 0);
         ProductProgress product = new ProductProgress(
-                2L, "Kućište pumpe", List.of(314L), 2000, 356,
-                new BigDecimal("17.8"), 1L, "Operacija 1", List.of(operation));
+                2L, "Kućište pumpe", List.of(314L), 2000, 356, 356,
+                new BigDecimal("17.8"), new BigDecimal("17.8"), 1L, "Operacija 1",
+                List.of(operation),
+                List.of(new com.aleksandarparipovic.marel_app.production_order_progress.dto.LineProgress(
+                        314L, null, null, 2000, 356, 356)));
         OrderProgress progress = new OrderProgress(
                 44L, true, 1, 0, 11000, 356, 356, 0,
                 new BigDecimal("3.2"), List.of(product),

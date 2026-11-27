@@ -36,4 +36,24 @@ public class OperationDto {
      */
     private Long workCodeCategoryId;
 
+    // ── V77: binding, group, step ────────────────────────────────────────────
+
+    /** Step within the product; equal numbers run in parallel, null = unplaced. */
+    private Integer sortOrder;
+
+    /** The group of interchangeable machine-operations, when it is in one. */
+    private Long operationGroupId;
+    private String operationGroupName;
+    /** The member manufacturing time preselects and razrada names. */
+    private Boolean groupDefault;
+
+    /**
+     * The binding: the attribute value this operation exists for. All four null
+     * = the operation applies to every variant of its product (every pre-V77
+     * operation). The karton badge and the "važi za" chip read these.
+     */
+    private Long bindingAttributeId;
+    private String bindingAttributeName;
+    private Long bindingOptionId;
+    private String bindingOptionValue;
 }

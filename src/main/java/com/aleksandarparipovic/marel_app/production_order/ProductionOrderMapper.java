@@ -63,6 +63,8 @@ public class ProductionOrderMapper {
                 lineItem.getId(),
                 lineItem.getProduct().getId(),
                 lineItem.getProduct().getProductName(),
+                lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().getId(),
+                lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().displayLabel(),
                 lineItem.getProductDescription(),
                 lineItem.getLineOrder(),
                 lineItem.getNote(),

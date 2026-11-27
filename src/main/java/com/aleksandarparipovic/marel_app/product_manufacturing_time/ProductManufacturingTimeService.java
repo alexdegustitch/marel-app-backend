@@ -49,6 +49,7 @@ public class ProductManufacturingTimeService {
     private final OperationRepository operationRepository;
     private final ProductManufacturingTimeOperationRepository pmtoRepository;
     private final ManufacturingTimeRequestRepository requestRepository;
+    private final com.aleksandarparipovic.marel_app.product_variant.ProductVariantLineResolver productVariantLineResolver;
 
     private static final ProductManufacturingTimeFieldMapper FIELD_MAPPER =
             new ProductManufacturingTimeFieldMapper();
@@ -66,6 +67,9 @@ public class ProductManufacturingTimeService {
         entity.setTitle(req.getTitle());
         entity.setNote(req.getNote());
         entity.setProduct(product);
+        // V78: null is legal on a variant-ful product and means "all variants".
+        entity.setProductVariant(
+                productVariantLineResolver.resolveOptional(product, req.getProductVariantId()));
         entity.setProductName(req.getProductName());
         entity.setDateOfIssue(LocalDate.now());
         entity.setManufacturingCoefficient(req.getManufacturingCoefficient());
@@ -94,6 +98,9 @@ public class ProductManufacturingTimeService {
         entity.setTitle(req.getTitle());
         entity.setNote(req.getNote());
         entity.setProduct(product);
+        // V78: null is legal on a variant-ful product and means "all variants".
+        entity.setProductVariant(
+                productVariantLineResolver.resolveOptional(product, req.getProductVariantId()));
         entity.setProductName(req.getProductName());
         entity.setDateOfIssue(LocalDate.now());
         entity.setManufacturingCoefficient(req.getManufacturingCoefficient());

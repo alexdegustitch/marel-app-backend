@@ -29,6 +29,8 @@ public record SampleOrderUpdateRequest(
 ) {
     public record LineItemRequest(
             @NotNull(message = "Proizvod je obavezan") Long productId,
+            /** Required when the product has live variants (V78). */
+            Long productVariantId,
             String description,
             String note,
             Integer lineOrder,

@@ -236,9 +236,15 @@ public class WorkLogMapper {
 
         workLogValidator.validateTimeRange(time.start(), time.end());
 
+        ProductionOrder order =
+                referenceProvider.getOptionalReference(ProductionOrder.class, dto.getProductionOrderId());
+        // A NEW log on a closed order is refused (SPEC odluka 16); edits of
+        // existing logs stay possible — see the validator's note.
+        workLogValidator.validateOrderOpen(order);
+
         WorkLog workLog = WorkLog.builder()
                 .workShift(workShift)
-                .productionOrder(referenceProvider.getOptionalReference(ProductionOrder.class, dto.getProductionOrderId()))
+                .productionOrder(order)
                 .operation(operation)
                 .workCode(referenceProvider.getRequiredReference(WorkCodeCategory.class, dto.getWorkCodeCategoryId(), "workCodeCategoryId"))
                 .startAt(time.start())
