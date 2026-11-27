@@ -325,6 +325,30 @@ class OperationNormInForceIT extends AbstractIntegrationTest {
         assertThat(operationRepository.findById(operation.getId()).orElseThrow().getNormDate()).isNull();
     }
 
+    @Test
+    @DisplayName("marking an undated norm as privremena through the form reaches the version in force")
+    void formFlipsTemporaryOnAnUndatedNorm() {
+        Operation operation = normedOperation();
+        // An undated norm that is NOT privremena: same numbers, same (absent)
+        // date as after the flip — only the flag differs.
+        detail.addNorm(operation.getId(),
+                new OperationNormVersionCreateRequest(50, 1, null, false, null), null);
+
+        OperationUpdateRequest tick = formUpdate(operation.getOpName(), 50, null);
+        tick.setTemporary(true);
+        operations.updateOperation(operation.getId(), tick);
+
+        // The detail page and the edit form read the VERSION's flag, so the tick
+        // must land there, not only on the operation's own column.
+        assertThat(inForce(detail.getNormHistory(operation.getId(), false)).temporary()).isTrue();
+
+        OperationUpdateRequest untick = formUpdate(operation.getOpName(), 50, null);
+        untick.setTemporary(false);
+        operations.updateOperation(operation.getId(), untick);
+
+        assertThat(inForce(detail.getNormHistory(operation.getId(), false)).temporary()).isFalse();
+    }
+
     private static OperationNormVersionDto inForce(List<OperationNormVersionDto> history) {
         return history.stream().filter(OperationNormVersionDto::current).findFirst().orElseThrow();
     }

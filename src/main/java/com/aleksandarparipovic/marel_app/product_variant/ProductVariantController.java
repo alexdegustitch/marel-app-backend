@@ -28,6 +28,15 @@ public class ProductVariantController {
         return ResponseEntity.ok(service.listForProduct(productId, onlyActive));
     }
 
+    /**
+     * The variants that would be left without a value if this attribute became
+     * required — the šifarnik reads it before flipping "obavezan" on.
+     */
+    @GetMapping("/api/variant-attributes/{attributeId}/variants-missing-value")
+    public ResponseEntity<List<VariantMissingValueRow>> variantsMissingValue(@PathVariable Long attributeId) {
+        return ResponseEntity.ok(service.listMissingValueForAttribute(attributeId));
+    }
+
     @PostMapping("/api/products/{productId}/variants")
     public ResponseEntity<ProductVariantDto> create(
             @PathVariable Long productId,

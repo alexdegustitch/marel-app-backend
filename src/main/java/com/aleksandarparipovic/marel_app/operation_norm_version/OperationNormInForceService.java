@@ -174,6 +174,11 @@ public class OperationNormInForceService {
         return Objects.equals(version.getMinNorm(), operation.getMinNorm())
                 && Objects.equals(version.getMaxNorm(), operation.getMaxNorm())
                 && Objects.equals(version.getUnitsPerProduct(), operation.getUnitsPerProduct())
-                && Objects.equals(version.getNormDate(), operation.getNormDate());
+                && Objects.equals(version.getNormDate(), operation.getNormDate())
+                // An undated norm flipped between "privremena" and plain undated
+                // changes no number and no date, yet it IS a different fact — the
+                // detail page and the edit form read the VERSION's flag, so a flip
+                // the version never records looks like a tick that will not stick.
+                && version.isTemporary() == operation.isTemporary();
     }
 }

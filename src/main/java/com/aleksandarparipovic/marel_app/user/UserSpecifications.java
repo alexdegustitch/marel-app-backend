@@ -63,4 +63,10 @@ public class UserSpecifications {
         return (root, query, cb) ->
                 cb.equal(root.get("active"), active);
     }
+
+    /** TRUE = soft-deleted accounts only, FALSE = live ones only. */
+    public static Specification<User> isArchived(boolean archived) {
+        return (root, query, cb) ->
+                archived ? cb.isNotNull(root.get("archivedAt")) : cb.isNull(root.get("archivedAt"));
+    }
 }

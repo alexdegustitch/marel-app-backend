@@ -29,6 +29,23 @@ public final class ProductVariantDtos {
         private boolean inUse;
     }
 
+    /**
+     * One variant that would be left without a value if an attribute became
+     * required — the list shown before the "obavezan" flip, so whoever flips it
+     * knows exactly what to fill in (and which variants are frozen and cannot be).
+     */
+    @Getter
+    @Builder
+    public static class VariantMissingValueRow {
+        private Long variantId;
+        private Long productId;
+        private String productName;
+        /** Ručni naziv ako postoji, inače spojene vrednosti ("Prohrom / Al"). */
+        private String variantLabel;
+        /** Frozen (referenced): values cannot be added — a change is a NEW variant. */
+        private boolean inUse;
+    }
+
     @Getter
     @Builder
     public static class ProductVariantValueDto {

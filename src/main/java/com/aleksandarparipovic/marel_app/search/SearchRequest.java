@@ -10,6 +10,12 @@ public class SearchRequest {
     private List<SearchRequest.SortField> sort;
     private List<SearchRequest.FilterField> filters;
     private String globalSearch;
+    /**
+     * TRUE lists ONLY archived rows; null/false keeps today's behaviour (live
+     * rows only). Either way the list is one world or the other, never a mix —
+     * same as the records page's "Aktivni | Arhivirani" toggle.
+     */
+    private Boolean archivedOnly;
 
     // ---------- nested DTOs ----------
 

@@ -53,7 +53,7 @@ class UserDirectoryPresenceIT extends AbstractIntegrationTest {
 
     private UserDto rowFor(Long userId) {
         return userService
-                .getUsers(0, 200, null, null, null, null, null, null, Sort.Direction.ASC, "id")
+                .getUsers(0, 200, null, null, null, null, null, null, null, Sort.Direction.ASC, "id")
                 .getContent().stream()
                 .filter(row -> row.getId().equals(userId))
                 .findFirst().orElseThrow();
@@ -144,7 +144,7 @@ class UserDirectoryPresenceIT extends AbstractIntegrationTest {
         assertThat(rowFor(me.getId()).getOnline()).isTrue();
         assertThat(userService.getDirectoryStats().online()).isGreaterThanOrEqualTo(1);
         assertThat(
-                userService.getUsers(0, 200, null, null, null, null, null, true, Sort.Direction.ASC, "id")
+                userService.getUsers(0, 200, null, null, null, null, null, null, true, Sort.Direction.ASC, "id")
                         .getContent())
                 .extracting(UserDto::getId)
                 .contains(me.getId());

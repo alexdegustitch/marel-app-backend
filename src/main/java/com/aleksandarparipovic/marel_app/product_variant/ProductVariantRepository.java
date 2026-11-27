@@ -30,6 +30,25 @@ public interface ProductVariantRepository extends JpaRepository<ProductVariant, 
     boolean existsByProduct_IdAndArchivedAtIsNull(Long productId);
 
     /**
+     * The live variants of the type's products that carry NO value for the
+     * attribute — what would fall short of a "required" flag about to be turned
+     * on. Read before the flip, so the person turning it on sees exactly which
+     * variants the new rule leaves without a value.
+     */
+    @Query("""
+        SELECT v FROM ProductVariant v
+        WHERE v.archivedAt IS NULL
+          AND v.product.productType.id = :typeId
+          AND NOT EXISTS (
+              SELECT 1 FROM ProductVariantValue pv
+              WHERE pv.variant = v AND pv.attribute.id = :attributeId)
+        ORDER BY v.product.id ASC, v.id ASC
+        """)
+    List<ProductVariant> findLiveMissingAttributeValue(
+            @Param("typeId") Long typeId,
+            @Param("attributeId") Long attributeId);
+
+    /**
      * Whether anything references the variant — the freeze line (SPEC odluka 13).
      * Order lines and manufacturing times are the only tables V78 pointed at it.
      */

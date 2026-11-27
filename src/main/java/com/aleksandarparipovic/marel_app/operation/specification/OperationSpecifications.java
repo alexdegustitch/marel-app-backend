@@ -13,11 +13,16 @@ public final class OperationSpecifications {
     private OperationSpecifications(){}
 
     public static Specification<Operation> fromSearchRequest(SearchRequest request){
-        return Specification.where(notArchived())
+        return Specification.where(
+                        Boolean.TRUE.equals(request.getArchivedOnly()) ? archived() : notArchived())
                 .and(new SearchSpecification<>(request, FIELD_MAPPER));
     }
 
     public static Specification<Operation> notArchived(){
         return ((root, query, criteriaBuilder) -> criteriaBuilder.isNull(root.get("archivedAt")));
+    }
+
+    public static Specification<Operation> archived(){
+        return ((root, query, criteriaBuilder) -> criteriaBuilder.isNotNull(root.get("archivedAt")));
     }
 }

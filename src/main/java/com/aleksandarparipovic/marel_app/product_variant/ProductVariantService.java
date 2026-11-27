@@ -132,6 +132,34 @@ public class ProductVariantService {
         variants.save(variant);
     }
 
+    /**
+     * The live variants of the attribute's type that carry no value for it —
+     * read by the šifarnik BEFORE flipping the attribute to "obavezan", so the
+     * flip is an informed decision. The flip itself stays allowed: existing
+     * variants were created legally and remain valid, the rule binds only NEW
+     * combinations.
+     */
+    @Transactional(readOnly = true)
+    public List<VariantMissingValueRow> listMissingValueForAttribute(Long attributeId) {
+        VariantAttribute attribute = attributes.findById(attributeId)
+                .orElseThrow(() -> new EntityNotFoundException("Varijantni atribut nije pronađen: " + attributeId));
+        return variants.findLiveMissingAttributeValue(attribute.getProductType().getId(), attributeId)
+                .stream()
+                .map(v -> {
+                    String joined = v.getValues().stream()
+                            .map(value -> value.getOption().getValue())
+                            .collect(Collectors.joining(" / "));
+                    return VariantMissingValueRow.builder()
+                            .variantId(v.getId())
+                            .productId(v.getProduct().getId())
+                            .productName(v.getProduct().getProductName())
+                            .variantLabel(v.getLabel() != null && !v.getLabel().isBlank() ? v.getLabel() : joined)
+                            .inUse(variants.isReferenced(v.getId()))
+                            .build();
+                })
+                .toList();
+    }
+
     // ── invariants ───────────────────────────────────────────────────────────
 
     /**
