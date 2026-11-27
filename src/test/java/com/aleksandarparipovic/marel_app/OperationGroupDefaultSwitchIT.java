@@ -3,8 +3,10 @@ package com.aleksandarparipovic.marel_app;
 import com.aleksandarparipovic.marel_app.operation.Operation;
 import com.aleksandarparipovic.marel_app.operation.OperationGroupService;
 import com.aleksandarparipovic.marel_app.operation.OperationService;
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationGroupDtos.OperationGroupCreateRequest;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationGroupDtos.OperationGroupDto;
+import com.aleksandarparipovic.marel_app.operation.dto.OperationStepsRequest;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
@@ -15,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The group's default is a radio: handing it over must work in BOTH
@@ -88,6 +91,50 @@ class OperationGroupDefaultSwitchIT extends AbstractIntegrationTest {
         assertThat(operationRepository.findById(loner.getId()).orElseThrow().getSortOrder()).isEqualTo(3);
         operationService.changeSortOrder(loner.getId(), null);
         assertThat(operationRepository.findById(loner.getId()).orElseThrow().getSortOrder()).isNull();
+    }
+
+    @Test
+    @DisplayName("the drawer's one-transaction reorder: groups move whole, contradictions refuse")
+    void bulkReorderRespectsGroups() {
+        PayrollScenarioFixture.Scenario scenario = fixture.scenario().build();
+        Product product = fixture.product("IT-Proizvod-redosled");
+        Operation a = fixture.operation(product, scenario.workCategory(), 40);
+        Operation b = fixture.operation(product, scenario.workCategory(), 60);
+        Operation c = fixture.operation(product, scenario.workCategory(), 80);
+
+        OperationGroupCreateRequest create = new OperationGroupCreateRequest();
+        create.setProductId(product.getId());
+        create.setName("IT-Grupa-redosled");
+        OperationGroupDto group = groupService.create(create);
+        groupService.addMember(group.getId(), a.getId());
+        groupService.addMember(group.getId(), b.getId());
+
+        // Naming ONE member places the whole group; c lands beside it (parallel).
+        operationService.reorderSteps(new OperationStepsRequest(product.getId(), java.util.List.of(
+                new OperationStepsRequest.Step(a.getId(), 2),
+                new OperationStepsRequest.Step(c.getId(), 2))));
+        assertThat(operationRepository.findById(b.getId()).orElseThrow().getSortOrder()).isEqualTo(2);
+        assertThat(operationRepository.findById(c.getId()).orElseThrow().getSortOrder()).isEqualTo(2);
+
+        // Two members of one group on different steps is a contradiction.
+        assertThatThrownBy(() -> operationService.reorderSteps(
+                new OperationStepsRequest(product.getId(), java.util.List.of(
+                        new OperationStepsRequest.Step(a.getId(), 1),
+                        new OperationStepsRequest.Step(b.getId(), 3)))))
+                .isInstanceOf(ConflictException.class);
+
+        // An operation of ANOTHER product never slips into this product's order.
+        Operation foreign = fixture.operation(scenario.workCategory(), 50);
+        assertThatThrownBy(() -> operationService.reorderSteps(
+                new OperationStepsRequest(product.getId(), java.util.List.of(
+                        new OperationStepsRequest.Step(foreign.getId(), 1)))))
+                .isInstanceOf(ConflictException.class);
+
+        // Null unplaces, and an operation the request skips keeps its step.
+        operationService.reorderSteps(new OperationStepsRequest(product.getId(), java.util.List.of(
+                new OperationStepsRequest.Step(c.getId(), null))));
+        assertThat(operationRepository.findById(c.getId()).orElseThrow().getSortOrder()).isNull();
+        assertThat(operationRepository.findById(a.getId()).orElseThrow().getSortOrder()).isEqualTo(2);
     }
 
     private Long defaultOf(Long groupId) {

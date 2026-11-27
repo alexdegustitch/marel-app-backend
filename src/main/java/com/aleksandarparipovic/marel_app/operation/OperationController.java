@@ -181,6 +181,16 @@ public class OperationController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * V77 — the whole execution order of one product's operations in ONE
+     * transaction: what the "Redosled izrade" drag-and-drop saves.
+     */
+    @PutMapping("/steps")
+    public ResponseEntity<Void> reorderSteps(@RequestBody @Valid OperationStepsRequest request) {
+        operationService.reorderSteps(request);
+        return ResponseEntity.noContent().build();
+    }
+
     /** V77 — the step ("korak") alone, for the product page's inline edit. */
     @PatchMapping("/{id}/sort-order")
     public ResponseEntity<Void> changeSortOrder(

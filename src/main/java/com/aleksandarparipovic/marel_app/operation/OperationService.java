@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.operation;
 
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
 import com.aleksandarparipovic.marel_app.operation.dto.*;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
@@ -31,6 +32,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -391,6 +393,67 @@ public class OperationService {
      * version in force in agreement, and payroll reads the columns — so the
      * change is recorded there too, exactly as the edit form's path does it.
      */
+    /**
+     * V77 — the whole execution order of one product's operations, as one
+     * transaction (the "Redosled izrade" drawer's save). The rules are the
+     * single-step PATCH's, held across the batch:
+     * <ul>
+     *   <li>every named operation belongs to the product and is not standalone;
+     *   <li>steps are 1-based; null unplaces;
+     *   <li>group members share the step: naming ONE member moves the whole
+     *       group, and naming two members of a group with DIFFERENT steps is a
+     *       contradiction the request is refused for;
+     *   <li>operations the request does not name keep the step they had.
+     * </ul>
+     */
+    @Transactional
+    public void reorderSteps(com.aleksandarparipovic.marel_app.operation.dto.OperationStepsRequest request) {
+        Map<Long, Integer> wanted = new java.util.LinkedHashMap<>();
+        for (var step : request.steps()) {
+            if (step.sortOrder() != null && step.sortOrder() < 1) {
+                throw new IllegalArgumentException("Korak mora biti najmanje 1.");
+            }
+            if (wanted.put(step.operationId(), step.sortOrder()) != null) {
+                throw new IllegalArgumentException(
+                        "Operacija " + step.operationId() + " je navedena dvaput.");
+            }
+        }
+
+        List<Operation> named = operationRepository.findAllById(wanted.keySet());
+        if (named.size() != wanted.size()) {
+            throw new EntityNotFoundException("Neka od navedenih operacija ne postoji.");
+        }
+
+        // What each GROUP is asked to be — one answer per group, or a refusal.
+        Map<Long, Integer> groupWanted = new java.util.LinkedHashMap<>();
+        for (Operation operation : named) {
+            if (operation.getProduct() == null || !operation.getProduct().getId().equals(request.productId())) {
+                throw new ConflictException(
+                        "Operacija „" + operation.getOpName() + "“ ne pripada ovom proizvodu.");
+            }
+            Integer step = wanted.get(operation.getId());
+            if (operation.getOperationGroup() == null) {
+                operation.setSortOrder(step);
+                operationRepository.save(operation);
+                continue;
+            }
+            Long groupId = operation.getOperationGroup().getId();
+            if (groupWanted.containsKey(groupId)
+                    && !Objects.equals(groupWanted.get(groupId), step)) {
+                throw new ConflictException("Članovi grupe „"
+                        + operation.getOperationGroup().getName()
+                        + "“ moraju biti isti korak — zahtev im daje dva različita.");
+            }
+            groupWanted.put(groupId, step);
+        }
+        for (var entry : groupWanted.entrySet()) {
+            for (Operation member : operationRepository.findByOperationGroup_Id(entry.getKey())) {
+                member.setSortOrder(entry.getValue());
+                operationRepository.save(member);
+            }
+        }
+    }
+
     /**
      * V77 — the step ("korak") alone. Equal steps run in parallel, null is
      * unplaced. Group members share the step by invariant, so a member's change
