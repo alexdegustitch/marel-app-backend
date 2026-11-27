@@ -8,7 +8,9 @@ import com.aleksandarparipovic.marel_app.operation.dto.OperationGroupDtos.Operat
 import com.aleksandarparipovic.marel_app.operation.dto.OperationGroupDtos.OperationGroupDto;
 import com.aleksandarparipovic.marel_app.operation.dto.OperationStepsRequest;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
+import com.aleksandarparipovic.marel_app.operation.dto.OperationDto;
 import com.aleksandarparipovic.marel_app.product.Product;
+import com.aleksandarparipovic.marel_app.product.ProductService;
 import com.aleksandarparipovic.marel_app.support.AbstractIntegrationTest;
 import com.aleksandarparipovic.marel_app.support.PayrollScenarioFixture;
 import org.junit.jupiter.api.DisplayName;
@@ -32,6 +34,7 @@ class OperationGroupDefaultSwitchIT extends AbstractIntegrationTest {
     @Autowired private OperationGroupService groupService;
     @Autowired private OperationService operationService;
     @Autowired private OperationRepository operationRepository;
+    @Autowired private ProductService productService;
     @Autowired private PayrollScenarioFixture fixture;
 
     @Test
@@ -135,6 +138,24 @@ class OperationGroupDefaultSwitchIT extends AbstractIntegrationTest {
                 new OperationStepsRequest.Step(c.getId(), null))));
         assertThat(operationRepository.findById(c.getId()).orElseThrow().getSortOrder()).isNull();
         assertThat(operationRepository.findById(a.getId()).orElseThrow().getSortOrder()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("the product page lists operations in execution order: steps first, unplaced last")
+    void productOperationsListFollowsTheSteps() {
+        PayrollScenarioFixture.Scenario scenario = fixture.scenario().build();
+        Product product = fixture.product("IT-Proizvod-lista");
+        Operation second = fixture.operation(product, scenario.workCategory(), 40);
+        Operation first = fixture.operation(product, scenario.workCategory(), 60);
+        Operation unplaced = fixture.operation(product, scenario.workCategory(), 80);
+
+        operationService.changeSortOrder(second.getId(), 2);
+        operationService.changeSortOrder(first.getId(), 1);
+
+        var listed = productService.getProductOperations(product.getId(), null, null, null);
+        assertThat(listed).extracting(OperationDto::getId)
+                .containsExactly(first.getId(), second.getId(), unplaced.getId());
+        assertThat(listed).extracting(OperationDto::getSortOrder).containsExactly(1, 2, null);
     }
 
     private Long defaultOf(Long groupId) {

@@ -228,8 +228,11 @@ public class ProductService {
             Long productId, String query, String sortBy, String direction) {
         requireProduct(productId);
         Sort sort = (sortBy == null || sortBy.isBlank())
-                // Name order is the page's default, as it always was.
-                ? JpaSort.unsafe(Sort.Direction.ASC, "opName")
+                // The execution order is the page's default: step ascending
+                // (Postgres puts NULL — unplaced — last for ASC), names deciding
+                // inside a step so parallel operations read stably.
+                ? JpaSort.unsafe(Sort.Direction.ASC, "sortOrder")
+                        .and(JpaSort.unsafe(Sort.Direction.ASC, "opName"))
                         .and(JpaSort.unsafe(Sort.Direction.ASC, "id"))
                 : orderSort(OPERATION_SORTS, sortBy, direction, "opName", "id");
         return operationRepository.searchByProduct(productId, toPattern(query), sort)
