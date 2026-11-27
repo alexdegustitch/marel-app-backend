@@ -181,6 +181,16 @@ public class OperationController {
         return ResponseEntity.noContent().build();
     }
 
+    /** V77 — the step ("korak") alone, for the product page's inline edit. */
+    @PatchMapping("/{id}/sort-order")
+    public ResponseEntity<Void> changeSortOrder(
+            @PathVariable Long id,
+            @RequestBody OperationSortOrderChangeRequest request
+    ) {
+        operationService.changeSortOrder(id, request.sortOrder());
+        return ResponseEntity.noContent().build();
+    }
+
     /**
      * The recorded category and units-per-product changes, newest first — read
      * from the operations_history trigger log, so it covers edits made anywhere,

@@ -217,7 +217,9 @@ public class ProductService {
             "minNorm", "minNorm",
             "maxNorm", "maxNorm",
             "normDate", "normDate",
-            "unitsPerProduct", "unitsPerProduct"
+            "unitsPerProduct", "unitsPerProduct",
+            // V77 — the step ("korak"); the execution order the page can show.
+            "sortOrder", "sortOrder"
     );
 
     /** The product's live operations — searched and sorted server-side, norms included. */

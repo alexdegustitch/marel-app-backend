@@ -179,12 +179,23 @@ public class OperationGroupService {
         if (target.isArchived()) {
             throw new ConflictException("Arhivirana operacija ne može biti default grupe.");
         }
+        /*
+         * The partial unique index (ux_operations_one_group_default) is not
+         * deferrable, so the OLD flag must be gone from the database before
+         * the new one lands. Left to one flush, Hibernate orders the two
+         * UPDATEs by id — and whenever the new default has the smaller id,
+         * both rows are briefly true and the index refuses the switch.
+         * Same two-step the norm versions already dance.
+         */
         for (Operation member : members) {
-            boolean shouldBe = member.getId().equals(operationId);
-            if (member.isGroupDefault() != shouldBe) {
-                member.setGroupDefault(shouldBe);
-                operations.save(member);
+            if (member.isGroupDefault() && !member.getId().equals(operationId)) {
+                member.setGroupDefault(false);
+                operations.saveAndFlush(member);
             }
+        }
+        if (!target.isGroupDefault()) {
+            target.setGroupDefault(true);
+            operations.saveAndFlush(target);
         }
         return toDto(group);
     }

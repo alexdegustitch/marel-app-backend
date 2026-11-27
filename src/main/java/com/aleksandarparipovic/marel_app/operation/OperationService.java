@@ -31,6 +31,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -390,6 +391,37 @@ public class OperationService {
      * version in force in agreement, and payroll reads the columns — so the
      * change is recorded there too, exactly as the edit form's path does it.
      */
+    /**
+     * V77 — the step ("korak") alone. Equal steps run in parallel, null is
+     * unplaced. Group members share the step by invariant, so a member's change
+     * moves the whole group — otherwise the group's union would straddle two
+     * steps and mean nothing.
+     */
+    @Transactional
+    public void changeSortOrder(Long id, Integer sortOrder) {
+        Operation operation = operationRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Operation not found"));
+        if (operation.isStandalone()) {
+            throw new IllegalArgumentException("Osnovna operacija ne pripada proizvodu, pa nema korak.");
+        }
+        if (sortOrder != null && sortOrder < 1) {
+            throw new IllegalArgumentException("Korak mora biti najmanje 1.");
+        }
+        if (Objects.equals(operation.getSortOrder(), sortOrder)) {
+            return;
+        }
+        if (operation.getOperationGroup() != null) {
+            for (Operation member : operationRepository.findByOperationGroup_Id(
+                    operation.getOperationGroup().getId())) {
+                member.setSortOrder(sortOrder);
+                operationRepository.save(member);
+            }
+        } else {
+            operation.setSortOrder(sortOrder);
+            operationRepository.save(operation);
+        }
+    }
+
     @Transactional
     public void changeUnitsPerProduct(Long id, Integer unitsPerProduct) {
         Operation operation = operationRepository.findById(id)
