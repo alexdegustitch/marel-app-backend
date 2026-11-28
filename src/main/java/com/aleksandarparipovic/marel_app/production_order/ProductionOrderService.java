@@ -122,6 +122,7 @@ public class ProductionOrderService {
     private final OutboxEventPublisher outboxEventPublisher;
     private final OrderProgressService orderProgressService;
     private final PasswordConfirmationService passwordConfirmation;
+    private final com.aleksandarparipovic.marel_app.product_variant.ProductVariantLineResolver productVariantLineResolver;
 
     @Transactional
     public ProductionOrderDetailDto create(ProductionOrderCreateRequest req) {
@@ -187,6 +188,9 @@ public class ProductionOrderService {
                 ProductionOrderLineItem lineItem = new ProductionOrderLineItem();
                 lineItem.setProductionOrder(order);
                 lineItem.setProduct(product);
+                // V78: a product with live variants is ordered AS a variant.
+                lineItem.setProductVariant(
+                        productVariantLineResolver.resolveForLine(product, itemReq.productVariantId()));
                 lineItem.setQuantity(totalQty);
                 lineItem.setProductDescription(itemReq.description());
                 lineItem.setNote(itemReq.note());
@@ -293,6 +297,12 @@ public class ProductionOrderService {
 
     private OrderEmailState.Item emailItem(ProductionOrderLineItem item) {
         String name = item.getProduct() == null ? "-" : item.getProduct().getProductName();
+        // The ordered variant belongs in the name: without it two lines of the
+        // same product in different materials read as one product ordered twice.
+        String variant = variantSuffix(item.getProductVariant());
+        if (variant != null) {
+            name += " · " + variant;
+        }
         if (item.getProductDescription() != null && !item.getProductDescription().isBlank()) {
             name += " — " + item.getProductDescription().trim();
         }
@@ -314,10 +324,35 @@ public class ProductionOrderService {
                         .collect(Collectors.joining(" + "));
 
         return new OrderEmailState.Item(
-                item.getProduct() == null ? "-" : String.valueOf(item.getProduct().getId()),
+                emailItemKey(item.getProduct() == null ? null : item.getProduct().getId(),
+                        item.getProductVariant() == null ? null : item.getProductVariant().getId()),
                 name,
                 quantity,
                 blankToNull(item.getNote()));
+    }
+
+    /**
+     * What makes a line "the same line" across two saves. The product alone is
+     * not enough once a product has variants: two lines differing only in
+     * variant would pair with each other and a quantity would read as changed.
+     */
+    private static String emailItemKey(Long productId, Long variantId) {
+        String product = productId == null ? "-" : String.valueOf(productId);
+        return variantId == null ? product : product + "#" + variantId;
+    }
+
+    /**
+     * How the variant is spelled in a mail: attribute by attribute when the
+     * variant carries values, otherwise whatever the variant is called.
+     */
+    private static String variantSuffix(
+            com.aleksandarparipovic.marel_app.product_variant.ProductVariant variant
+    ) {
+        if (variant == null) {
+            return null;
+        }
+        String attributes = variant.attributesLabel();
+        return attributes != null ? attributes : variant.displayLabel();
     }
 
     private static String flagValue(Boolean flag) {
@@ -593,6 +628,9 @@ public class ProductionOrderService {
                 ProductionOrderLineItem lineItem = new ProductionOrderLineItem();
                 lineItem.setProductionOrder(order);
                 lineItem.setProduct(product);
+                // V78: a product with live variants is ordered AS a variant.
+                lineItem.setProductVariant(
+                        productVariantLineResolver.resolveForLine(product, itemReq.productVariantId()));
                 lineItem.setQuantity(totalQty);
                 lineItem.setProductDescription(itemReq.description());
                 lineItem.setNote(itemReq.note());
@@ -637,6 +675,11 @@ public class ProductionOrderService {
         boolean alreadyDelivered = order.getStatus() == ProductionOrderStatus.DELIVERED;
 
         order.setStatus(ProductionOrderStatus.DELIVERED);
+        if (!alreadyDelivered) {
+            // SPEC odluka 16: the result is frozen WITH the status, same
+            // transaction — later catalogue edits must not rewrite history.
+            order.setClosedProgressSnapshot(orderProgressService.closingSnapshot(order.getId()));
+        }
         order = productionOrderRepository.save(order);
 
         // Published only on the actual transition. Outbox idempotency is keyed on
@@ -688,6 +731,9 @@ public class ProductionOrderService {
 
         if (order.getStatus() != ProductionOrderStatus.CANCELLED) {
             order.setStatus(ProductionOrderStatus.CANCELLED);
+            // SPEC odluka 16: cancelled is closed too — what was worked up to
+            // the call-off is the order's final, frozen figure.
+            order.setClosedProgressSnapshot(orderProgressService.closingSnapshot(order.getId()));
             order.setCancelledAt(OffsetDateTime.now());
             // The identity whose password was just confirmed — the signature
             // records the signer, not whatever the session happens to hold.

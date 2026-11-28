@@ -739,12 +739,35 @@ public class ProductionOrderScopeRequestService {
      * Whether this caller may still write the answer: they hold the permission,
      * they own the request, and it has not been handed over.
      */
+    /**
+     * May THIS caller change THIS answer — the one question the modal asks, so
+     * that the form it draws and the save it would send cannot disagree.
+     *
+     * <p>Deliberately the same three gates {@code saveDraft} and {@code submit}
+     * apply, in the same order, and nothing more. The unowned case is the one
+     * that used to differ: an unclaimed PENDING request was drawn read-only
+     * although {@link #claimIfUnowned} would have handed it to the caller the
+     * moment they pressed save. A processor who opens it from the order has
+     * taken the work on; making them go to the queue and press "Preuzmi" first
+     * was ceremony, and the dead end it produced said nothing about why.
+     */
     private boolean isEditableBy(ProductionOrderScopeRequest request, Long callerId) {
-        return permissionService.hasPermission(AppPermission.ORDER_SCOPE_REQUEST_PROCESS)
-                && request.getStatus() == ProductionOrderScopeRequestStatus.IN_REVIEW
-                && request.getResultState() != ProductionOrderScopeResultState.SUBMITTED
-                && request.getAssignedTo() != null
-                && request.getAssignedTo().getId().equals(callerId);
+        if (!permissionService.hasPermission(AppPermission.ORDER_SCOPE_REQUEST_PROCESS)
+                || request.getResultState() == ProductionOrderScopeResultState.SUBMITTED) {
+            return false;
+        }
+        // Whoever asks does not decide — except on a self-request, which is
+        // deliberately raised and answered by the same person.
+        if (!request.isInternal() && request.getCreatedBy().getId().equals(callerId)) {
+            return false;
+        }
+        if (request.getAssignedTo() != null) {
+            return request.getStatus() == ProductionOrderScopeRequestStatus.IN_REVIEW
+                    && request.getAssignedTo().getId().equals(callerId);
+        }
+        // Nobody owns it yet: saving claims it, so drawing it read-only would
+        // refuse work the caller is entitled to do.
+        return request.getStatus() == ProductionOrderScopeRequestStatus.PENDING;
     }
 
     /**
@@ -860,6 +883,7 @@ public class ProductionOrderScopeRequestService {
                 r.getDecisionNote(),
                 r.getCancelledAt(),
                 r.getCreatedAt(),
+                r.isInternal(),
                 items.stream().map(this::lineOf).toList());
     }
 }

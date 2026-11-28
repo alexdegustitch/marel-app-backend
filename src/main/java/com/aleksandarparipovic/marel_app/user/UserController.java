@@ -45,13 +45,19 @@ public class UserController {
             /** Whose account is this worker's. Zero rows or one — never more. */
             @RequestParam(required = false) Long employeeId,
             @RequestParam(required = false) Boolean active,
+            /**
+             * TRUE = only soft-deleted (archived) accounts, FALSE = only live
+             * ones, absent = no archive filter — what every caller before the
+             * directory's "Arhivirani" view implicitly asked for.
+             */
+            @RequestParam(required = false) Boolean archived,
             /** Only the people at the application right now — the "na vezi" tile. */
             @RequestParam(required = false) Boolean online,
             @RequestParam(defaultValue = "ASC") Sort.Direction direction,
             @RequestParam(defaultValue = "id") String sortBy
     ) {
         Page<UserDto> result =
-                userService.getUsers(page, size, username, search, role, employeeId, active, online, direction, sortBy);
+                userService.getUsers(page, size, username, search, role, employeeId, active, archived, online, direction, sortBy);
 
         return ResponseEntity.ok(result);
     }

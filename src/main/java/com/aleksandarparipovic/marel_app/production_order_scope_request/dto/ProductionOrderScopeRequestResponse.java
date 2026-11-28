@@ -33,6 +33,13 @@ public record ProductionOrderScopeRequestResponse(
         String decisionNote,
         OffsetDateTime cancelledAt,
         OffsetDateTime createdAt,
+        /**
+         * Raised and answered by the same person, straight from the order — so the
+         * "whoever asks does not decide" rule does not apply to it. The screens need
+         * to tell the two apart: on an ordinary request of their own the caller can
+         * only wait, on a self-request they carry on.
+         */
+        boolean internal,
         /** The order lines this request covers, in the order the order lists them. */
         List<ProductionOrderScopeLineResponse> lines
 ) {

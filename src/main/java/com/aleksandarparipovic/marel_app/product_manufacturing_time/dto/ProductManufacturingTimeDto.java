@@ -20,6 +20,11 @@ public class ProductManufacturingTimeDto {
     private final String note;
     private final Long productId;
     private final String productName;
+
+    /** The variant this time is for; both null = product without variants, or "all variants". */
+    private final Long productVariantId;
+    private final String productVariantLabel;
+
     private final LocalDate dateOfIssue;
 
     /**
@@ -57,6 +62,8 @@ public class ProductManufacturingTimeDto {
         this.userId = e.getUser().getId();
         this.productId = e.getProduct().getId();
         this.productName = e.getProductName();
+        this.productVariantId = e.getProductVariant() == null ? null : e.getProductVariant().getId();
+        this.productVariantLabel = e.getProductVariant() == null ? null : e.getProductVariant().displayLabel();
         this.dateOfIssue = e.getDateOfIssue();
         this.createdAt = e.getCreatedAt();
         this.manufacturingCoefficient = e.getManufacturingCoefficient();

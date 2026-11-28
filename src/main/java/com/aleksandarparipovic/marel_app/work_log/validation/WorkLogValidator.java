@@ -28,6 +28,22 @@ public class WorkLogValidator {
      * Quantities are refused rather than silently zeroed: a number somebody
      * typed is a statement, and a statement that cannot be true is an error.
      */
+    /**
+     * A NEW log cannot land on a closed order (SPEC odluka 16): the order's
+     * figure was frozen when it closed, and a fresh log would make the frozen
+     * number silently wrong. Existing logs stay editable — correcting an old
+     * karton is payroll's business and touches the snapshot of nothing.
+     */
+    public void validateOrderOpen(com.aleksandarparipovic.marel_app.production_order.ProductionOrder order) {
+        if (order == null) {
+            return;
+        }
+        if (order.getStatus() != com.aleksandarparipovic.marel_app.production_order.ProductionOrderStatus.CREATED) {
+            throw new IllegalArgumentException(
+                    "Nalog „" + order.getCode() + "“ je zatvoren — na njega se više ne upisuje učinak.");
+        }
+    }
+
     public void validateStandaloneConsistency(Operation operation, Long productionOrderId,
                                               Integer quantity, Integer scrap) {
         if (operation == null || !operation.isStandalone()) {

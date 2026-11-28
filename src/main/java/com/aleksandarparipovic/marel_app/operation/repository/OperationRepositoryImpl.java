@@ -182,9 +182,11 @@ public class OperationRepositoryImpl implements OperationRepositoryCustom {
             JoinManager<Operation> joinManager,
             CriteriaBuilder cb
     ) {
-        Join<Operation, Product> products = joinManager.join("product", JoinType.LEFT);
-        products.on(cb.isNull(products.get("archivedAt")));
-        return products;
+        // No archived condition on the join: a LIVE operation never has an
+        // archived product (they archive together), and an ARCHIVED operation
+        // listed by the "Arhivirani" view must still name the product it
+        // belonged to — a null there would read as data loss.
+        return joinManager.join("product", JoinType.LEFT);
     }
 
     private Expression<Long> productCountExpression(

@@ -40,4 +40,14 @@ public class OperationCreateRequest {
     private Integer unitsPerProduct;
 
     private Long workCodeCategoryId;
+
+    /**
+     * V77 — the binding: the attribute value this operation exists for, when
+     * the AddOperationsDrawer picked one. Null = applies to every variant.
+     * Only for product operations; refused on standalone ones.
+     */
+    private Long variantAttributeOptionId;
+
+    /** V77 — step within the product; equal numbers run in parallel. */
+    private Integer sortOrder;
 }

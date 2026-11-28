@@ -7,6 +7,11 @@ public record SampleOrderLineItemDto(
         Long productId,
         String productName,
         String productCode,
+        /** The ordered variant (V78); both null on a product without variants. */
+        Long productVariantId,
+        String productVariantLabel,
+        /** Attribute by attribute ("Šraf: Al · Navrtka: Prohrom"); see the production-order twin. */
+        String productVariantAttributes,
         /** The opis the shop floor works from. */
         String productDescription,
         Integer lineOrder,

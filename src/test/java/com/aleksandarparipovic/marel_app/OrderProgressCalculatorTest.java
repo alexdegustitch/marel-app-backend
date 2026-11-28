@@ -125,7 +125,7 @@ class OrderProgressCalculatorTest {
     @DisplayName("no agreed scope is not zero progress — it is no answer at all")
     void withoutScopeThePercentIsAbsent() {
         Map<Long, OrderProgress> progress = OrderProgressCalculator.calculate(
-                List.of(), List.of(output(1, 500)), Map.of(), Map.of(ORDER, 3), List.of(ORDER));
+                List.of(), List.of(output(1, 500)), Map.of(), Map.of(), Map.of(ORDER, 3), List.of(ORDER));
 
         OrderProgress order = progress.get(ORDER);
         assertThat(order.scopeDefined()).isFalse();
@@ -140,6 +140,7 @@ class OrderProgressCalculatorTest {
         OrderProgress progress = OrderProgressCalculator.calculate(
                 List.of(requirement("x1", 1, 1, 10)),
                 List.of(output(1, 4), output(99, 250)),
+                Map.of(),
                 Map.of(99L, new OperationRef(99L, "Nešto drugo", 8L, "Drugi proizvod")),
                 Map.of(),
                 List.of(ORDER)).get(ORDER);
@@ -196,7 +197,7 @@ class OrderProgressCalculatorTest {
     @DisplayName("every order asked about gets an answer, including one with nothing on it")
     void everyRequestedOrderIsAnswered() {
         Map<Long, OrderProgress> progress = OrderProgressCalculator.calculate(
-                List.of(), List.of(), Map.of(), Map.of(), List.of(1L, 2L, 3L));
+                List.of(), List.of(), Map.of(), Map.of(), Map.of(), List.of(1L, 2L, 3L));
 
         assertThat(progress).containsOnlyKeys(1L, 2L, 3L);
         assertThat(progress.get(2L).scopeDefined()).isFalse();
@@ -221,12 +222,137 @@ class OrderProgressCalculatorTest {
         assertThat(progress.requiredPieces()).isEqualTo(40);
     }
 
+    // ── The SPEC's worked example: variants, a group, the range ────────────
+    // docs/specs/varijante-i-grupe-operacija-SPEC.md §6.4, pinned verbatim.
+
+    @Nested
+    @DisplayName("SPEC 6.4: nalog 80 — dve varijante, grupa presa, raspon gotovih")
+    class SpecWorkedExample {
+
+        private static final long LINE_601 = 601, LINE_602 = 602;
+        private static final long GROUP_PRESA = 300;
+
+        private Map<Long, OrderProgress> run(List<OperationOutputRow> output) {
+            List<ScopeRequirementRow> rows = List.of(
+                    spec(LINE_601, 900L, 7000, "Sečenje", null, null, 1, 100),
+                    spec(LINE_601, 900L, 7011, "Presovanje – nova presa", GROUP_PRESA, "Presovanje", 1, 100),
+                    spec(LINE_601, 900L, 7001, "Montaža šrafa prohrom", null, null, 2, 100),
+                    spec(LINE_601, 900L, 7002, "Montaža navrtke Al", null, null, 1, 100),
+                    spec(LINE_602, 901L, 7000, "Sečenje", null, null, 1, 50),
+                    spec(LINE_602, 901L, 7011, "Presovanje – nova presa", GROUP_PRESA, "Presovanje", 1, 50),
+                    spec(LINE_602, 901L, 7001, "Montaža šrafa prohrom", null, null, 2, 50),
+                    spec(LINE_602, 901L, 7003, "Montaža navrtke Cu", null, null, 1, 50));
+            Map<Long, com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKey> keys = Map.of(
+                    7010L, new com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKey(GROUP_PRESA, "Presovanje"),
+                    7011L, new com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKey(GROUP_PRESA, "Presovanje"));
+            return OrderProgressCalculator.calculate(rows, output, keys, Map.of(), Map.of(), List.of(ORDER));
+        }
+
+        @Test
+        @DisplayName("napredak rada je jedan tačan broj: 350 od 750")
+        void workMeasureIsExact() {
+            OrderProgress progress = run(List.of(
+                    output(7000, 120), output(7010, 30), output(7011, 80),
+                    output(7001, 60), output(7002, 40), output(7003, 20))).get(ORDER);
+
+            assertThat(progress.requiredPieces()).isEqualTo(750);
+            assertThat(progress.donePieces()).isEqualTo(350);
+            // Truncated, as everywhere: 46,66… reads 46,6, never 46,7.
+            assertThat(progress.percent()).isEqualByComparingTo("46.6");
+        }
+
+        @Test
+        @DisplayName("rad na staroj presi se broji kroz grupu, ne pada van razrade")
+        void groupUnionCountsTheOldPress() {
+            OrderProgress progress = run(List.of(
+                    output(7000, 120), output(7010, 30), output(7011, 80),
+                    output(7001, 60), output(7002, 40), output(7003, 20))).get(ORDER);
+
+            assertThat(progress.outOfScope()).isEmpty();
+            OperationProgress group = progress.products().get(0).operations().stream()
+                    .filter(o -> o.operationGroupId() != null)
+                    .findFirst().orElseThrow();
+            assertThat(group.operationGroupId()).isEqualTo(GROUP_PRESA);
+            assertThat(group.operationGroupName()).isEqualTo("Presovanje");
+            assertThat(group.operationId()).isEqualTo(7011L); // razrada's default member
+            assertThat(group.donePieces()).isEqualTo(110);    // 30 + 80, the union
+            assertThat(group.requiredPieces()).isEqualTo(150);
+        }
+
+        @Test
+        @DisplayName("gotovi proizvodi su raspon 10–30 od 150, po stavkama 0–30 i 0–20")
+        void finishedGoodsAreARange() {
+            OrderProgress progress = run(List.of(
+                    output(7000, 120), output(7010, 30), output(7011, 80),
+                    output(7001, 60), output(7002, 40), output(7003, 20))).get(ORDER);
+
+            ProductProgress product = progress.products().get(0);
+            assertThat(product.requiredProducts()).isEqualTo(150);
+            // min 10: sečenje 100→601/20→602, presovanje 100→601/10→602, ceo
+            // šraf 602 → 601 bez šrafa (0), 602 ograničen presovanjem (10).
+            assertThat(product.wholeProductsDone()).isEqualTo(10);
+            // max 30: šraf (60 kom = 30 proizvoda) je usko grlo cele količine.
+            assertThat(product.wholeProductsDoneMax()).isEqualTo(30);
+            assertThat(product.percent()).isEqualByComparingTo("6.6");
+            assertThat(product.percentMax()).isEqualByComparingTo("20.0");
+            assertThat(product.bottleneckOperationName()).isEqualTo("Montaža šrafa prohrom");
+
+            assertThat(product.lines()).hasSize(2);
+            var line601 = product.lines().stream()
+                    .filter(l -> l.lineItemId() == LINE_601).findFirst().orElseThrow();
+            var line602 = product.lines().stream()
+                    .filter(l -> l.lineItemId() == LINE_602).findFirst().orElseThrow();
+            assertThat(line601.minFinished()).isZero();
+            assertThat(line601.maxFinished()).isEqualTo(30);
+            assertThat(line601.productVariantId()).isEqualTo(900L);
+            assertThat(line602.minFinished()).isZero();
+            assertThat(line602.maxFinished()).isEqualTo(20);
+        }
+
+        @Test
+        @DisplayName("bez deljene dvosmislenosti raspon se sklapa u jedan broj")
+        void rangeCollapsesWhenNothingIsShared() {
+            // Only the per-line operations worked: nothing ambiguous yet.
+            OrderProgress progress = run(List.of(
+                    output(7002, 40), output(7003, 20))).get(ORDER);
+
+            ProductProgress product = progress.products().get(0);
+            // Sečenje/presovanje/šraf untouched → zero finished in every reading.
+            assertThat(product.wholeProductsDone()).isEqualTo(product.wholeProductsDoneMax());
+            assertThat(product.wholeProductsDone()).isZero();
+        }
+
+        private static ScopeRequirementRow spec(
+                long lineId, Long variantId, long operationId, String name,
+                Long groupId, String groupName, int units, int quantity) {
+            return new SpecRow(lineId, variantId, operationId, name, groupId, groupName, units, quantity);
+        }
+
+        private record SpecRow(
+                long lineId, Long variantId, long operationId, String name,
+                Long groupId, String groupName, int units, int quantity)
+                implements ScopeRequirementRow {
+            @Override public Long getOrderId() { return ORDER; }
+            @Override public Long getLineItemId() { return lineId; }
+            @Override public Long getProductId() { return PRODUCT; }
+            @Override public String getProductName() { return "IVS PA 450"; }
+            @Override public Long getOperationId() { return operationId; }
+            @Override public String getOperationName() { return name; }
+            @Override public Integer getUnitsPerProduct() { return units; }
+            @Override public Integer getLineQuantity() { return quantity; }
+            @Override public Long getOperationGroupId() { return groupId; }
+            @Override public String getOperationGroupName() { return groupName; }
+            @Override public Long getProductVariantId() { return variantId; }
+            @Override public String getVariantLabel() { return variantId == null ? null : "Prohrom / …"; }
+        }
+    }
+
     // ── Fixtures ────────────────────────────────────────────────────────────
 
     private static OrderProgress calculate(
             List<ScopeRequirementRow> requirements, List<OperationOutputRow> output) {
         return OrderProgressCalculator
-                .calculate(requirements, output, Map.of(), Map.of(), List.of(ORDER))
+                .calculate(requirements, output, Map.of(), Map.of(), Map.of(), List.of(ORDER))
                 .get(ORDER);
     }
 
@@ -264,6 +390,10 @@ class OrderProgressCalculatorTest {
         @Override public String getOperationName() { return operationName; }
         @Override public Integer getUnitsPerProduct() { return units; }
         @Override public Integer getLineQuantity() { return quantity; }
+        @Override public Long getOperationGroupId() { return null; }
+        @Override public String getOperationGroupName() { return null; }
+        @Override public Long getProductVariantId() { return null; }
+        @Override public String getVariantLabel() { return null; }
     }
 
     private record Output(Long operationId, Long done, Long scrap) implements OperationOutputRow {

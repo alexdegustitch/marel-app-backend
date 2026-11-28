@@ -157,6 +157,7 @@ public class UserService {
             String role,
             Long employeeId,
             Boolean active,
+            Boolean archived,
             Boolean online,
             Sort.Direction direction,
             String sortBy
@@ -198,6 +199,15 @@ public class UserService {
 
         if (active != null) {
             spec = spec.and(UserSpecifications.isActive(active));
+        }
+
+        /*
+         * Soft delete sets ONLY archived_at (the account may still read
+         * active=true), so "archived" is its own axis: without this filter an
+         * archived account stays listed among the live ones.
+         */
+        if (archived != null) {
+            spec = spec.and(UserSpecifications.isArchived(archived));
         }
 
         Page<UserDto> found = userRepository.findAll(spec, pageable).map(UserMapper::toDto);

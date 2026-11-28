@@ -17,6 +17,13 @@ public class ProductManufacturingTimeCreateRequest {
     @NotNull
     private Long productId;
 
+    /**
+     * The variant this time is for (V78). Null on a product WITH variants is
+     * legal and means "all variants" — the configurator offers the union and
+     * the excluded flags pick what counts.
+     */
+    private Long productVariantId;
+
     @NotBlank
     private String title;
 

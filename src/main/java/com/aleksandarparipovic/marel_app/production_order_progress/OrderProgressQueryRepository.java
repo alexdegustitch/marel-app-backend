@@ -49,7 +49,11 @@ public interface OrderProgressQueryRepository
                op.operation_id             AS operationId,
                op.operation_name           AS operationName,
                op.units_per_product_value  AS unitsPerProduct,
-               li.quantity                 AS lineQuantity
+               li.quantity                 AS lineQuantity,
+               o.operation_group_id        AS operationGroupId,
+               og.name                     AS operationGroupName,
+               li.product_variant_id       AS productVariantId,
+               pv.label                    AS variantLabel
         FROM production_order_scope_requests r
         JOIN production_order_scope_request_items i
              ON i.request_id = r.id
@@ -58,6 +62,9 @@ public interface OrderProgressQueryRepository
         JOIN production_order_line_items li
              ON li.id = i.production_order_line_item_id
         JOIN products p ON p.id = li.product_id
+        LEFT JOIN operations o        ON o.id  = op.operation_id          -- LEFT: V65 lekcija
+        LEFT JOIN operation_groups og ON og.id = o.operation_group_id
+        LEFT JOIN product_variants pv ON pv.id = li.product_variant_id
         WHERE li.production_order_id IN (:orderIds)
           AND r.status = 'COMPLETED'
           AND r.result_state = 'SUBMITTED'
@@ -67,6 +74,25 @@ public interface OrderProgressQueryRepository
         ORDER BY li.production_order_id, li.line_order, op.line_order, op.id
         """, nativeQuery = true)
     List<ScopeRequirementRow> findRequirements(@Param("orderIds") Collection<Long> orderIds);
+
+    /**
+     * Which aggregation key each operation belongs to — its group or itself.
+     *
+     * <p>Separate on purpose: {@link #findOutput} stays index-only over the
+     * work logs, and this map is fetched once for the handful of operation ids
+     * the answer actually mentions. LEFT join, V65 lekcija: an operation
+     * without a product still answers.
+     */
+    @Query(value = """
+        SELECT o.id                 AS operationId,
+               o.operation_group_id AS operationGroupId,
+               og.name              AS operationGroupName
+        FROM operations o
+        LEFT JOIN operation_groups og ON og.id = o.operation_group_id
+        WHERE o.id IN (:operationIds)
+        """, nativeQuery = true)
+    List<com.aleksandarparipovic.marel_app.production_order_progress.dto.OperationKeyRow>
+    findOperationKeys(@Param("operationIds") Collection<Long> operationIds);
 
     /**
      * What was recorded: pieces and scrap per order and operation.

@@ -67,6 +67,17 @@ public class ProductionOrder {
     @Column(name = "status", nullable = false, length = 20)
     private ProductionOrderStatus status = ProductionOrderStatus.CREATED;
 
+    /**
+     * The order's progress as it stood when it closed (V78, SPEC odluka 16):
+     * schemaVersion, calculatedAt and the whole {@code OrderProgress}, written
+     * in the SAME transaction as the DELIVERED/CANCELLED status. Reads for a
+     * closed order return this instead of recomputing, so a later catalogue
+     * edit cannot rewrite history. NULL while the order is open.
+     */
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
+    @Column(name = "closed_progress_snapshot", columnDefinition = "jsonb")
+    private com.fasterxml.jackson.databind.JsonNode closedProgressSnapshot;
+
     @Column(name = "note")
     private String note;
 

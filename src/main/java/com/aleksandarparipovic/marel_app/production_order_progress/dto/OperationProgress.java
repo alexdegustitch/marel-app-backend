@@ -29,6 +29,14 @@ import java.math.RoundingMode;
 public record OperationProgress(
         Long operationId,
         String operationName,
+        /**
+         * V77 — set when this row is really a GROUP of interchangeable
+         * machines: {@code operationId} is then the member razrada named (the
+         * default), {@code donePieces} is the UNION of every member's work,
+         * and the name is the group's.
+         */
+        Long operationGroupId,
+        String operationGroupName,
         BigDecimal unitsPerProduct,
         long requiredPieces,
         long donePieces,

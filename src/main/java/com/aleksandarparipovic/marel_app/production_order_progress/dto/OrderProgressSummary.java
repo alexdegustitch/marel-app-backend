@@ -12,17 +12,20 @@ public record OrderProgressSummary(
         BigDecimal percent,
         long requiredPieces,
         long donePieces,
-        /** Whole products ready across every product of the order. */
+        /** Whole products SURELY ready across the order — the range's floor. */
         long wholeProductsDone,
+        /** The range's ceiling: what the most favourable reading adds up to (SPEC 5.6). */
+        long wholeProductsDoneMax,
         long requiredProducts
 ) {
 
     public static OrderProgressSummary withoutScope(Long orderId) {
-        return new OrderProgressSummary(orderId, false, null, 0, 0, 0, 0);
+        return new OrderProgressSummary(orderId, false, null, 0, 0, 0, 0, 0);
     }
 
     public static OrderProgressSummary of(OrderProgress progress) {
         long whole = progress.products().stream().mapToLong(ProductProgress::wholeProductsDone).sum();
+        long wholeMax = progress.products().stream().mapToLong(ProductProgress::wholeProductsDoneMax).sum();
         long required = progress.products().stream().mapToLong(ProductProgress::requiredProducts).sum();
         return new OrderProgressSummary(
                 progress.orderId(),
@@ -31,6 +34,7 @@ public record OrderProgressSummary(
                 progress.requiredPieces(),
                 progress.donePieces(),
                 whole,
+                wholeMax,
                 required);
     }
 }

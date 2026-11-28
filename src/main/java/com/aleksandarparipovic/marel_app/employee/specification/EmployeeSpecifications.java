@@ -30,8 +30,13 @@ public final class EmployeeSpecifications {
     }
 
     public static Specification<Employee> fromSearchRequest(SearchRequest request) {
-        return Specification.where(notArchived())
+        return Specification.where(
+                        Boolean.TRUE.equals(request.getArchivedOnly()) ? archived() : notArchived())
                 .and(new SearchSpecification<>(request, FIELD_MAPPER));
+    }
+
+    public static Specification<Employee> archived() {
+        return (root, q, cb) -> cb.isNotNull(root.get("archivedAt"));
     }
 
     public static Specification<Employee> employedOn(LocalDate date) {

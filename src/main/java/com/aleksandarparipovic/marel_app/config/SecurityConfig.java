@@ -498,6 +498,20 @@ public class SecurityConfig {
                         .requestMatchers("/api/products/**").access(permission(AppPermission.PRODUCT_MANAGE))
                         .requestMatchers("/api/operations/**").access(permission(AppPermission.OPERATION_MANAGE))
 
+                        /*
+                         * Variants and operation groups are catalogue too (V76/V77):
+                         * same split, read open, writing gated like what they belong
+                         * to — a variant is a product's, a group is an operation's.
+                         */
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/product-variants/**",
+                                "/api/operation-groups/**")
+                            .authenticated()
+                        .requestMatchers("/api/product-variants/**")
+                            .access(permission(AppPermission.PRODUCT_MANAGE))
+                        .requestMatchers("/api/operation-groups/**")
+                            .access(permission(AppPermission.OPERATION_MANAGE))
+
                         .anyRequest().authenticated()
                 )
                 /*

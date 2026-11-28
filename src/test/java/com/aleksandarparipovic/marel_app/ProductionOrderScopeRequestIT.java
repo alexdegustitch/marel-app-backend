@@ -390,6 +390,72 @@ class ProductionOrderScopeRequestIT extends AbstractIntegrationTest {
         assertThat(operation.unitsPerProductSnapshot()).isNull();
     }
 
+    /*
+     * The modal asks the server one question — "may I change this?" — and used
+     * to get "no" on a request nobody had claimed, although pressing save would
+     * have claimed it and gone through. The answer now matches what saving does.
+     */
+    @Test
+    @DisplayName("an unclaimed request is editable by whoever may process it")
+    void unclaimedRequestIsEditable() {
+        User requester = newUser("requester");
+        User processor = newUser("processor");
+        ProductionOrder order = anOrder(List.of(aProduct("Sečenje", "Bušenje")));
+        Long requestId = createForOrder(requester.getId(), order).id();
+        asSupervisor();
+
+        var detail = service.getDetail(requestId, processor.getId());
+
+        assertThat(detail.request().status()).isEqualTo(ProductionOrderScopeRequestStatus.PENDING);
+        assertThat(detail.request().assignedToUserId()).isNull();
+        assertThat(detail.editable()).isTrue();
+
+        // And the promise holds: saving takes it over rather than being refused.
+        var saved = service.saveDraft(requestId, processor.getId(), answerFor(detail));
+        assertThat(saved.request().assignedToUserId()).isEqualTo(processor.getId());
+    }
+
+    /*
+     * The rule that produced the dead end is the one thing the fix must not
+     * loosen: whoever raised an ordinary request still cannot answer it, and
+     * now the screen learns that BEFORE drawing an editable form.
+     */
+    @Test
+    @DisplayName("the person who raised an ordinary request cannot edit it")
+    void ownOrdinaryRequestIsNotEditable() {
+        User requester = newUser("requester");
+        ProductionOrder order = anOrder(List.of(aProduct("Sečenje", "Bušenje")));
+        Long requestId = createForOrder(requester.getId(), order).id();
+        asSupervisor();
+
+        var detail = service.getDetail(requestId, requester.getId());
+
+        assertThat(detail.editable()).isFalse();
+        assertThat(detail.request().internal()).isFalse();
+        // The form was right to refuse: the save would have been refused too.
+        assertThatThrownBy(() ->
+                service.saveDraft(requestId, requester.getId(), answerFor(detail)))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    /* A self-request is raised and answered by the same person, on purpose. */
+    @Test
+    @DisplayName("a self-request is editable by the supervisor who raised it")
+    void ownSelfRequestIsEditable() {
+        User supervisor = newUser("supervisor");
+        ProductionOrder order = anOrder(List.of(aProduct("Sečenje", "Varenje")));
+        ProductionOrderLineItem line = lineItemRepository
+                .findByProductionOrder_IdAndIsActiveIsTrueOrderByLineOrderAsc(order.getId())
+                .get(0);
+        asSupervisor();
+
+        Long requestId = service.selfForLineItem(line.getId(), supervisor.getId()).id();
+        var detail = service.getDetail(requestId, supervisor.getId());
+
+        assertThat(detail.request().internal()).isTrue();
+        assertThat(detail.editable()).isTrue();
+    }
+
     @Test
     @DisplayName("saving keeps the request in review, as a draft the processor still owns")
     void savingLeavesADraft() {

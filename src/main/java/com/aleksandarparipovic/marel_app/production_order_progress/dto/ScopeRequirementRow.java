@@ -17,4 +17,18 @@ public interface ScopeRequirementRow {
     String getOperationName();
     Integer getUnitsPerProduct();
     Integer getLineQuantity();
+
+    /**
+     * V77 — the group of interchangeable machines the operation belongs to,
+     * read LIVE from the catalogue (a LEFT join; null for the ordinary single
+     * operation). Live on purpose: razrada names the default member, and work
+     * on ANY member must land in the same bucket even when the group was
+     * formed after the razrada was written.
+     */
+    Long getOperationGroupId();
+    String getOperationGroupName();
+
+    /** V78 — which variant the line ordered; null on a product without variants. */
+    Long getProductVariantId();
+    String getVariantLabel();
 }

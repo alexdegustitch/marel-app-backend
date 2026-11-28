@@ -25,7 +25,8 @@ public final class ProductSpecifications {
     }
 
     public static Specification<Product> fromSearchRequest(SearchRequest request) {
-        Specification<Product> spec = Specification.where(notArchived());
+        Specification<Product> spec = Specification.where(
+                Boolean.TRUE.equals(request.getArchivedOnly()) ? archived() : notArchived());
 
         Boolean hasOperations = extractHasOperations(request);
         if (hasOperations != null) {
@@ -37,6 +38,10 @@ public final class ProductSpecifications {
 
     public static Specification<Product> notArchived() {
         return (root, query, cb) -> cb.isNull(root.get("archivedAt"));
+    }
+
+    public static Specification<Product> archived() {
+        return (root, query, cb) -> cb.isNotNull(root.get("archivedAt"));
     }
 
     /**

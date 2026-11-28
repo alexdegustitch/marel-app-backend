@@ -72,6 +72,32 @@ public class Operation {
     @Column(name = "is_temporary", nullable = false)
     private boolean temporary = false;
 
+    /**
+     * The group of interchangeable machine-operations this one belongs to, or
+     * NULL for the ordinary single operation. The composite FK in V77 makes a
+     * member share the group's product; the service makes members share
+     * binding, units_per_product and sort_order.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "operation_group_id")
+    private OperationGroup operationGroup;
+
+    /** The member manufacturing time preselects and razrada names. One per group (radio). */
+    @Column(name = "is_group_default", nullable = false)
+    private boolean groupDefault = false;
+
+    /** Step within the product: lower earlier, EQUAL = parallel, NULL = not yet placed. */
+    @Column(name = "sort_order")
+    private Integer sortOrder;
+
+    /**
+     * The binding (V77): the attribute value this operation exists for. Empty =
+     * applies to every variant of its product. The service keeps it to at most
+     * one row (SPEC odluka 4).
+     */
+    @OneToMany(mappedBy = "operation", cascade = CascadeType.ALL, orphanRemoval = true)
+    private java.util.List<OperationVariantOption> variantBindings = new java.util.ArrayList<>();
+
     @Column(name = "archived_by_product", nullable = false)
     private boolean archivedByProduct = false;
 

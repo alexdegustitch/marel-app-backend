@@ -38,6 +38,11 @@ public class SampleOrderLineItem {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
+    /** Same contract as on production order lines (V78): NULL = product without variants. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "product_variant_id")
+    private com.aleksandarparipovic.marel_app.product_variant.ProductVariant productVariant;
+
     /**
      * Where the line sits in the order, from 1. Unique among the order's LIVE
      * lines (uq_sample_order_line_items_order_line_active) — archived revisions

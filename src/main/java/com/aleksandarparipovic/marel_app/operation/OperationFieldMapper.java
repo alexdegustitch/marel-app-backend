@@ -50,9 +50,10 @@ public final class OperationFieldMapper implements EntityFieldMapper<Operation> 
             JoinManager<Operation> joinManager,
             CriteriaBuilder cb
     ){
-        Join<Operation, Product> products = joinManager.join("product", JoinType.LEFT);
-        products.on(cb.isNull(products.get("archivedAt")));
-        return products;
+        // Same join as the projection builds (JoinManager dedupes by name), and
+        // same rule: no archived condition, so the "Arhivirani" view can still
+        // filter and sort archived operations by the product they belonged to.
+        return joinManager.join("product", JoinType.LEFT);
     }
 
     @Override

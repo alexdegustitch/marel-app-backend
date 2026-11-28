@@ -28,4 +28,7 @@ public class OperationUpdateRequest {
     private Integer unitsPerProduct;
 
     private Long workCodeCategoryId;
+
+    /** V77 — step within the product; equal numbers run in parallel. Null = leave it. */
+    private Integer sortOrder;
 }

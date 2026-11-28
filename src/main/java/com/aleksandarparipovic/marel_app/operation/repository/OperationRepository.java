@@ -49,6 +49,9 @@ where o.id = :id
 
     List<Operation> findByProductIdAndArchivedAtIsNull(Long productId);
 
+    /** Every member of a group, archived ones included — the group panel shows both. */
+    List<Operation> findByOperationGroup_Id(Long operationGroupId);
+
     /**
      * Operations that were archived BECAUSE their product was archived — the
      * ones a product restore is allowed to bring back. Operations archived on

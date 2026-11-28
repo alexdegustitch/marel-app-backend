@@ -1,5 +1,6 @@
 package com.aleksandarparipovic.marel_app.operation;
 
+import com.aleksandarparipovic.marel_app.common.ConflictException;
 import com.aleksandarparipovic.marel_app.common.WrongPasswordException;
 import com.aleksandarparipovic.marel_app.operation.dto.*;
 import com.aleksandarparipovic.marel_app.operation.repository.OperationRepository;
@@ -8,6 +9,8 @@ import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormInF
 import com.aleksandarparipovic.marel_app.operation_norm_version.OperationNormVersionRepository;
 import com.aleksandarparipovic.marel_app.product.Product;
 import com.aleksandarparipovic.marel_app.product.repository.ProductRepository;
+import com.aleksandarparipovic.marel_app.product_variant.ProductVariant;
+import com.aleksandarparipovic.marel_app.variant_attribute.VariantAttributeOption;
 import com.aleksandarparipovic.marel_app.work_code.WorkCodeCategory;
 import com.aleksandarparipovic.marel_app.work_code.repository.WorkCodeCategoryRepository;
 import com.aleksandarparipovic.marel_app.search.PageableBuilder;
@@ -29,6 +32,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -45,6 +50,8 @@ public class OperationService {
     private final OperationNormInForceService normInForce;
     private final OperationNormVersionRepository normVersionRepository;
     private final com.aleksandarparipovic.marel_app.product_type_operation.ProductTypeOperationRepository productTypeOperationRepository;
+    private final com.aleksandarparipovic.marel_app.product_variant.ProductVariantRepository productVariantRepository;
+    private final com.aleksandarparipovic.marel_app.variant_attribute.VariantAttributeOptionRepository variantAttributeOptionRepository;
 
     private WorkCodeCategory resolveWorkCodeCategory(Long id) {
         if (id == null) {
@@ -55,20 +62,84 @@ public class OperationService {
     }
 
 
-    public List<OperationBasicInfoDto> getAllOperationsForProduct(Long id, LocalDate date){
+    @Transactional(readOnly = true)
+    public List<OperationBasicInfoDto> getAllOperationsForProduct(Long id, LocalDate date, Long attributeOptionId){
+        /*
+         * V77, the karton's view: with no filter, every operation except the
+         * dead-bound ones (a value no live variant carries); with one
+         * attribute value, the unbound plus those bound exactly to it. Same
+         * sentence as the DTO list below, kept in step with it.
+         */
+        Set<Long> liveOptionIds = attributeOptionId != null ? null
+                : productVariantRepository.findByProduct_IdAndArchivedAtIsNullOrderByIdAsc(id)
+                        .stream()
+                        .flatMap(v -> v.getValues().stream())
+                        .map(v -> v.getOption().getId())
+                        .collect(java.util.stream.Collectors.toSet());
+
         return operationRepository.findActiveOrArchivedAfterDate(id, date.atStartOfDay().atOffset(ZoneOffset.UTC))
                 .stream()
+                .filter(operation -> {
+                    List<OperationVariantOption> bindings = operation.getVariantBindings();
+                    if (bindings.isEmpty()) {
+                        return true;
+                    }
+                    if (attributeOptionId != null) {
+                        return bindings.stream().anyMatch(b -> b.getOption().getId().equals(attributeOptionId));
+                    }
+                    return bindings.stream().allMatch(b -> liveOptionIds.contains(b.getOption().getId()));
+                })
                 .map(operationMapper::toBasicDto)
                 .toList();
     }
 
-    public List<OperationDto> getAllOperationsForProductDto(Long id, LocalDate date) {
+    @Transactional(readOnly = true)
+    public List<OperationDto> getAllOperationsForProductDto(Long id, LocalDate date,
+                                                            Long variantId, Long attributeOptionId) {
         // One query for the whole product, not one per operation: the flag lives
         // on the norm version, and the caller draws every operation of a product.
         Set<Long> temporaryNorms = new HashSet<>(normVersionRepository.findOperationIdsWithTemporaryNorm(id));
 
+        /*
+         * V77 — which operations the caller may see is a question about the
+         * BINDING. With a variant: its option values decide. With one attribute
+         * value (the karton filter): that value decides. With neither: an
+         * operation bound to a value NO live variant carries is "dead" and is
+         * not offered — it waits for such a variant to exist (SPEC 5.1).
+         */
+        Set<Long> allowedOptionIds = null;
+        if (variantId != null) {
+            ProductVariant variant = productVariantRepository.findWithValuesById(variantId)
+                    .orElseThrow(() -> new EntityNotFoundException("Varijanta nije pronađena: " + variantId));
+            if (!variant.getProduct().getId().equals(id)) {
+                throw new IllegalArgumentException("Varijanta ne pripada ovom proizvodu.");
+            }
+            allowedOptionIds = variant.getValues().stream()
+                    .map(v -> v.getOption().getId())
+                    .collect(java.util.stream.Collectors.toSet());
+        } else if (attributeOptionId == null) {
+            allowedOptionIds = productVariantRepository
+                    .findByProduct_IdAndArchivedAtIsNullOrderByIdAsc(id)
+                    .stream()
+                    .flatMap(v -> v.getValues().stream())
+                    .map(v -> v.getOption().getId())
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+        final Set<Long> allowed = allowedOptionIds;
+
         return operationRepository.findActiveOrArchivedAfterDate(id, date.atStartOfDay().atOffset(ZoneOffset.UTC))
                 .stream()
+                .filter(operation -> {
+                    List<OperationVariantOption> bindings = operation.getVariantBindings();
+                    if (bindings.isEmpty()) {
+                        return true; // product-level: applies to every variant
+                    }
+                    if (attributeOptionId != null) {
+                        return bindings.stream()
+                                .anyMatch(b -> b.getOption().getId().equals(attributeOptionId));
+                    }
+                    return bindings.stream().allMatch(b -> allowed.contains(b.getOption().getId()));
+                })
                 .map(operation -> {
                     OperationDto dto = operationMapper.toDto(operation);
                     dto.setNormTemporary(temporaryNorms.contains(operation.getId()));
@@ -169,6 +240,31 @@ public class OperationService {
                     request.getTemporary(), request.getNormDate());
         }
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
+
+        // V77: the step moves only when the form says one; group members keep
+        // the same step AND the same units by invariant, so a member's change
+        // moves them all — the alternative is a group whose union means nothing.
+        if (request.getSortOrder() != null && !request.getSortOrder().equals(operation.getSortOrder())) {
+            if (operation.getOperationGroup() != null) {
+                for (Operation member : operationRepository.findByOperationGroup_Id(
+                        operation.getOperationGroup().getId())) {
+                    member.setSortOrder(request.getSortOrder());
+                    operationRepository.save(member);
+                }
+            } else {
+                operation.setSortOrder(request.getSortOrder());
+            }
+        }
+        if (operation.getOperationGroup() != null) {
+            for (Operation member : operationRepository.findByOperationGroup_Id(
+                    operation.getOperationGroup().getId())) {
+                if (!member.getId().equals(operation.getId())
+                        && !java.util.Objects.equals(member.getUnitsPerProduct(), operation.getUnitsPerProduct())) {
+                    member.setUnitsPerProduct(operation.getUnitsPerProduct());
+                    operationRepository.save(member);
+                }
+            }
+        }
 
         // The norm history follows the columns this form just wrote. Without it
         // the operation would work to one number while the history still marked
@@ -297,6 +393,98 @@ public class OperationService {
      * version in force in agreement, and payroll reads the columns — so the
      * change is recorded there too, exactly as the edit form's path does it.
      */
+    /**
+     * V77 — the whole execution order of one product's operations, as one
+     * transaction (the "Redosled izrade" drawer's save). The rules are the
+     * single-step PATCH's, held across the batch:
+     * <ul>
+     *   <li>every named operation belongs to the product and is not standalone;
+     *   <li>steps are 1-based; null unplaces;
+     *   <li>group members share the step: naming ONE member moves the whole
+     *       group, and naming two members of a group with DIFFERENT steps is a
+     *       contradiction the request is refused for;
+     *   <li>operations the request does not name keep the step they had.
+     * </ul>
+     */
+    @Transactional
+    public void reorderSteps(com.aleksandarparipovic.marel_app.operation.dto.OperationStepsRequest request) {
+        Map<Long, Integer> wanted = new java.util.LinkedHashMap<>();
+        for (var step : request.steps()) {
+            if (step.sortOrder() != null && step.sortOrder() < 1) {
+                throw new IllegalArgumentException("Korak mora biti najmanje 1.");
+            }
+            if (wanted.put(step.operationId(), step.sortOrder()) != null) {
+                throw new IllegalArgumentException(
+                        "Operacija " + step.operationId() + " je navedena dvaput.");
+            }
+        }
+
+        List<Operation> named = operationRepository.findAllById(wanted.keySet());
+        if (named.size() != wanted.size()) {
+            throw new EntityNotFoundException("Neka od navedenih operacija ne postoji.");
+        }
+
+        // What each GROUP is asked to be — one answer per group, or a refusal.
+        Map<Long, Integer> groupWanted = new java.util.LinkedHashMap<>();
+        for (Operation operation : named) {
+            if (operation.getProduct() == null || !operation.getProduct().getId().equals(request.productId())) {
+                throw new ConflictException(
+                        "Operacija „" + operation.getOpName() + "“ ne pripada ovom proizvodu.");
+            }
+            Integer step = wanted.get(operation.getId());
+            if (operation.getOperationGroup() == null) {
+                operation.setSortOrder(step);
+                operationRepository.save(operation);
+                continue;
+            }
+            Long groupId = operation.getOperationGroup().getId();
+            if (groupWanted.containsKey(groupId)
+                    && !Objects.equals(groupWanted.get(groupId), step)) {
+                throw new ConflictException("Članovi grupe „"
+                        + operation.getOperationGroup().getName()
+                        + "“ moraju biti isti korak — zahtev im daje dva različita.");
+            }
+            groupWanted.put(groupId, step);
+        }
+        for (var entry : groupWanted.entrySet()) {
+            for (Operation member : operationRepository.findByOperationGroup_Id(entry.getKey())) {
+                member.setSortOrder(entry.getValue());
+                operationRepository.save(member);
+            }
+        }
+    }
+
+    /**
+     * V77 — the step ("korak") alone. Equal steps run in parallel, null is
+     * unplaced. Group members share the step by invariant, so a member's change
+     * moves the whole group — otherwise the group's union would straddle two
+     * steps and mean nothing.
+     */
+    @Transactional
+    public void changeSortOrder(Long id, Integer sortOrder) {
+        Operation operation = operationRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Operation not found"));
+        if (operation.isStandalone()) {
+            throw new IllegalArgumentException("Osnovna operacija ne pripada proizvodu, pa nema korak.");
+        }
+        if (sortOrder != null && sortOrder < 1) {
+            throw new IllegalArgumentException("Korak mora biti najmanje 1.");
+        }
+        if (Objects.equals(operation.getSortOrder(), sortOrder)) {
+            return;
+        }
+        if (operation.getOperationGroup() != null) {
+            for (Operation member : operationRepository.findByOperationGroup_Id(
+                    operation.getOperationGroup().getId())) {
+                member.setSortOrder(sortOrder);
+                operationRepository.save(member);
+            }
+        } else {
+            operation.setSortOrder(sortOrder);
+            operationRepository.save(operation);
+        }
+    }
+
     @Transactional
     public void changeUnitsPerProduct(Long id, Integer unitsPerProduct) {
         Operation operation = operationRepository.findById(id)
@@ -312,6 +500,20 @@ public class OperationService {
 
         operation.setUnitsPerProduct(unitsPerProduct);
         normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
+
+        // V77: group members share units_per_product by invariant — a member's
+        // change carries to the rest, each recording its own norm snapshot.
+        if (operation.getOperationGroup() != null) {
+            for (Operation member : operationRepository.findByOperationGroup_Id(
+                    operation.getOperationGroup().getId())) {
+                if (!member.getId().equals(operation.getId())
+                        && !java.util.Objects.equals(member.getUnitsPerProduct(), unitsPerProduct)) {
+                    member.setUnitsPerProduct(unitsPerProduct);
+                    operationRepository.save(member);
+                    normInForce.recordCurrentFromOperation(member, normInForce.currentUser());
+                }
+            }
+        }
     }
 
     @Transactional
@@ -351,6 +553,17 @@ public class OperationService {
         operation.setOpName(request.getOperationName());
         operation.setDescription(request.getDescription());
         operation.setWorkCodeCategory(resolveWorkCodeCategory(request.getWorkCodeCategoryId()));
+        operation.setSortOrder(request.getSortOrder());
+
+        // V77: the binding travels with creation so the AddOperationsDrawer can
+        // say "važi za Prohrom" in one request. Group membership is NOT set
+        // here — a group has its own invariants and its own endpoints.
+        if (request.getVariantAttributeOptionId() != null) {
+            if (operation.getProduct() == null) {
+                throw new IllegalArgumentException("Osnovna operacija nema varijante, pa ni binding.");
+            }
+            applyBinding(operation, request.getVariantAttributeOptionId());
+        }
         operation = operationRepository.save(operation);
 
         // An operation created WITH a norm starts its history there, rather than
@@ -358,6 +571,55 @@ public class OperationService {
         normInForce.recordCurrentFromOperation(operation, normInForce.currentUser());
 
         return toRow(operation);
+    }
+
+    /**
+     * Sets or clears the binding: the attribute value this operation exists
+     * for (SPEC odluka 4 — exactly one value, or none).
+     *
+     * <p>On a group member the change is applied to EVERY member: the members
+     * share the binding set by invariant, and changing them together is the
+     * only edit that keeps it true.
+     */
+    @Transactional
+    public void setBinding(Long operationId, Long variantAttributeOptionId) {
+        Operation operation = operationRepository.findById(operationId)
+                .orElseThrow(() -> new EntityNotFoundException("Operacija nije pronađena: " + operationId));
+        if (operation.getProduct() == null) {
+            throw new IllegalArgumentException("Osnovna operacija nema varijante, pa ni binding.");
+        }
+        List<Operation> targets = operation.getOperationGroup() == null
+                ? List.of(operation)
+                : operationRepository.findByOperationGroup_Id(operation.getOperationGroup().getId());
+        for (Operation target : targets) {
+            if (variantAttributeOptionId == null) {
+                target.getVariantBindings().clear();
+            } else {
+                applyBinding(target, variantAttributeOptionId);
+            }
+            operationRepository.save(target);
+        }
+    }
+
+    /** Replaces the operation's binding with the one option, after the checks. */
+    private void applyBinding(Operation operation, Long optionId) {
+        VariantAttributeOption option = variantAttributeOptionRepository.findById(optionId)
+                .orElseThrow(() -> new EntityNotFoundException("Opcija varijantnog atributa nije pronađena: " + optionId));
+        Product product = operation.getProduct();
+        if (product.getProductType() == null
+                || !option.getAttribute().getProductType().getId().equals(product.getProductType().getId())) {
+            throw new IllegalArgumentException("Opcija ne pripada tipu ovog proizvoda.");
+        }
+        if (option.isArchived() || option.getAttribute().isArchived()) {
+            throw new IllegalArgumentException(
+                    "Opcija „" + option.getValue() + "“ je arhivirana i ne ulazi u nove bindinge.");
+        }
+        operation.getVariantBindings().clear();
+        operation.getVariantBindings().add(OperationVariantOption.builder()
+                .operation(operation)
+                .attribute(option.getAttribute())
+                .option(option)
+                .build());
     }
 
     /**
@@ -420,6 +682,26 @@ public class OperationService {
             copy.setUnitsPerProduct(source.getUnitsPerProduct());
             copy.setNormDate(source.getNormDate());
             copy.setTemporary(source.isTemporary());
+
+            /*
+             * V77 — the binding travels only where it keeps meaning something:
+             * onto a product of the SAME type (the option is the type's). A
+             * different type drops it. Group membership is never copied — the
+             * group is the source product's own set of machines.
+             */
+            Long sourceTypeId = source.getProduct().getProductType() == null
+                    ? null : source.getProduct().getProductType().getId();
+            Long targetTypeId = target.getProductType() == null
+                    ? null : target.getProductType().getId();
+            if (sourceTypeId != null && sourceTypeId.equals(targetTypeId)) {
+                for (OperationVariantOption binding : source.getVariantBindings()) {
+                    copy.getVariantBindings().add(OperationVariantOption.builder()
+                            .operation(copy)
+                            .attribute(binding.getAttribute())
+                            .option(binding.getOption())
+                            .build());
+                }
+            }
             copy = operationRepository.save(copy);
 
             // The copy starts its norm history where the source is today —
