@@ -65,6 +65,7 @@ public class ProductionOrderMapper {
                 lineItem.getProduct().getProductName(),
                 lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().getId(),
                 lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().displayLabel(),
+                lineItem.getProductVariant() == null ? null : lineItem.getProductVariant().attributesLabel(),
                 lineItem.getProductDescription(),
                 lineItem.getLineOrder(),
                 lineItem.getNote(),

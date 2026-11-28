@@ -82,6 +82,30 @@ public class ProductVariant {
                 .collect(java.util.stream.Collectors.joining(" / "));
     }
 
+    /**
+     * The same combination spelled out attribute by attribute:
+     * "Šraf: Al · Navrtka: Prohrom".
+     *
+     * <p>Deliberately NOT the hand-given label, and deliberately separate from
+     * {@link #displayLabel()}: a screen that shows the variant after a product
+     * name needs to say WHICH attribute each value belongs to, and a label like
+     * "Varijanta 2" would say nothing. Null when the variant carries no values,
+     * so a caller can leave the line out rather than print an empty tail.
+     *
+     * <p>Touches the lazy values, so callers sit inside a transaction.
+     */
+    public String attributesLabel() {
+        if (values.isEmpty()) {
+            return null;
+        }
+        return values.stream()
+                .sorted(java.util.Comparator
+                        .comparing((ProductVariantValue v) -> v.getAttribute().getSortOrder())
+                        .thenComparing(v -> v.getAttribute().getName()))
+                .map(v -> v.getAttribute().getName() + ": " + v.getOption().getValue())
+                .collect(java.util.stream.Collectors.joining(" · "));
+    }
+
     public void archive() {
         this.isActive = false;
         this.archivedAt = OffsetDateTime.now();

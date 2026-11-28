@@ -297,6 +297,12 @@ public class ProductionOrderService {
 
     private OrderEmailState.Item emailItem(ProductionOrderLineItem item) {
         String name = item.getProduct() == null ? "-" : item.getProduct().getProductName();
+        // The ordered variant belongs in the name: without it two lines of the
+        // same product in different materials read as one product ordered twice.
+        String variant = variantSuffix(item.getProductVariant());
+        if (variant != null) {
+            name += " · " + variant;
+        }
         if (item.getProductDescription() != null && !item.getProductDescription().isBlank()) {
             name += " — " + item.getProductDescription().trim();
         }
@@ -318,10 +324,35 @@ public class ProductionOrderService {
                         .collect(Collectors.joining(" + "));
 
         return new OrderEmailState.Item(
-                item.getProduct() == null ? "-" : String.valueOf(item.getProduct().getId()),
+                emailItemKey(item.getProduct() == null ? null : item.getProduct().getId(),
+                        item.getProductVariant() == null ? null : item.getProductVariant().getId()),
                 name,
                 quantity,
                 blankToNull(item.getNote()));
+    }
+
+    /**
+     * What makes a line "the same line" across two saves. The product alone is
+     * not enough once a product has variants: two lines differing only in
+     * variant would pair with each other and a quantity would read as changed.
+     */
+    private static String emailItemKey(Long productId, Long variantId) {
+        String product = productId == null ? "-" : String.valueOf(productId);
+        return variantId == null ? product : product + "#" + variantId;
+    }
+
+    /**
+     * How the variant is spelled in a mail: attribute by attribute when the
+     * variant carries values, otherwise whatever the variant is called.
+     */
+    private static String variantSuffix(
+            com.aleksandarparipovic.marel_app.product_variant.ProductVariant variant
+    ) {
+        if (variant == null) {
+            return null;
+        }
+        String attributes = variant.attributesLabel();
+        return attributes != null ? attributes : variant.displayLabel();
     }
 
     private static String flagValue(Boolean flag) {
